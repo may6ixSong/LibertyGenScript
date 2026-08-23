@@ -1,0 +1,112 @@
+"""
+block2_writer.py
+
+Block 2 작성: `library (...) {` 선언부터 시작해서
+  2-(1) library 선언 + 우리 쪽 date/revision/comment + PDK 본문(그대로 복사)
+  2-(2) voltage_map 4줄 (Step2/Step3 값으로 항상 전부 작성)
+  2-(3) operating_conditions / default_operating_conditions
+  2-(4) input_voltage / output_voltage (PDK/DK 파일에서 그대로 읽어옴, 소수점 5자리)
+  2-(5) Global k factor (하드코딩, kfactor_block.py)
+까지를 담당한다.
+
+결측 데이터(operating_conditions 이름, input_voltage/output_voltage 블록 자체 또는
+그 안의 개별 값)는 missing_data.py의 규칙대로 `<NOT_FOUND_IN_PDK>` + 안내 주석으로
+표시하고 예외를 던지지 않는다.
+
+2026-08 수정: 들여쓰기를 항상 2칸 단위(INDENT_1/INDENT_2)로 통일했다. PDK/DK 파일에서
+읽어온 본문(body_lines)도 원본 들여쓰기를 버리고 텍스트만 가져와 INDENT_1로 다시
+들여쓴다(pdk_stream_reader.py에서 이미 strip된 텍스트로 넘어옴). 레거시가 쓰던 tab
+기반 정렬(예: "process    \t : ...")도 전부 "key : value ;" 형태의 단순한 한 칸
+공백으로 통일했다.
+"""
+
+from __future__ import annotations
+
+from step4_generate.kfactor_block import write_k_factor_block
+from step4_generate.missing_data import INDENT_1, INDENT_2, NOT_FOUND_TOKEN, write_missing_comment
+
+_INPUT_VOLTAGE_KEYS = ["vil", "vih", "vimax", "vimin"]
+_OUTPUT_VOLTAGE_KEYS = ["vol", "voh", "vomax", "vomin"]
+
+
+def _format_value(value: float | None) -> str:
+    """PDK에서 못 찾은 개별 값(None)은 <NOT_FOUND_IN_PDK> 토큰으로, 있으면 소수점
+    5자리(%0.5f)로 표시한다."""
+    if value is None:
+        return NOT_FOUND_TOKEN
+    return "%0.5f" % value
+
+
+def _write_voltage_entries(
+    f_out, entries: list[dict], keys: list[str], tag: str, pdk_filename: str,
+) -> None:
+    """input_voltage 또는 output_voltage 블록들을 PDK 파일에 등장한 순서 그대로 쓴다."""
+    if not entries:
+        write_missing_comment(f_out, f"{tag} block(s)", pdk_filename)
+        return
+
+    for entry in entries:
+        param = entry.get("param") or NOT_FOUND_TOKEN
+        f_out.write(f"{INDENT_1}{tag}({param}) {{\n")
+        for key in keys:
+            value = entry.get(key)
+            f_out.write(f"{INDENT_2}{key} : {_format_value(value)} ;\n")
+        f_out.write(f"{INDENT_1}}}\n")
+
+
+def write_block2(f_out, job: dict, sections: dict, header_date_parts: tuple) -> None:
+    """
+    Args:
+        job: liberty_assembler.build_job()의 결과.
+        sections: pdk_stream_reader.read_pdk_file()의 결과.
+        header_date_parts: block1_header.write_header_block()이 반환한
+            (day, month, date, time, year) - block2의 date 줄에도 동일한 시각을 쓴다.
+    """
+    _day, month, date_, _time, year = header_date_parts
+    library_name = job["library_name"]
+    pdk_filename = job["pdk_filename"]
+
+    # ---- Block 2-(1): library 선언 + 우리 쪽 date/revision/comment + PDK 본문 ----
+    f_out.write("library (%s) {\n" % library_name)
+    f_out.write(f'{INDENT_1}date : "{month}  {date_}  {year}" ;\n')
+    f_out.write(f'{INDENT_1}revision : "V1.000 (TECH. FILE : V1.000)" ;\n')
+    f_out.write(f'{INDENT_1}comment : "Copyright {year}, SAMSUNG Electronics" ;\n')
+
+    if not sections["found_library_decl"]:
+        write_missing_comment(f_out, "PDK body (library declaration)", pdk_filename)
+    for line in sections["body_lines"]:
+        f_out.write(f"{INDENT_1}{line}\n")
+
+    # ---- Block 2-(2): voltage_map - pg_pin 존재 여부와 무관하게 항상 4줄 전부 ----
+    f_out.write(f"{INDENT_1}voltage_map (VDD_%0.5f, %0.5f) ;\n" % (job["voltage_low"], job["voltage_low"]))
+    f_out.write(f"{INDENT_1}voltage_map (VDD_%0.5f, %0.5f) ;\n" % (job["voltage_high"], job["voltage_high"]))
+    f_out.write(f"{INDENT_1}voltage_map (VDD_%0.5f, %0.5f) ;\n" % (job["voltage_mid"], job["voltage_mid"]))
+    f_out.write(f"{INDENT_1}voltage_map (VSS_%0.5f, %0.5f) ;\n" % (0.0, 0.0))
+    f_out.write("\n")
+
+    # ---- Block 2-(3): operating_conditions / default_operating_conditions ----
+    oc_library = sections["operating_conditions_library"]
+    if not oc_library:
+        write_missing_comment(f_out, "operating_conditions library name", pdk_filename)
+        oc_library = NOT_FOUND_TOKEN
+
+    f_out.write(f"{INDENT_1}operating_conditions ({oc_library}) {{\n")
+    f_out.write(f"{INDENT_2}process : 1.000 ;\n")
+    f_out.write(f"{INDENT_2}temperature : %0.3f ;\n" % job["nom_temperature"])
+    f_out.write(f"{INDENT_2}voltage : %0.5f ;\n" % job["nom_voltage"])
+    f_out.write(f'{INDENT_2}tree_type : "worst_case_tree" ;\n')
+    f_out.write(f"{INDENT_1}}}\n")
+    f_out.write(f"{INDENT_1}default_operating_conditions : {oc_library};\n")
+    f_out.write("\n")
+
+    # ---- Block 2-(4): input_voltage / output_voltage (PDK/DK 파일에서 그대로) ----
+    _write_voltage_entries(
+        f_out, sections["input_voltage_entries"], _INPUT_VOLTAGE_KEYS, "input_voltage", pdk_filename,
+    )
+    _write_voltage_entries(
+        f_out, sections["output_voltage_entries"], _OUTPUT_VOLTAGE_KEYS, "output_voltage", pdk_filename,
+    )
+    f_out.write("\n")
+
+    # ---- Block 2-(5): Global k factor (하드코딩) ----
+    write_k_factor_block(f_out)

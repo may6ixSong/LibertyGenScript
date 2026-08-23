@@ -1,0 +1,611 @@
+#foreach $m (0 .. 2)	{
+	#foreach $m (0 .. $#udc_condition)	{
+	foreach $m (0 .. 0)	{
+		#$fileName5 = "./UDC_RESULT/".$cell_name."_".$udc_condition[$m].".udc";
+		$fileName5 = "./UDC_RESULT/".$cell_name."_".$constraint.".udc";
+		open ($fileHandle, "> $fileName5") or die "Cannot open $fileName5 : $!";
+
+		#printf $fileHandle $udc_header_format, $library_name[$m], $udc_condition[$m];
+		printf $fileHandle $udc_header_format, $library_name[$m], $constraint;
+		printf $fileHandle	"cell (%s)	{\n".
+						"\tlibrary_family : %s;\n".
+						"\tclass : %s;\n".
+						"\tcell_type : core;\n".
+						"\tarea : %s;\n".
+						"\twidth : %s;\n".
+						"\theight : %s;\n".
+						"\tstatic_current : %s;\n"	, $cell_name, $library_name[$m], $class
+												, $area[$m], $width[$m], $height[$m], $static_current[$m];
+		# v0.86
+		#printf $fileHandle	"\tvoltage_level(high_3.3V)	{\n".
+		printf $fileHandle	"\tvoltage_level(high_$high_voltage_level)	{\n".
+						"\t\tvmax: %s;\n".
+						"\t\tvmin: 0.00;\n".
+						"\t}\n".
+		# v0.86
+						#"\tvoltage_level(middle_1.8V)	{\n".
+						"\tvoltage_level(middle_$mid_voltage_level)	{\n".
+						"\t\tvmax: %s;\n".
+						"\t\tvmin: 0.00;\n".
+						"\t}\n".
+		# v0.86
+						#"\tvoltage_level(low_1.2V)	{\n".
+						"\tvoltage_level(low_$low_voltage_level)	{\n".
+						"\t\tvmax: %s;\n".
+						"\t\tvmin: 0.00;\n".
+						#"\t}\n"	, $high_vmax[$m], $mid_vmax[$m],	$low_vmax[$m];
+						"\t}\n"	, $high_vmax, $mid_vmax,	$low_vmax;
+		printf $fileHandle	"\ttiming_derating ( %s_tm_derating )	{\n".
+						"\t\trefer_to_table_index : const; \n".
+						$timing_derating[$m].
+						"\t}\n", $cell_name, $case1_temp[$m], $case1_volt[$m], $case1_value[$m], $case2_temp[$m], $case2_volt[$m], $case2_value[$m], $case3_temp[$m], $case3_volt[$m], $case3_value[$m], $case4_temp[$m], $case4_volt[$m], $case4_value[$m];
+		printf $fileHandle	"\ttiming_process_cond ( %s_tm_process ) { \n".
+                              "\t\tmax : 1.00000 ; \n".
+                              "\t\ttyp : 1.00000 ; \n".
+                              "\t\tmin : 1.00000 ; \n".
+                              "\t} \n".
+                              "\ttable_index ( %s_xsys ) { \n".
+                              "\t\ty_index_var : related_pin_slope ; \n".
+                              "\t\tx_index_var : constrained_pin_slope ; \n".
+                              #"\t\ty_index   ( 0.20000, 1.10000); \n".
+                              #"\t\tx_index   ( 0.20000, 1.10000); \n".
+                              "\t\ty_index   ( %s, %s, %s); \n".
+                              "\t\tx_index   ( %s, %s, %s); \n".
+                              "\t} \n".
+                              "\ttable_index (  %s_derating_index ) { \n".
+                              "\t\ty_index_var : input_slope ; \n".
+                              "\t\tx_index_var : output_load_cap ; \n".
+                              "\t\ty_index   ( 0.20000); \n".
+                              "\t\tx_index   ( 0.00400); \n".
+                              "\t} \n".
+                              "\ttable_index (  %s_out ) { \n".
+                              "\t\ty_index_var : input_slope ; \n".
+                              "\t\tx_index_var : output_load_cap ; \n".
+                              #"\t\ty_index   ( 0.00000, 0.15100, 0.50000, 0.59900, 2.39000); \n".
+                              #"\t\tx_index   ( 0.00000, 0.02300, 0.05300, 0.11200, 0.23000, 0.46700); \n".
+                              "\t\ty_index   ( %s, %s, %s, %s, %s, %s, %s, %s); \n".
+                              "\t\tx_index   ( %s, %s, %s, %s, %s, %s, %s, %s); \n".
+                              "\t} \n"	, $cell_name, $cell_name, $IN_y_setup[0], $IN_y_setup[1]
+								, $IN_y_setup[2], $IN_x_setup[0], $IN_x_setup[1], $IN_x_setup[2]
+								, $cell_name, $cell_name, $OUT_y[0], $OUT_y[1], $OUT_y[2], $OUT_y[3]
+								, $OUT_y[4],  $OUT_y[5], $OUT_y[6], $OUT_y[7], 
+								,$OUT_x[0], $OUT_x[1], $OUT_x[2], $OUT_x[3], $OUT_x[4]
+								,$OUT_x[5], $OUT_x[6], $OUT_x[7];
+		printf $fileHandle	"\ttiming_derating ( %s_xsys_tm_derating )	{\n".
+						"\t\trefer_to_table_index : %s_derating_index; \n".
+						$timing_derating[$m].
+						"\t}\n", $cell_name, $cell_name, $case1_temp[$m], $case1_volt[$m], $case1_value[$m], $case2_temp[$m], $case2_volt[$m], $case2_value[$m], $case3_temp[$m], $case3_volt[$m], $case3_value[$m], $case4_temp[$m], $case4_volt[$m], $case4_value[$m];
+
+		$order = 1;
+		$pin_description = "\tpin (%s) {\n".
+						  "\t\torder	: %d;\n".
+						  "\t\tvoltage_level	: %s;\n".
+						  "\t\tdirection	: %s;\n".
+						  "\t\tpin_type	: %s;\n".
+						  "\t\tcapacitance	: %f;\n";
+
+		# v0.87
+		#$max_transition = "\t\tmax_transition	: %.5f;\n";
+		$max_transition = "\t\tmax_slope_rise	: %.5f;\n".
+						  "\t\tmax_slope_fall	: %.5f;\n";
+
+		$timing_description = "\t\ttiming () {\n".
+							"\t\t\ttiming_arc : normal;\n".
+							"\t\t\trelated_pin : \"%s\";\n".
+							"\t\t\ttiming_sense : non_unate ;\n";
+
+		$timing_type = "\t\t\ttiming_type ( %s ) {\n".
+					   "\t\t\t\trefer_to_table_index : %s; \n".
+					   "\t\t\t\tderating             : %s; \n".
+					   "\t\t\t\tprocess              : %s; \n";
+		
+
+		foreach $vlist (@udc_array)	{
+			chomp $vlist;
+			@array = $vlist =~ /\S+/g;
+
+			next if ($array[4] eq "P")||($array[4] eq "G");
+
+			($MSB, $LSB) = $array[1] =~ /(\d+):(\d+)/;
+			if (defined $MSB and defined $LSB)	{
+				$pin_type = "data_bus";
+				#$t_bits = $MSB + 1;					# 3M3 @ 20141118 by kch
+				#$t_bits = $MSB - $LSB + 1;
+				$t_bits = abs($MSB - $LSB) + 1;			# 3M3 @ 20150110 by Seungjin
+			}
+			else	{
+				$pin_type = "data";
+				$t_bits = 1;
+			}
+			
+			# v0.86
+			#if ($array[5] eq "1.2V")	{
+			#	$voltage = "low_1.2V";
+			#} elsif ($array[5] eq "3.3V")	{
+			#	$voltage = "high_3.3V";
+			#} elsif ($array[5] eq "1.8V")	{
+			#	$voltage = "middle_1.8V";
+			if ($array[5] eq $low_voltage_level)	{
+				$voltage = "low_$low_voltage_level";
+			} elsif ($array[5] eq $high_voltage_level)	{
+				$voltage = "high_$high_voltage_level";
+			} elsif ($array[5] eq $mid_voltage_level)	{
+				$voltage = "middle_$mid_voltage_level";
+			} else	{
+				error("*Error >> unsupported voltage level: $array[5] // (line: $array[1])\n");
+				$voltage = "";
+			}
+
+			if ($array[4] eq "I")	{
+				$direction = "input";
+			} elsif ($array[4] eq "O")	{
+				$direction = "output";
+			} elsif ($array[4] eq "IO")	{
+				$direction = "inout";
+			} else	{
+				error("*Error >> unsupported direction: $array[4] // (line: $array[1])\n");
+				$direction = "";
+			}
+
+			$capacitance = $array[6];
+			$capacitance = 0 if ($array[6] eq "-");
+
+			($even_clock, $odd_clock, $nom_clock) = ("", "", "");
+
+			foreach $clk_array (@clk_array)	{
+				#last if ($m);
+				if ($array[1] =~ /$clk_array$/)	{
+					$pin_type = "clock";
+					if ($array[1] =~ /E/)	{
+						$even_clock = $array[1];
+					} elsif ($array[1] =~ /O/)	{
+						$odd_clock = $array[1];
+					} else	{
+						$nom_clock = $array[1];
+					}
+
+					#unless ($array[1] eq $array[11])	{
+					#	warning ("*Warning 2 >> Unmatched clock info. (Name : $array[1] // Related Pin : $array[11]) -- Is it real clock? Clock's related pin should be itself");
+					#}
+					last;
+				}
+			}
+
+			#if ($array[1] =~ /DCLK/)	{
+			#	$pin_type = "clock";
+			#	if ($array[1] =~ /E/)	{
+			#		$even_clock = $array[1];
+			#	} elsif ($array[1] =~ /O/)	{
+			#		$odd_clock = $array[1];
+			#	} else	{
+			#		$nom_clock = $array[1];
+			#	}
+			#}
+
+			#if ($array[1] =~ /ACLK/)	{
+			#	$pin_type = "clock";
+			#	#if ($array[1] =~ /E/)	{
+			#	#	$even_clock = $array[1];
+			#	#} elsif ($array[1] =~ /O/)	{
+			#	#	$odd_clock = $array[1];
+			#	#} else	{
+			#	#	$nom_clock = $array[1];
+			#	#}
+			#}
+
+			#if ($array[1] =~ /RCLK/)	{
+			#	$pin_type = "clock";
+			#	#if ($array[1] =~ /E/)	{
+			#	#	$even_clock = $array[1];
+			#	#} elsif ($array[1] =~ /O/)	{
+			#	#	$odd_clock = $array[1];
+			#	#} else	{
+			#	#	$nom_clock = $array[1];
+			#	#}
+			#}
+
+			printf $fileHandle $pin_description, $array[1], $order, $voltage,
+										$direction, $pin_type, $capacitance;
+
+			# v0.87
+			#printf $fileHandle $max_transition, $array[13] if ($array[13] =~ /\d+/g);
+			printf $fileHandle $max_transition, $array[13], $array[13] if ($array[13] =~ /\d+/g);
+
+			#elsif ($array[1] =~ /^OUT/)	{
+			# v0.86
+			if ($array[14] =~ /clock/) {
+			}
+			# v0.85
+			#if ($array[1] =~ /^OUT/)	{
+			elsif ($array[12] =~ /FILE2/)	{
+				error("*Error 7 >> Undefined measure data file (FILE2). Please confirm $array[1]'s Timing reference") unless ($FILE2_def);
+				complete(0) unless ($FILE2_def);
+				$related_pin = $array[11];
+
+				$timing_state_rf = "\t\t\ttiming_state : $OUT_timing_state[$m]_edge ;\n";
+				printf $fileHandle $timing_description.$timing_state_rf, $related_pin;
+				printf $fileHandle $timing_type, "tphl", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+#						$tphl_list2[0],  $tphl_list2[1],  $tphl_list2[2],  $tphl_list2[3],  $tphl_list2[4],
+#						$tphl_list2[5],  $tphl_list2[6],  $tphl_list2[7],  $tphl_list2[8],  $tphl_list2[9],
+#						$tphl_list2[10], $tphl_list2[11], $tphl_list2[12], $tphl_list2[13], $tphl_list2[14],
+#						$tphl_list2[15], $tphl_list2[16], $tphl_list2[17], $tphl_list2[18], $tphl_list2[19],
+#						$tphl_list2[20], $tphl_list2[21], $tphl_list2[22], $tphl_list2[23], $tphl_list2[24];
+						#$tphl_list2[25], $tphl_list2[26], $tphl_list2[27], $tphl_list2[28], $tphl_list2[29];
+						$tphl_list2[0],	 $tphl_list2[1],	$tphl_list2[2],	$tphl_list2[3],	$tphl_list2[4],	$tphl_list2[5],	$tphl_list2[6],	$tphl_list2[7],
+						$tphl_list2[8],	$tphl_list2[9],	$tphl_list2[10],	$tphl_list2[11],	$tphl_list2[12],	$tphl_list2[13],	$tphl_list2[14],	$tphl_list2[15],
+						$tphl_list2[16],	 $tphl_list2[17],	$tphl_list2[18],	$tphl_list2[19],	$tphl_list2[20],	$tphl_list2[21],	$tphl_list2[22],	$tphl_list2[23],
+						$tphl_list2[24],	 $tphl_list2[25],	$tphl_list2[26],	$tphl_list2[27],	$tphl_list2[28],	$tphl_list2[29],	$tphl_list2[30],	$tphl_list2[31],
+						$tphl_list2[32],	 $tphl_list2[33],	$tphl_list2[34],	$tphl_list2[35],	$tphl_list2[36],	$tphl_list2[37],	$tphl_list2[38],	$tphl_list2[39],
+						$tphl_list2[40],	 $tphl_list2[41],	$tphl_list2[42],	$tphl_list2[43],	$tphl_list2[44],	$tphl_list2[45],	$tphl_list2[46],	$tphl_list2[47],
+						$tphl_list2[48],	 $tphl_list2[49],	$tphl_list2[50],	$tphl_list2[51],	$tphl_list2[52],	$tphl_list2[53],	$tphl_list2[54],	$tphl_list2[55],
+						$tphl_list2[56],	 $tphl_list2[57],	$tphl_list2[58],	$tphl_list2[59],	$tphl_list2[60],	$tphl_list2[61],	$tphl_list2[62],	$tphl_list2[63];
+
+				printf $fileHandle $timing_type, "tplh", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+#						$tplh_list2[0],  $tplh_list2[1],  $tplh_list2[2],  $tplh_list2[3],  $tplh_list2[4],
+#						$tplh_list2[5],  $tplh_list2[6],  $tplh_list2[7],  $tplh_list2[8],  $tplh_list2[9],
+#						$tplh_list2[10], $tplh_list2[11], $tplh_list2[12], $tplh_list2[13], $tplh_list2[14],
+#						$tplh_list2[15], $tplh_list2[16], $tplh_list2[17], $tplh_list2[18], $tplh_list2[19],
+#						$tplh_list2[20], $tplh_list2[21], $tplh_list2[22], $tplh_list2[23], $tplh_list2[24];
+						#$tplh_list2[25], $tplh_list2[26], $tplh_list2[27], $tplh_list2[28], $tplh_list2[29];
+						$tplh_list2[0],	 $tplh_list2[1],	$tplh_list2[2],	$tplh_list2[3],	$tplh_list2[4],	$tplh_list2[5],	$tplh_list2[6],	$tplh_list2[7],
+						$tplh_list2[8],	$tplh_list2[9],	$tplh_list2[10],	$tplh_list2[11],	$tplh_list2[12],	$tplh_list2[13],	$tplh_list2[14],	$tplh_list2[15],
+						$tplh_list2[16],	 $tplh_list2[17],	$tplh_list2[18],	$tplh_list2[19],	$tplh_list2[20],	$tplh_list2[21],	$tplh_list2[22],	$tplh_list2[23],
+						$tplh_list2[24],	 $tplh_list2[25],	$tplh_list2[26],	$tplh_list2[27],	$tplh_list2[28],	$tplh_list2[29],	$tplh_list2[30],	$tplh_list2[31],
+						$tplh_list2[32],	 $tplh_list2[33],	$tplh_list2[34],	$tplh_list2[35],	$tplh_list2[36],	$tplh_list2[37],	$tplh_list2[38],	$tplh_list2[39],
+						$tplh_list2[40],	 $tplh_list2[41],	$tplh_list2[42],	$tplh_list2[43],	$tplh_list2[44],	$tplh_list2[45],	$tplh_list2[46],	$tplh_list2[47],
+						$tplh_list2[48],	 $tplh_list2[49],	$tplh_list2[50],	$tplh_list2[51],	$tplh_list2[52],	$tplh_list2[53],	$tplh_list2[54],	$tplh_list2[55],
+						$tplh_list2[56],	 $tplh_list2[57],	$tplh_list2[58],	$tplh_list2[59],	$tplh_list2[60],	$tplh_list2[61],	$tplh_list2[62],	$tplh_list2[63];
+
+				printf $fileHandle $timing_type, "tr", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+#						$tr_list2[0],  $tr_list2[1],  $tr_list2[2],  $tr_list2[3],  $tr_list2[4],
+#						$tr_list2[5],  $tr_list2[6],  $tr_list2[7],  $tr_list2[8],  $tr_list2[9],
+#						$tr_list2[10], $tr_list2[11], $tr_list2[12], $tr_list2[13], $tr_list2[14],
+#						$tr_list2[15], $tr_list2[16], $tr_list2[17], $tr_list2[18], $tr_list2[19],
+#						$tr_list2[20], $tr_list2[21], $tr_list2[22], $tr_list2[23], $tr_list2[24];
+						#$tr_list2[25], $tr_list2[26], $tr_list2[27], $tr_list2[28], $tr_list2[29];
+						$tr_list2[0],	 $tr_list2[1],	$tr_list2[2],	$tr_list2[3],	$tr_list2[4],	$tr_list2[5],	$tr_list2[6],	$tr_list2[7],
+						$tr_list2[8],	$tr_list2[9],	$tr_list2[10],	$tr_list2[11],	$tr_list2[12],	$tr_list2[13],	$tr_list2[14],	$tr_list2[15],
+						$tr_list2[16],	 $tr_list2[17],	$tr_list2[18],	$tr_list2[19],	$tr_list2[20],	$tr_list2[21],	$tr_list2[22],	$tr_list2[23],
+						$tr_list2[24],	 $tr_list2[25],	$tr_list2[26],	$tr_list2[27],	$tr_list2[28],	$tr_list2[29],	$tr_list2[30],	$tr_list2[31],
+						$tr_list2[32],	 $tr_list2[33],	$tr_list2[34],	$tr_list2[35],	$tr_list2[36],	$tr_list2[37],	$tr_list2[38],	$tr_list2[39],
+						$tr_list2[40],	 $tr_list2[41],	$tr_list2[42],	$tr_list2[43],	$tr_list2[44],	$tr_list2[45],	$tr_list2[46],	$tr_list2[47],
+						$tr_list2[48],	 $tr_list2[49],	$tr_list2[50],	$tr_list2[51],	$tr_list2[52],	$tr_list2[53],	$tr_list2[54],	$tr_list2[55],
+						$tr_list2[56],	 $tr_list2[57],	$tr_list2[58],	$tr_list2[59],	$tr_list2[60],	$tr_list2[61],	$tr_list2[62],	$tr_list2[63];
+
+				printf $fileHandle $timing_type, "tf", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s, %s, %s, %s  \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s  \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s  \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s  \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s  \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s  \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s  \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s, %s, %s, %s  ); \n".
+							    "\t\t\t}\n",
+#						$tf_list2[0],  $tf_list2[1],  $tf_list2[2],  $tf_list2[3],  $tf_list2[4],
+#						$tf_list2[5],  $tf_list2[6],  $tf_list2[7],  $tf_list2[8],  $tf_list2[9],
+#						$tf_list2[10], $tf_list2[11], $tf_list2[12], $tf_list2[13], $tf_list2[14],
+#						$tf_list2[15], $tf_list2[16], $tf_list2[17], $tf_list2[18], $tf_list2[19],
+#						$tf_list2[20], $tf_list2[21], $tf_list2[22], $tf_list2[23], $tf_list2[24];
+						#$tf_list2[25], $tf_list2[26], $tf_list2[27], $tf_list2[28], $tf_list2[29];
+						$tf_list2[0],	 $tf_list2[1],	$tf_list2[2],	$tf_list2[3],	$tf_list2[4],	$tf_list2[5],	$tf_list2[6],	$tf_list2[7],
+						$tf_list2[8],	$tf_list2[9],	$tf_list2[10],	$tf_list2[11],	$tf_list2[12],	$tf_list2[13],	$tf_list2[14],	$tf_list2[15],
+						$tf_list2[16],	 $tf_list2[17],	$tf_list2[18],	$tf_list2[19],	$tf_list2[20],	$tf_list2[21],	$tf_list2[22],	$tf_list2[23],
+						$tf_list2[24],	 $tf_list2[25],	$tf_list2[26],	$tf_list2[27],	$tf_list2[28],	$tf_list2[29],	$tf_list2[30],	$tf_list2[31],
+						$tf_list2[32],	 $tf_list2[33],	$tf_list2[34],	$tf_list2[35],	$tf_list2[36],	$tf_list2[37],	$tf_list2[38],	$tf_list2[39],
+						$tf_list2[40],	 $tf_list2[41],	$tf_list2[42],	$tf_list2[43],	$tf_list2[44],	$tf_list2[45],	$tf_list2[46],	$tf_list2[47],
+						$tf_list2[48],	 $tf_list2[49],	$tf_list2[50],	$tf_list2[51],	$tf_list2[52],	$tf_list2[53],	$tf_list2[54],	$tf_list2[55],
+						$tf_list2[56],	 $tf_list2[57],	$tf_list2[58],	$tf_list2[59],	$tf_list2[60],	$tf_list2[61],	$tf_list2[62],	$tf_list2[63];
+
+
+				printf $fileHandle "\t\t}\n";
+			}
+			# v0.86
+			elsif ($array[12] =~ /FILE3/)	{
+				error("*Error 7 >> Undefined measure data file (FILE3). Please confirm $array[1]'s Timing reference") unless ($FILE3_def);
+				complete(0) unless ($FILE3_def);
+				$related_pin = $array[11];
+
+				#$timing_state_rf = "\t\t\ttiming_state : $OUT_timing_state[$m]_edge ;\n";
+				#printf $fileHandle $timing_description.$timing_state_rf, $related_pin;
+				printf $fileHandle $timing_description, $related_pin;
+				printf $fileHandle $timing_type, "tphl", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+						$tphl_list3[0],  $tphl_list3[1],  $tphl_list3[2],  $tphl_list3[3],  $tphl_list3[4],
+						$tphl_list3[5],  $tphl_list3[6],  $tphl_list3[7],  $tphl_list3[8],  $tphl_list3[9],
+						$tphl_list3[10], $tphl_list3[11], $tphl_list3[12], $tphl_list3[13], $tphl_list3[14],
+						$tphl_list3[15], $tphl_list3[16], $tphl_list3[17], $tphl_list3[18], $tphl_list3[19],
+						$tphl_list3[20], $tphl_list3[21], $tphl_list3[22], $tphl_list3[23], $tphl_list3[24];
+						#$tphl_list3[25], $tphl_list3[26], $tphl_list3[27], $tphl_list3[28], $tphl_list3[29];
+				printf $fileHandle $timing_type, "tplh", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+						$tplh_list3[0],  $tplh_list3[1],  $tplh_list3[2],  $tplh_list3[3],  $tplh_list3[4],
+						$tplh_list3[5],  $tplh_list3[6],  $tplh_list3[7],  $tplh_list3[8],  $tplh_list3[9],
+						$tplh_list3[10], $tplh_list3[11], $tplh_list3[12], $tplh_list3[13], $tplh_list3[14],
+						$tplh_list3[15], $tplh_list3[16], $tplh_list3[17], $tplh_list3[18], $tplh_list3[19],
+						$tplh_list3[20], $tplh_list3[21], $tplh_list3[22], $tplh_list3[23], $tplh_list3[24];
+						#$tplh_list3[25], $tplh_list3[26], $tplh_list3[27], $tplh_list3[28], $tplh_list3[29];
+				printf $fileHandle $timing_type, "tr", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+						$tr_list3[0],  $tr_list3[1],  $tr_list3[2],  $tr_list3[3],  $tr_list3[4],
+						$tr_list3[5],  $tr_list3[6],  $tr_list3[7],  $tr_list3[8],  $tr_list3[9],
+						$tr_list3[10], $tr_list3[11], $tr_list3[12], $tr_list3[13], $tr_list3[14],
+						$tr_list3[15], $tr_list3[16], $tr_list3[17], $tr_list3[18], $tr_list3[19],
+						$tr_list3[20], $tr_list3[21], $tr_list3[22], $tr_list3[23], $tr_list3[24];
+						#$tr_list3[25], $tr_list3[26], $tr_list3[27], $tr_list3[28], $tr_list3[29];
+				printf $fileHandle $timing_type, "tf", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+						$tf_list3[0],  $tf_list3[1],  $tf_list3[2],  $tf_list3[3],  $tf_list3[4],
+						$tf_list3[5],  $tf_list3[6],  $tf_list3[7],  $tf_list3[8],  $tf_list3[9],
+						$tf_list3[10], $tf_list3[11], $tf_list3[12], $tf_list3[13], $tf_list3[14],
+						$tf_list3[15], $tf_list3[16], $tf_list3[17], $tf_list3[18], $tf_list3[19],
+						$tf_list3[20], $tf_list3[21], $tf_list3[22], $tf_list3[23], $tf_list3[24];
+						#$tf_list3[25], $tf_list3[26], $tf_list3[27], $tf_list3[28], $tf_list3[29];
+
+				printf $fileHandle "\t\t}\n";
+			}
+			# v0.86
+			elsif ($array[12] =~ /FILE4/)	{
+				error("*Error 7 >> Undefined measure data file (FILE4). Please confirm $array[1]'s Timing reference") unless ($FILE4_def);
+				complete(0) unless ($FILE4_def);
+				$related_pin = $array[11];
+
+				#$timing_state_rf = "\t\t\ttiming_state : $OUT_timing_state[$m]_edge ;\n";
+				#printf $fileHandle $timing_description.$timing_state_rf, $related_pin;
+				printf $fileHandle $timing_description, $related_pin;
+				printf $fileHandle $timing_type, "tphl", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+						$tphl_list4[0],  $tphl_list4[1],  $tphl_list4[2],  $tphl_list4[3],  $tphl_list4[4],
+						$tphl_list4[5],  $tphl_list4[6],  $tphl_list4[7],  $tphl_list4[8],  $tphl_list4[9],
+						$tphl_list4[10], $tphl_list4[11], $tphl_list4[12], $tphl_list4[13], $tphl_list4[14],
+						$tphl_list4[15], $tphl_list4[16], $tphl_list4[17], $tphl_list4[18], $tphl_list4[19],
+						$tphl_list4[20], $tphl_list4[21], $tphl_list4[22], $tphl_list4[23], $tphl_list4[24];
+						#$tphl_list4[25], $tphl_list4[26], $tphl_list4[27], $tphl_list4[28], $tphl_list4[29];
+				printf $fileHandle $timing_type, "tplh", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+						$tplh_list4[0],  $tplh_list4[1],  $tplh_list4[2],  $tplh_list4[3],  $tplh_list4[4],
+						$tplh_list4[5],  $tplh_list4[6],  $tplh_list4[7],  $tplh_list4[8],  $tplh_list4[9],
+						$tplh_list4[10], $tplh_list4[11], $tplh_list4[12], $tplh_list4[13], $tplh_list4[14],
+						$tplh_list4[15], $tplh_list4[16], $tplh_list4[17], $tplh_list4[18], $tplh_list4[19],
+						$tplh_list4[20], $tplh_list4[21], $tplh_list4[22], $tplh_list4[23], $tplh_list4[24];
+						#$tplh_list4[25], $tplh_list4[26], $tplh_list4[27], $tplh_list4[28], $tplh_list4[29];
+				printf $fileHandle $timing_type, "tr", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+						$tr_list4[0],  $tr_list4[1],  $tr_list4[2],  $tr_list4[3],  $tr_list4[4],
+						$tr_list4[5],  $tr_list4[6],  $tr_list4[7],  $tr_list4[8],  $tr_list4[9],
+						$tr_list4[10], $tr_list4[11], $tr_list4[12], $tr_list4[13], $tr_list4[14],
+						$tr_list4[15], $tr_list4[16], $tr_list4[17], $tr_list4[18], $tr_list4[19],
+						$tr_list4[20], $tr_list4[21], $tr_list4[22], $tr_list4[23], $tr_list4[24];
+						#$tr_list4[25], $tr_list4[26], $tr_list4[27], $tr_list4[28], $tr_list4[29];
+				printf $fileHandle $timing_type, "tf", $cell_name."_out"
+										 , $cell_name."_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle "\t\t\t\tvalue ( %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s \n".
+							    "\t\t\t\t      , %s, %s, %s, %s, %s ); \n".
+							    "\t\t\t}\n",
+						$tf_list4[0],  $tf_list4[1],  $tf_list4[2],  $tf_list4[3],  $tf_list4[4],
+						$tf_list4[5],  $tf_list4[6],  $tf_list4[7],  $tf_list4[8],  $tf_list4[9],
+						$tf_list4[10], $tf_list4[11], $tf_list4[12], $tf_list4[13], $tf_list4[14],
+						$tf_list4[15], $tf_list4[16], $tf_list4[17], $tf_list4[18], $tf_list4[19],
+						$tf_list4[20], $tf_list4[21], $tf_list4[22], $tf_list4[23], $tf_list4[24];
+						#$tf_list4[25], $tf_list4[26], $tf_list4[27], $tf_list4[28], $tf_list4[29];
+
+				printf $fileHandle "\t\t}\n";
+			}
+			# v0.85
+			#elsif ($array[1] =~ /^HDA/)	{
+			elsif ($array[12] =~ /FILE1/)	{
+			#elsif ($array[11] =~ /DCLK/)	{
+			#elsif (($array[12] =~ /MC/)||($array[1] =~ /HDA/))	{
+				error("*Error 7 >> Undefined measure data file (FILE1). Please confirm $array[1]'s Timing reference") unless ($FILE1_def);
+				complete(0) unless ($FILE1_def);
+				$related_pin = $array[11];
+
+				$value = "\t\t\t\tvalue ( %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f );\n";
+				printf $fileHandle $timing_description, $related_pin;
+				printf $fileHandle $timing_type, "setup_".$HDA_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Tsetup_list[0], $Tsetup_list[1], $Tsetup_list[2], $Tsetup_list[3], $Tsetup_list[4], $Tsetup_list[5], $Tsetup_list[6], $Tsetup_list[7], $Tsetup_list[8];
+				printf $fileHandle $timing_type, "hold_".$HDA_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Thold_list[0], $Thold_list[1], $Thold_list[2], $Thold_list[3], $Thold_list[4], $Thold_list[5], $Thold_list[6], $Thold_list[7], $Thold_list[8];
+				printf $fileHandle "\t\t}\n";
+			}
+			elsif ($array[12] =~ /MC1/)	{
+				error("*Error 7 >> Undefined measure data file (MC1). Please confirm $array[1]'s Timing reference") unless ($MC1_def);
+				complete(0) unless ($MC1_def);
+				$related_pin = $array[11];
+
+				$value = "\t\t\t\tvalue ( %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f );\n";
+				printf $fileHandle $timing_description, $related_pin;
+				printf $fileHandle $timing_type, "setup_".$MC_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Tsetup_list1[0], $Tsetup_list1[1], $Tsetup_list1[2], $Tsetup_list1[3], $Tsetup_list1[4], $Tsetup_list1[5], $Tsetup_list1[6], $Tsetup_list1[7], $Tsetup_list1[8];
+				printf $fileHandle $timing_type, "hold_".$MC_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Thold_list1[0], $Thold_list1[1], $Thold_list1[2], $Thold_list1[3], $Thold_list1[4], $Thold_list1[5], $Thold_list1[6], $Thold_list1[7], $Thold_list1[8];
+				printf $fileHandle "\t\t}\n";
+			}
+			elsif ($array[12] =~ /MC2/)	{
+				error("*Error 7 >> Undefined measure data file (MC2). Please confirm $array[1]'s Timing reference") unless ($MC2_def);
+				complete(0) unless ($MC2_def);
+				$related_pin = $array[11];
+
+				$value = "\t\t\t\tvalue ( %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f );\n";
+				printf $fileHandle $timing_description, $related_pin;
+				printf $fileHandle $timing_type, "setup_".$MC_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Tsetup_list2[0], $Tsetup_list2[1], $Tsetup_list2[2], $Tsetup_list2[3], $Tsetup_list2[4], $Tsetup_list2[5], $Tsetup_list2[6], $Tsetup_list2[7], $Tsetup_list2[8];
+				printf $fileHandle $timing_type, "hold_".$MC_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Thold_list2[0], $Thold_list2[1], $Thold_list2[2], $Thold_list2[3], $Thold_list2[4], $Thold_list2[5], $Thold_list2[6], $Thold_list2[7], $Thold_list2[8];
+				printf $fileHandle "\t\t}\n";
+			}
+			elsif ($array[12] =~ /MC3/)	{
+				error("*Error 7 >> Undefined measure data file (MC3). Please confirm $array[1]'s Timing reference") unless ($MC3_def);
+				complete(0) unless ($MC3_def);
+				$related_pin = $array[11];
+
+				$value = "\t\t\t\tvalue ( %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f );\n";
+				printf $fileHandle $timing_description, $related_pin;
+				printf $fileHandle $timing_type, "setup_".$MC_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Tsetup_list3[0], $Tsetup_list3[1], $Tsetup_list3[2], $Tsetup_list3[3], $Tsetup_list3[4], $Tsetup_list3[5], $Tsetup_list3[6], $Tsetup_list3[7], $Tsetup_list3[8];
+				printf $fileHandle $timing_type, "hold_".$MC_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Thold_list3[0], $Thold_list3[1], $Thold_list3[2], $Thold_list3[3], $Thold_list3[4], $Thold_list3[5], $Thold_list3[6], $Thold_list3[7], $Thold_list3[8];
+				printf $fileHandle "\t\t}\n";
+			}
+			elsif ($array[12] =~ /MC4/)	{
+				error("*Error 7 >> Undefined measure data file (MC4). Please confirm $array[1]'s Timing reference") unless ($MC4_def);
+				complete(0) unless ($MC4_def);
+				$related_pin = $array[11];
+
+				$value = "\t\t\t\tvalue ( %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f );\n";
+				printf $fileHandle $timing_description, $related_pin;
+				printf $fileHandle $timing_type, "setup_".$MC_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Tsetup_list4[0], $Tsetup_list4[1], $Tsetup_list4[2], $Tsetup_list4[3], $Tsetup_list4[4], $Tsetup_list4[5], $Tsetup_list4[6], $Tsetup_list4[7], $Tsetup_list4[8];
+				printf $fileHandle $timing_type, "hold_".$MC_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Thold_list4[0], $Thold_list4[1], $Thold_list4[2], $Thold_list4[3], $Thold_list4[4], $Thold_list4[5], $Thold_list4[6], $Thold_list4[7], $Thold_list4[8];
+				printf $fileHandle "\t\t}\n";
+			}
+			elsif ($array[12] =~ /MC5/)	{
+				error("*Error 7 >> Undefined measure data file (MC5). Please confirm $array[1]'s Timing reference") unless ($MC5_def);
+				complete(0) unless ($MC5_def);
+				$related_pin = $array[11];
+
+				$value = "\t\t\t\tvalue ( %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f\n".
+						  "\t\t\t\t      , %f, %f, %f );\n";
+				printf $fileHandle $timing_description, $related_pin;
+				printf $fileHandle $timing_type, "setup_".$MC_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Tsetup_list5[0], $Tsetup_list5[1], $Tsetup_list5[2], $Tsetup_list5[3], $Tsetup_list5[4], $Tsetup_list5[5], $Tsetup_list5[6], $Tsetup_list5[7], $Tsetup_list5[8];
+				printf $fileHandle $timing_type, "hold_".$MC_timing_state[$m], $cell_name."_xsys"
+										 , $cell_name."_xsys_tm_derating"
+										 , $cell_name."_tm_process";
+				printf $fileHandle $value."\t\t\t}\n", $Thold_list5[0], $Thold_list5[1], $Thold_list5[2], $Thold_list5[3], $Thold_list5[4], $Thold_list5[5], $Thold_list5[6], $Thold_list5[7], $Thold_list5[8];
+				printf $fileHandle "\t\t}\n";
+			}
+
+
+			printf $fileHandle "\t}\n";
+			$order = $order + $t_bits;
+
+		}
+		printf $fileHandle	"}\n"."// end of %s UDC\n", $cell_name;
+		close $fileHandle;
+		printf "\t\t\t     $fileName5\n";
+	}
+	printf "\n";
+}

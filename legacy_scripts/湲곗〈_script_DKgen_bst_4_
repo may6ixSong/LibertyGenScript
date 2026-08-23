@@ -1,0 +1,853 @@
+###################
+##  PG_PIN FILE  ##
+###################
+
+sub pg_pin_gen
+{
+	printf "	pg_pin file save as ... \n";
+	@pg_pin_condition = ("bst", "wst");
+
+	foreach $m (0 .. $#pg_pin_condition)	{
+		$fileName6 = "./UDC_RESULT/"."pg_pin_".$pg_pin_condition[$m];
+		open ($fileHandle, "> $fileName6") or die "Cannot open $fileName6 : $!";
+
+		foreach $vlist (@pwr_array)	{
+			@array = split(/(,)/, $vlist);
+			@portName = $array[2*2] =~ /\w+/g;
+			@volts = $array[6*2] =~ /\S+/g;
+			# v0.86
+			#if ($volts[0] eq "3.3V")	{
+			#	printf $fileHandle "default	$portName[0]		VDD_3.60000	primary_power\n"
+			#			if ($pg_pin_condition[$m] eq "bst");
+			#	printf $fileHandle "default	$portName[0]		VDD_3.00000	primary_power\n"
+			#			if ($pg_pin_condition[$m] eq "wst");
+			#}
+			#elsif ($volts[0] eq "1.2V")	{
+			#	printf $fileHandle "default	$portName[0]		VDD_1.32000	primary_power\n"
+			#			if ($pg_pin_condition[$m] eq "bst");
+			#	printf $fileHandle "default	$portName[0]		VDD_1.08000	primary_power\n"
+			#			if ($pg_pin_condition[$m] eq "wst");
+			#}
+			if ($volts[0] eq $high_voltage_level)	{
+				printf $fileHandle "default	$portName[0]		VDD_$high_vmax_bst"."000	primary_power\n"
+						if ($pg_pin_condition[$m] eq "bst");
+				printf $fileHandle "default	$portName[0]		VDD_$high_vmax_wst"."000	primary_power\n"
+						if ($pg_pin_condition[$m] eq "wst");
+			}
+			elsif ($volts[0] eq $mid_voltage_level)	{
+				printf $fileHandle "default	$portName[0]		VDD_$mid_vmax_bst"."000	primary_power\n"
+						if ($pg_pin_condition[$m] eq "bst");
+				printf $fileHandle "default	$portName[0]		VDD_$mid_vmax_wst"."000	primary_power\n"
+						if ($pg_pin_condition[$m] eq "wst");
+			}
+			elsif ($volts[0] eq $low_voltage_level)	{
+				printf $fileHandle "default	$portName[0]		VDD_$low_vmax_bst"."000	primary_power\n"
+						if ($pg_pin_condition[$m] eq "bst");
+				printf $fileHandle "default	$portName[0]		VDD_$low_vmax_wst"."000	primary_power\n"
+						if ($pg_pin_condition[$m] eq "wst");
+			}
+		}
+		foreach $vlist (@gnd_array)	{
+			@array = split(/(,)/, $vlist);
+			@portName = $array[2*2] =~ /\w+/g;
+			@volts = $array[6*2] =~ /\S+/g;
+			if ($volts[0] eq "0V")	{
+				printf $fileHandle "default	$portName[0]		VSS_0.00000	primary_ground\n"
+						if ($pg_pin_condition[$m] eq "bst");
+				printf $fileHandle "default	$portName[0]		VSS_0.00000	primary_ground\n"
+						if ($pg_pin_condition[$m] eq "wst");
+			}
+			elsif ($volts[0] eq "-1.2V")	{
+				printf $fileHandle "default	$portName[0]		VSS_0.00000	primary_ground\n"
+						if ($pg_pin_condition[$m] eq "bst");
+				printf $fileHandle "default	$portName[0]		VSS_0.00000	primary_ground\n"
+						if ($pg_pin_condition[$m] eq "wst");
+			}
+		}
+
+		printf "\t\t\t     $fileName6\n";
+		close $fileHandle;
+	}
+	printf "\n";
+}
+
+
+sub read_excel
+{
+	open ($fileHandle, "$fileName") or die "Cannot open $fileName : $!";
+	$oBook = Spreadsheet::ParseExcel::Workbook->Parse($fileName) 
+	  		or die "Could not open source Excel file $fileName: $!";
+	$sheets = $oBook->{SheetCount};
+
+	if ($sheets < 1)	{
+		#printf "\n*Error >> Invalid input file\n\n";
+		error ("*Error 1 >> Invalid input file");
+		complete(0);
+	}
+
+	foreach $sheet (0 .. $sheets-1) {
+	    	$oSheet = $oBook->{Worksheet}[$sheet];
+	    	$sheetName = $oSheet->{Name};
+	    	next unless (exists ($oSheet->{MaxRow}) and (exists ($oSheet->{MaxCol})));
+		#next unless ($sheetName =~ /port|Port|PORT|UDC/);
+		if ($sheetName =~ /port|Port|PORT/)	{
+		    	foreach $row ($oSheet->{MinRow} .. $oSheet->{MaxRow}) {
+		    	    	#foreach $column ($oSheet->{MinCol} .. $oSheet->{MaxCol}) {
+					next unless (defined $oSheet->{Cells}[$row][0]);
+					if (($oSheet->{Cells}[$row][0]->Value =~ /atop_/) or
+						($oSheet->{Cells}[$row][0]->Value =~ /aps_/)	or
+						($oSheet->{Cells}[$row][0]->Value =~ /ATOP_/))	{
+						$devicerow = $row;
+						#$devicecol = $column;
+					}
+			}
+			#$cell_name = $oSheet->{Cells}[$devicerow][$devicecol]->Value;
+			#$cell_name = $cell_name;
+			$maxcol = 15; $lastpinnum = 1;
+		    	#foreach $row ($devicerow+2 .. $udcrow-1) {
+		    	foreach $row ($devicerow+2 .. $oSheet->{MaxRow}) {
+					next unless (defined $oSheet->{Cells}[$row][1]);
+					$vlist = "";
+		    	    foreach $column (0 .. $maxcol)	{# $oSheet->{MaxCol}) {
+						if ($column == 14)	{
+							$vlist = $vlist."-,";
+						}
+		         		elsif ((defined $oSheet->{Cells}[$row][$column])
+						&&($oSheet->{Cells}[$row][$column] =~ /\w/g))	{
+							$vlist = $vlist.$oSheet->{Cells}[$row][$column]->Value.",";
+		        		} else {
+							$vlist = $vlist."-,";
+		         		}
+		        	}
+				if ($oSheet->{Cells}[$row][1]->Value =~ /PORT/)	{
+					@array = split(/(,)/, $vlist);
+					# v0.86
+					#push @clk_array, $array[2*2] if ($oSheet->{Cells}[$row][2]->Value =~ /CLK$/)
+					#					    or ($oSheet->{Cells}[$row][2]->Value =~ /CLK_E$/)
+					#					    or ($oSheet->{Cells}[$row][2]->Value =~ /CLK_O$/);
+					push @clk_array, $array[2*2] if ($oSheet->{Cells}[$row][15]->Value =~ /clock/);
+					push @port_array, $vlist;
+					#$lastpinnum = $oSheet->{Cells}[$row][4]->Value if 
+					#		($oSheet->{Cells}[$row][4]->Value > $lastpinnum);
+					$lastpinnum = $oSheet->{Cells}[$row][3]->Value + $oSheet->{Cells}[$row][4]->Value ;
+				}
+				elsif ($oSheet->{Cells}[$row][1]->Value =~ /PWR/)	{
+					$PWR_PORT_name = $oSheet->{Cells}[$row][2]->Value;
+					warning("*Warning 4 >> PORT(PWR) & I/O description is unmatched in $PWR_PORT_name line -- Deleted in power array") 
+							unless ($oSheet->{Cells}[$row][5]->Value =~ /P|p/);
+					push @pwr_array, $vlist
+							if ($oSheet->{Cells}[$row][5]->Value =~ /P|p/);
+				}
+				elsif ($oSheet->{Cells}[$row][1]->Value =~ /GND/)	{
+					$GND_PORT_name = $oSheet->{Cells}[$row][2]->Value;
+					warning("*Warning 4 >> PORT(GND) & I/O description is unmatched in $GND_PORT_name line -- Deleted in ground array") 
+							unless ($oSheet->{Cells}[$row][5]->Value =~ /G|g/);
+					push @gnd_array, $vlist
+							if ($oSheet->{Cells}[$row][5]->Value =~ /G|g/);
+				}
+				else	{}
+		    	}
+		}
+		elsif ($sheetName =~ /UDC_GEN/)	{
+			#@first_index = ("UDC_GEN_BST", "UDC_GEN_TIV", "UDC_GEN_WST");
+			$first_index = "UDC_GEN_".$constraint_CAP;
+			#foreach $m (0 .. 2)	{
+			foreach $m (0 .. 0)	{
+				#$firstindex = $first_index[$m];
+				$firstindex = $first_index;
+				$escape = 0;
+
+
+				foreach $row ($oSheet->{MinRow} .. $oSheet->{MaxRow}) {
+		    	    		foreach $column ($oSheet->{MinCol} .. $oSheet->{MaxCol}) {
+						next unless (defined $oSheet->{Cells}[$row][$column]);
+						if ($oSheet->{Cells}[$row][$column]->Value =~ /$firstindex/)	{
+							$FirstRow = $row;
+							$FirstCol = $column;
+							$escape = 1;
+							last;
+						}
+					}
+					last if ($escape);
+				}
+
+				foreach $udc_row ($FirstRow .. $oSheet->{MaxRow})	{
+					next unless (defined $oSheet->{Cells}[$udc_row][$FirstCol]);
+					next unless (defined $oSheet->{Cells}[$udc_row][$FirstCol+1]);
+					$cell_index = $oSheet->{Cells}[$udc_row][$FirstCol]->Value;
+					$cell_value = $oSheet->{Cells}[$udc_row][$FirstCol+1]->Value;
+					#printf "$cell_index // $cell_value	\n";
+					$area[$m] = $cell_value if ($cell_index =~ /area/);
+					$width[$m] = $cell_value if ($cell_index =~ /width/);
+					$height[$m] = $cell_value if ($cell_index =~ /height/);
+					$static_current[$m] = $cell_value if ($cell_index =~ /static_current/);
+					$cell_name[$m] = $cell_value if ($cell_index =~ /cell/);
+					$library_name[$m] = $cell_value if ($cell_index =~ /library_name/);
+					$MC_timing_state[$m] = $cell_value if ($cell_index =~ /MC_timing_state/);
+					$HDA_timing_state[$m] = $cell_value if ($cell_index =~ /HDA_timing_state/);
+					$OUT_timing_state[$m] = $cell_value if ($cell_index =~ /OUT_timing_state/);
+					#$capacitance[$m] = $cell_value if ($cell_index =~ /capacitance/);
+					$nom_voltage[$m] = $cell_value if ($cell_index =~ /nom_voltage/);
+					$nom_temperature[$m] = $cell_value if ($cell_index =~ /nom_temperature/);
+					$case1_temp[$m] = $cell_value if ($cell_index =~ /case1_temp/);
+					$case1_volt[$m] = $cell_value if ($cell_index =~ /case1_volt/);
+					$case1_value[$m] = $cell_value if ($cell_index =~ /case1_value/);
+					$case2_temp[$m] = $cell_value if ($cell_index =~ /case2_temp/);
+					$case2_volt[$m] = $cell_value if ($cell_index =~ /case2_volt/);
+					$case2_value[$m] = $cell_value if ($cell_index =~ /case2_value/);
+					$case3_temp[$m] = $cell_value if ($cell_index =~ /case3_temp/);
+					$case3_volt[$m] = $cell_value if ($cell_index =~ /case3_volt/);
+					$case3_value[$m] = $cell_value if ($cell_index =~ /case3_value/);
+					$case4_temp[$m] = $cell_value if ($cell_index =~ /case4_temp/);
+					$case4_volt[$m] = $cell_value if ($cell_index =~ /case4_volt/);
+					$case4_value[$m] = $cell_value if ($cell_index =~ /case4_value/);
+					#printf "$Tsetup[$m] // $Thold[$m]\n";
+				}
+			}
+		}
+		elsif ($sheetName =~ /UDC_timing/)	{
+			@first_index = ("Output", "Input");
+#			$Output_Y_index = 5;
+#			$Output_X_index = 5;
+			$Output_Y_index = 8;
+			$Output_X_index = 8;
+			$Input_Y_index = 3;
+			$Input_X_index = 3;
+			foreach $m (0 .. 1)	{
+				$firstindex = $first_index[$m];
+				$escape = 0;
+
+				foreach $row ($oSheet->{MinRow} .. $oSheet->{MaxRow}) {
+		    	    		foreach $column ($oSheet->{MinCol} .. $oSheet->{MaxCol}) {
+						next unless (defined $oSheet->{Cells}[$row][$column]);
+						if ($oSheet->{Cells}[$row][$column]->Value =~ /$firstindex/)	{
+							$FirstRow = $row;
+							$FirstCol = $column;
+							$escape = 1;
+							last;
+						}
+					}
+					last if ($escape);
+				}
+				
+				if ($m == 0)	{
+					foreach $j (0 .. $Output_Y_index-1)	{
+						$OUT_y[$j] = $oSheet->{Cells}[$FirstRow][$FirstCol+4+$j]->Value;
+					}
+					foreach $j (0 .. $Output_X_index-1)	{
+						$OUT_x[$j] = $oSheet->{Cells}[$FirstRow+1][$FirstCol+4+$j]->Value;
+					}
+				}
+				elsif ($m == 1)	{
+					foreach $j (0 .. $Input_Y_index-1)	{
+						$IN_y_setup[$j] = $oSheet->{Cells}[$FirstRow][$FirstCol+4+$j]->Value;
+						#$IN_y_hold[$j] = $oSheet->{Cells}[$FirstRow+2][$FirstCol+4+$j]->Value;
+					}
+					foreach $j (0 .. $Input_X_index-1)	{
+						$IN_x_setup[$j] = $oSheet->{Cells}[$FirstRow+1][$FirstCol+4+$j]->Value;
+						#$IN_x_hold[$j] = $oSheet->{Cells}[$FirstRow+3][$FirstCol+4+$j]->Value;
+					}
+				}
+			}
+		}
+	
+		$cell_name = $cell_name[0];
+	}
+	close $fileHandle;
+}
+
+
+sub read_mt_out
+{
+	$mt_out_file_name = $_[0];
+	$mt_out_argument = $_[1];
+	chomp ($mt_out_file_name);
+	chomp ($mt_out_argument);
+
+	open (FILE,$mt_out_file_name)||die "cannot open \"$mt_out_file_name\"\n";
+	@mtarr = <FILE>;
+	close FILE;
+	while (1)	{
+		$vlist = shift @mtarr;
+		chomp ($vlist);
+		@array = $vlist =~ /\w+/g;
+		if ($array[0] eq "index") {
+			unshift @mtarr, $vlist."\n";
+			last;
+		}
+	}
+		
+	#shift @mtarr; #-works for finesim & hspice
+	$mtstr = "@mtarr";
+	chomp($mtstr);
+
+	## processing headers (@mt_head = measurement list)
+	#if($mtstr =~ m/^\s+/s){
+	#	$mtstr = $2
+	#}
+
+	if($mtstr =~ m/(.*)alter/s){
+		@mt_head = split /\s+/,$1;
+		#print @mt_head;
+		if ($mt_head[0] eq ''){
+			shift @mt_head;
+		}	
+		push @mt_head, 'alter';
+	}
+
+	$mt_head_dbug = 15; $cnt = 0;
+	foreach $mt_head (@mt_head)	{
+		if ($mt_head =~ /tphl/)	{
+			$htol_num = $cnt;
+			$mt_head_dbug -= 1;
+		}
+		elsif ($mt_head =~ /tplh/)	{
+			$ltoh_num = $cnt;
+			$mt_head_dbug -= 2;
+		}
+		elsif ($mt_head =~ /tr/)	{
+			$tr_num = $cnt;
+			$mt_head_dbug -= 4;
+		}
+		elsif ($mt_head =~ /tf/)	{
+			$tf_num = $cnt;
+			$mt_head_dbug -= 8;
+		}
+		$cnt++;
+	}
+	if ($mt_head_dbug)	{
+		$mt_head_dbug_bin = DecToNumBase ($mt_head_dbug, 2, 4);
+		@mt_head_dbug_bin_array = $mt_head_dbug_bin =~ /\d/g;
+		if ($mt_head_dbug_bin_array[3]){
+			error("*Error 6 >> Need to more measured data (tphl)");
+		}
+		elsif ($mt_head_dbug_bin_array[2]){
+			error("*Error 6 >> Need to more measured data (tplh)");
+		}
+		elsif ($mt_head_dbug_bin_array[1]){
+			error("*Error 6 >> Need to more measured data (tr)");
+		}
+		elsif ($mt_head_dbug_bin_array[0]){
+			error("*Error 6 >> Need to more measured data (tf)");
+		}
+		complete(0);
+	}
+
+	## parsing selections ########################################################
+	@mt_sel = ();
+	for($i=0;$i<=$#mt_head;$i++){
+		@mt_sel = (@mt_sel,$i);
+	}
+
+	## Data Processing ###########################################################
+	#if($mtstr =~ m/^\s+/s){
+	#	$mtstr = $2
+	#}
+	if($mtstr =~ m/alter#(.*)/s){
+		@mt_data = split /\s+/,$1;
+		#print @mt_data;
+		if ($mt_data[0] eq ''){
+			shift @mt_data;
+		}
+	}
+	$mt_index = ($#mt_data+1) / ($#mt_head+1);
+	#printf "\t$#mt_sel\t@mt_sel\t$mt_index\t$#mt_data\t$#mt_head\n\n";
+
+	$aLine = "";
+	foreach(@mt_sel){
+	     #printf " %10s ", $mt_head[$_];
+	     #push @mt_array, "\t".$mt_head[$_];
+	     $aLine .= "          ".$mt_head[$_];
+		#printf "\t$_\t$mt_head[$_]\n";
+	}
+	#push @mt_array, "\n";
+	@mt_out_array = ();
+	push @mt_out_array, $aLine;
+
+	$aLine = "";
+	for($i=0; $i < $mt_index; $i++){
+		if (not( $mt_data[$i*($#mt_head+1)] =~ m/^[a-z]/s)){
+	        foreach(@mt_sel){	
+	               $value = $mt_data[$i*($#mt_head+1)+$_];
+	               $aLine .= "\t".$value;
+			}
+	    	push @mt_out_array, $aLine;
+		$aLine = "";
+		}
+	}
+	if ($mt_make)	{
+		{open ($mtHandle, "> ./UDC_RESULT/$mt_out_argument.dat") or die "Cannot open $mt_out_argument.dat : $!";}
+		foreach $vlist (@mt_out_array){
+			printf $mtHandle $vlist."\n";
+		}
+		close $mtHandle;
+	}
+	return @mt_out_array;
+}
+
+sub read_mt_in
+{
+	$mt_in_file_name = $_[0];
+	$mt_in_argument = $_[1];
+	chomp ($mt_in_file_name);
+	chomp ($mt_in_argument);
+
+	open (FILE,$mt_in_file_name)||die "cannot open \"$mt_in_file_name\"\n";
+	@mtarr2 = <FILE>;
+	close FILE;
+	while (1)	{
+		$vlist = shift @mtarr2;
+		chomp ($vlist);
+		@array = $vlist =~ /\w+/g;
+		if ($array[0] eq "index") {
+			unshift @mtarr2, $vlist."\n";
+			last;
+		}
+	}
+		
+	#shift @mtarr; #-works for finesim & hspice
+	$mtstr2 = "@mtarr2";
+	chomp($mtstr2);
+
+	## processing headers (@mt_head = measurement list)
+	#if($mtstr2 =~ m/^\s+/s){
+	#	$mtstr2 = $2
+	#}
+
+
+	if($mtstr2 =~ m/(.*)alter/s){
+		@mt_head2 = split /\s+/,$1;
+		#print @mt_head2;
+		if ($mt_head2[0] eq ''){
+			shift @mt_head2;
+		}	
+		push @mt_head2, 'alter';
+	}
+
+	$mt_head_dbug = 3; $cnt = 0;
+	foreach $mt_head2 (@mt_head2)	{
+		if ($mt_head2 =~ /setup/)	{
+			$Tsetup_num = $cnt;
+			$mt_head_dbug -= 1;
+		}
+		elsif ($mt_head2 =~ /hold/)	{
+			$Thold_num = $cnt;
+			$mt_head_dbug -= 2;
+		}
+		$cnt++;
+	}
+	if ($mt_head_dbug)	{
+		$mt_head_dbug_bin = DecToNumBase ($mt_head_dbug, 2, 2);
+		@mt_head_dbug_bin_array = $mt_head_dbug_bin =~ /\d/g;
+		if ($mt_head_dbug_bin_array[1]){
+			error("*Error 6 >> Need to more measured data (hold)");
+		}
+		elsif ($mt_head_dbug_bin_array[0]){
+			error("*Error 6 >> Need to more measured data (setup)");
+		}
+		complete(0);
+	}
+
+	## parsing selections ########################################################
+	@mt_sel2 = ();
+	for($i=0;$i<=$#mt_head2;$i++){
+		@mt_sel2 = (@mt_sel2,$i);
+	}
+
+	## Data Processing ###########################################################
+	#if($mtstr2 =~ m/^\s+/s){
+	#	$mtstr2 = $2
+	#}
+	if($mtstr2 =~ m/alter#(.*)/s){
+		@mt_data = split /\s+/,$1;
+		#print @mt_data;
+		if ($mt_data[0] eq ''){
+			shift @mt_data;
+		}
+	}
+	$mt_index = ($#mt_data+1) / ($#mt_head2+1);
+	#printf "\t$#mt_sel2\t@mt_sel2\t$mt_index\t$#mt_data\t$#mt_head2\n\n";
+
+	$aLine = "";
+	foreach(@mt_sel2){
+	     #printf " %10s ", $mt_head2[$_];
+	     #push @mt_array, "\t".$mt_head2[$_];
+	     $aLine .= "      ".$mt_head2[$_];
+		#printf "\t$_\t$mt_head2[$_]\n";
+	}
+	#push @mt_array, "\n";
+	@mt_in_array = ();
+	push @mt_in_array, $aLine;
+
+	$aLine = "";
+	for($i=0; $i < $mt_index; $i++){
+		if (not( $mt_data[$i*($#mt_head2+1)] =~ m/^[a-z]/s)){
+	        foreach(@mt_sel2){	
+	               $value = $mt_data[$i*($#mt_head2+1)+$_];
+	               $aLine .= "\t".$value;
+			}
+	    	push @mt_in_array, $aLine;
+		$aLine = "";
+		}
+	}
+	if ($mt_make)	{
+		{open ($mtHandle, "> ./UDC_RESULT/$mt_in_argument.dat") or die "Cannot open $mt_in_argument.dat : $!";}
+		foreach $vlist (@mt_in_array){
+			printf $mtHandle $vlist."\n";
+		}
+		close $mtHandle;
+	}
+	return @mt_in_array;
+}
+
+
+sub mk_runlist	{
+	$runlist_fileName = "DKgen.runlist";
+	open ($fileHandle, "> $runlist_fileName") or die "Cannot open $runlist_fileName : $!";
+
+	#foreach $m (0 .. 2)	{
+	foreach $m (0 .. 0)	{
+		#$udc_fileName = "./UDC_RESULT/".$cell_name."_".$udc_condition[$m].".udc";
+		$udc_fileName = "./UDC_RESULT/".$cell_name."_".$constraint.".udc";
+		$pdt_fileName = "./UDC_RESULT/".$cell_name.".pdt";
+		#$pgpin_fileName = "./UDC_RESULT/pg_pin_wst";	$pgpin_fileName = "./UDC_RESULT/pg_pin_bst" if ($m == 0);
+		$pgpin_fileName = "./UDC_RESULT/pg_pin_$udc_condition";
+		#$lib_fileName = "./LIB_RESULT/".$cell_name."_".$udc_condition[$m].".lib";
+		$lib_fileName = "./LIB_RESULT/".$cell_name."_".$constraint.".lib";
+		@library_fileName = $library_name[$m] =~ /\w+/g;
+		#printf $fileHandle "### create liberty file_$udc_condition[$m]\n".
+		printf $fileHandle "### create liberty file_$constraint\n".
+			"read_liberty -liberty_only $library_name[$m].lib\n".
+			"read_udc $udc_fileName\n".
+			"read_pdt $pdt_fileName -add_library\n".
+			"write_udc $library_fileName[0] -format synopsys -multiple -all_derating ".
+			"-state_dependency -pdt -cell_name $cell_name -output $lib_fileName ".
+			"-pg_pin_info $pgpin_fileName -syn_ver 0606\n\n\n";
+	}
+	printf $fileHandle "### check errors of liberty file\n";
+	#foreach $m (0..2)	{
+	foreach $m (0..0)	{
+		#$lib_fileName = "./LIB_RESULT/".$cell_name."_".$udc_condition[$m].".lib";
+		$lib_fileName = "./LIB_RESULT/".$cell_name."_".$constraint.".lib";
+		printf $fileHandle "read_liberty -liberty_only $lib_fileName\n"
+	}
+	printf $fileHandle "\n\nquit\n";
+
+	close $fileHandle;
+}
+
+sub mk_runlist_div	{
+	#foreach $m (0 .. 2)	{
+	foreach $m (0 .. 0)	{
+		#$runlist_fileName = "DKgen.runlist_".$udc_condition[$m];
+		$runlist_fileName = "DKgen.runlist_".$constraint;
+		open ($fileHandle, "> $runlist_fileName") or die "Cannot open $runlist_fileName : $!";
+
+		#$udc_fileName = "./UDC_RESULT/".$cell_name."_".$udc_condition[$m].".udc";
+		$udc_fileName = "./UDC_RESULT/".$cell_name."_".$constraint.".udc";
+		$pdt_fileName = "./UDC_RESULT/".$cell_name.".pdt";
+		$pgpin_fileName = "./UDC_RESULT/pg_pin_$udc_condition";
+		#$lib_fileName = "./LIB_RESULT/".$cell_name."_".$udc_condition[$m].".lib";
+		$lib_fileName = "./LIB_RESULT/".$cell_name."_".$constraint.".lib";
+		@library_fileName = $library_name[$m] =~ /\w+/g;
+		printf $fileHandle #"### create liberty file_$udc_condition[$m]\n".
+			"read_liberty -liberty_only $library_name[$m].lib\n".
+			"read_udc $udc_fileName \n".
+			"read_pdt $pdt_fileName -add_library\n".
+			"set_variable maker kch0827\n".	# for test
+			"write_udc $library_fileName[0] -format synopsys -multiple -all_derating ".
+			"-state_dependency -pdt -cell_name $cell_name -output $lib_fileName ".
+			"-pg_pin_info $pgpin_fileName -syn_ver 0606\n";#\n\n";
+
+		#printf $fileHandle "### check errors of liberty file\n";
+		#$lib_fileName = "./LIB_RESULT/".$cell_name."_".$udc_condition[$m].".lib";
+		$lib_fileName = "./LIB_RESULT/".$cell_name."_".$constraint.".lib";
+		#printf $fileHandle "read_liberty -liberty_only $lib_fileName\n";
+		#printf $fileHandle "check_library $library_fileName[0]\n";
+		printf $fileHandle "quit\n";
+
+		close $fileHandle;
+	}
+}
+
+sub mk_env	{
+	$env_fileName = "DKgen.env";
+	open ($fileHandle, "> $env_fileName") or die "Cannot open $env_fileName : $!";
+
+	printf $fileHandle "#! /bin/csh -f\n";
+	printf $fileHandle "unsetenv CUBICWARE\n";
+	printf $fileHandle "unsetenv CUBICTECH\n";
+	printf $fileHandle "\n";
+	#printf $fileHandle "setenv CUBICWARE /user/s5cr007/S5CR007/RESOURCES/FROM_IPS/TOOL/sec100311_0001_Common_CubicWare_TOOL_CubicWare_N/sec_cubicexec/SOL/bin\n";
+	printf $fileHandle "setenv CUBICWARE /user/ciscore.lsi/Cubic/sec130125_0038_Common_CubicWare_TOOL_CubicWare_N/CubicWare/All/LINUX/bin\n";
+	printf $fileHandle "setenv LM_LICENSE_FILE /appl/SOL/CubicWare/cubicware_khlic:/appl/SOL/CubicWare/cubicware_nrdlic \n";
+	printf $fileHandle "\n";
+	printf $fileHandle "\$CUBICWARE/Cubic\n";
+	close $fileHandle;
+}
+
+
+sub run_env	{
+
+	system ("chmod 775 $env_fileName");
+	system ("$env_fileName < $runlist_fileName");
+
+	system ("\\rm $env_fileName");
+	system ("\\rm $runlist_fileName");
+
+}
+
+sub run_env_div	{
+
+	system ("chmod 775 $env_fileName");
+	#system ("$env_fileName");
+
+	################################################################
+	#foreach $m (0 .. 2)	{
+	foreach $m (0 .. 0)	{
+		#$runlist_fileName = "DKgen.runlist_".$udc_condition[$m];
+		$runlist_fileName = "DKgen.runlist_".$constraint;
+		printf "\n   **********************************************************".
+			  "\n   ************** Generating $runlist_fileName **************".
+			  "\n   **********************************************************\n\n".
+			  "\n** Execute cubic_sub\n";
+
+
+		#system ("$env_fileName < $runlist_fileName");
+		system ("cubic_sub -64 -Is /appl/LINUX/CubicWare/Cubic64 -f $runlist_fileName -l ./Cubic.log");
+		#system ("\\rm $runlist_fileName");
+
+	}
+	system ("\\rm $env_fileName");
+
+	#printf "\n** DKgen is completed\n\n";
+
+}
+
+sub add_comments
+{
+	printf "\n** Please wait to complete message\n";
+
+	open (FILE,$lib_fileName)||die "cannot open \"$lib_fileName\"\n";
+	@libarr = <FILE>;
+	close FILE;
+
+	system ("\\rm $lib_fileName");
+
+	open ($fileHandle, "> $lib_fileName") or die "Cannot open $lib_fileName : $!";
+
+	$lib_header_format = 	"/**************************************************\n".
+						" * This liberty is generated by DKgen v%s kch	*\n".
+						" * Date	: %s			*\n".
+						" * Written by	: $g_username						*\n".
+						" **************************************************/\n\n";
+
+	@local_time = localtime(time); $local_time[5]+=1900; $local_time[4]+=1;
+	#printf $fileHandle $lib_header_format, $DKgen_ver, scalar localtime,"$local_time[5]-$local_time[4]-$local_time[3]";
+	printf $fileHandle $lib_header_format, $DKgen_ver, scalar localtime;
+
+	while (@libarr)	{
+		$vlist = shift @libarr;
+		printf $fileHandle $vlist;
+	}
+	close $fileHandle;
+
+	#printf "\n** Please check the log file >>>	./log/*.error or *.warning\n" 
+	#		if ((-e "./log/*.warning") or (-e "./log/*.error"));
+
+	printf "\n** DKgen is completed\n\n";
+
+}
+
+
+sub mk_folder
+{
+#	system ("ls > mk_folder_list");
+#	open (my $mk_folder_Handle, "mk_folder_list") or die "Cannot open mk_folder_list : $!";
+
+#	while (my $mk_folder_aLine = <$mk_folder_Handle>){
+#		chomp $mk_folder_aLine;
+
+		#system ("\\rm -r UDC_RESULT") if ($mk_folder_aLine =~ m/UDC_RESULT/);
+		#system ("\\rm -r LIB_RESULT") if ($mk_folder_aLine =~ m/LIB_RESULT/);
+		#system ("\\rm -r log") if ($mk_folder_aLine =~ m/log/);
+		#system ("\\rm -r UDC_RESULT") if (-e "UDC_RESULT");
+		#system ("\\rm -r LIB_RESULT") if (-e "LIB_RESULT");
+		#system ("\\rm -r log") if (-e "log");
+#	}
+#	close $mk_folder_Handle;
+	
+#	system ("\\rm mk_folder_list");
+	system ("mkdir ./UDC_RESULT") unless (-e "UDC_RESULT");
+	system ("mkdir ./LIB_RESULT") unless (-e "LIB_RESULT");
+	system ("mkdir ./log") unless (-e "log");
+
+}
+
+
+sub print_errorcode
+{
+	printf "*Error code 1 : Invalid input file (empty sheet)\n";
+	printf "*Error code 2 : Could not find device name (atop_xxxxx)\n";
+	printf "*Error code 4 : Invalid I/O information\n";
+	printf "*Error code 5 : Could not find UDC information (UDC_GEN)\n";
+	printf "*Error code 6 : Need to more measured data\n";
+	printf "*Error code 7 : Undefined measure data file\n";
+
+}
+
+sub print_warningcode
+{
+	printf "*Warning code 1 : Difference bitwidth between Name & Bits\n";
+	printf "*Warning code 2 : Unmatched clock info between Name & Related Pin (Excel sheet)\n";
+	printf "*Warning code 3 : Detected empty data cell in excel sheet\n";
+
+}
+
+sub error
+{
+	$err_string = $_[0];
+
+	unless ($errorcnt) 
+	{open ($errorHandle, "> DKgen_error.dat") or die "Cannot open DKgen_error.dat : $!";}
+
+	printf "$err_string\n\n";
+	printf $errorHandle $err_string."\n\n";
+
+	$errorcnt++;
+}
+
+sub warning
+{
+	$warn_string = $_[0];
+
+	unless ($warningcnt)
+	{open ($warningHandle, "> DKgen_warning.dat") or die "Cannot open DKgen_warning.dat : $!";}
+
+	printf "$warn_string\n\n";
+	printf $warningHandle $warn_string."\n\n";
+
+	$warningcnt++;
+}
+
+sub complete
+{
+	if ($_[0])	{printf "\n** DKgen is Completed";}
+	else	{printf "\n** DKgen is Canceled";}
+
+	if ($errorcnt or $warningcnt)	{
+		printf " with $errorcnt error & $warningcnt warning";
+		printf "\n\nPlease refer to ";
+		printf "DKgen_error.dat  " if ($errorcnt);
+		printf "DKgen_warning.dat  " if ($warningcnt);
+		printf "\n\n";
+	}	else	{printf " without error & warning\n\n";}
+
+
+	system ("\\rm ./log/DKgen_Cubic_$constraint.error") if (-e "./log/DKgen_Cubic_$constraint.error");
+	system ("\\rm ./log/DKgen_Cubic_$constraint.warning") if (-e "./log/DKgen_Cubic_$constraint.warning");
+	system ("\\rm ./log/DKgen_Cubic_$constraint.log") if (-e "./log/DKgen_Cubic_$constraint.log");
+
+	#system ("\rm -r ./log") if (-e "./log");
+
+	#system ("mv Cubic.error ./log/DKgen_Cubic_$udc_condition[$m].error") 
+	system ("mv Cubic.error ./log/DKgen_Cubic_$constraint.error") 
+			#if ($mk_file_aLine =~ m/Cubic.error/);
+			if (-e "Cubic.error");
+	#system ("mv Cubic.warning ./log/DKgen_Cubic_$udc_condition[$m].warning")
+	system ("mv Cubic.warning ./log/DKgen_Cubic_$constraint.warning")
+			#if ($mk_file_aLine =~ m/Cubic.warning/);
+			if (-e "Cubic.warning");
+	#system ("mv Cubic.log ./log/DKgen_Cubic_$udc_condition[$m].log")
+	system ("mv Cubic.log ./log/DKgen_Cubic_$constraint.log")
+			#if ($mk_file_aLine =~ m/Cubic.log/);
+			if (-e "Cubic.log");
+
+	################################################################
+
+	#system ("mv Cubic_command.log ./log/")	if (-e "Cubic_command.log");
+	#system ("mv DKgen_error.dat ./log/")	if (-e "DKgen_error.dat");
+	#system ("mv DKgen_warning.dat ./log/")	if (-e "DKgen_warning.dat");
+	system ("cat Cubic_command.log >> ./log/Cubic_command.log")	if (-e "Cubic_command.log");
+	system ("cat DKgen_error.dat >> ./log/DKgen_error.dat")		if (-e "DKgen_error.dat");
+	system ("cat DKgen_warning.dat >> ./log/DKgen_warning.dat")	if (-e "DKgen_warning.dat");
+
+	system ("\\rm *_backup1") if (-e "*_backup1");
+	system ("\\rm *_backup2") if (-e "*_backup2");
+	system ("\\rm *_backup3") if (-e "*_backup3");
+	system ("\\rm *_backup4") if (-e "*_backup4");
+
+	system ("\\rm $runlist_fileName")	if (-e "$runlist_fileName");
+	system ("\\rm Cubic_command.log")	if (-e "Cubic_command.log");
+	system ("\\rm DKgen_error.dat")		if (-e "DKgen_error.dat");
+	system ("\\rm DKgen_warning.dat")	if (-e "DKgen_warning.dat");
+
+	exit();
+}
+
+sub DecToNumBase
+	{
+	$decNumber = $_[0];
+	$numBase = $_[1];
+	$totNumber = $_[2];
+	$numNumber = '';
+	$numcnt = 0;
+
+	while($decNumber ne 'end') 
+		{
+	    # divide the decimal number by $numBase and 
+	    # store the remainder (modulus function) in 
+	    # the temporary variable $temp
+		$numcnt++;
+	    	my $temp = $decNumber % $numBase;
+		
+	    	if($temp > 9) 
+	    		{
+	      		$temp = chr($temp + 55);
+	    	}
+	    	$numNumber = $temp . $numNumber;
+	   	$decNumber = int($decNumber / $numBase);
+	   	
+	    	if($decNumber < $numBase) 
+	    		{
+      			if($decNumber > 9) 
+      				{
+        			$decNumber = chr($decNumber + 55);
+      			}
+      			$numNumber = $decNumber . $numNumber;
+      			$decNumber = 'end'; 
+    		} 
+  	}
+	unless ($totNumber == 0)
+		{
+	  	if ($numcnt < $totNumber - 1)
+  			{
+  			foreach (1 .. $totNumber - $numcnt - 1)
+  				{
+  				$numNumber = '0' . $numNumber;
+	  		}
+  		}
+  	}
+
+  	return $numNumber;
+}
+
+sub RoundXL {
+	sprintf("%.$_[1]f", $_[0]);
+}
+
+sub ExToReal	{
+	my @expo_num = $_[0] =~ /(\d+.\d+)+e([\+,\-])(\d+)/g;
+	my $real_num;
+
+	if ($2 eq "+")	{
+		$real_num = $1*(10**($3+9));
+	}
+	elsif ($2 eq "-") {
+		$real_num = $1/(10**($3-9));
+	}
+
+	$real_num_temp = &RoundXL($real_num, 4);
+	#printf "\norigin_num : $_[0] // expo_num : $1 $2 $3 // $real_num_temp";
+	return $real_num_temp;
+}

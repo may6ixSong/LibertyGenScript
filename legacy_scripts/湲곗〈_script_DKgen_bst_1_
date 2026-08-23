@@ -1,0 +1,323 @@
+use Spreadsheet::ParseExcel;
+#use strict;
+use warnings;
+
+################################################################
+##   __  __                                  ____ _  _        ##
+##  |  \/  | ___  __ _  ___ _   _ _ _ ___   |  __(_)| | ___   ##
+##  | |\/| |/ _ \/ _` |/ __| | | | '_/ _ \  | |_ | || |/ _ \  ##
+##  | |  | |  __/ (_| |\__ \ |_| | |   __/  |  _|| || |  __/  ##
+##  |_|  |_|\___|\__,_||___/\__,_|_| \___)  |_|  |_||_|\___)  ##
+##                                                            ##
+################################################################
+
+$FILE1 = "";
+$FILE2 = "?????.mt0";    # DBS output file
+$FILE3 = "";
+$FILE4 = "";
+$MC1   = "";
+$MC2   = "";
+$MC3   = "";
+$MC4   = "";
+$MC5   = "";
+
+#####################################################################
+##    ____              _ _                      _   _             ##
+##   / ___|___  __ _  _/_(_) __ _ _   _ _ _ __ _| |_(_) ___  __ _  ##
+##  | |   / _ \|  ` \|_ _| |/ _` | | | | '_/ _` | __| |/ _ \|  ` \ ##
+##  | |__| (_) | |\ | | || | (_| \ |_| | |  (_| | |_| | (_) | |\ | ##
+##   \____\___/|_||_| |_||_|\__, /\__,_|_| \__,_|\__|_|\___/|_||_| ##
+##                          |___/                                  ##
+#####################################################################
+
+$DKgen_ver = "0.87";
+$class = "analog";
+#$cell_type = "core";
+$portdesc_make = 1;
+$mt_make = 0;
+$mt_cnt_ref_output = 25;
+$mt_cnt_ref_input = 9;
+
+#########  bst high/middle/low voltage condition
+@cs14_vmax_bst	= ("2.30", "1.98", "0.92");			# JMB @ 20250219 by yunjung 
+@ln17_vmax_bst	= ("2.30", "1.98", "0.92");          # JMB @ 20250219 by yunjung // # RAA @ 20221108 by yunjung      
+@cs28_vmax_bst	= ("2.30", "1.98", "1.050");
+@cs6st_vmax_bst	= ("2.90", "1.90", "1.10");
+@cs6_vmax_bst	= ("3.00", "1.90", "1.32");
+@cs9_vmax_bst	= ("3.00", "1.90", "1.32");
+#########  wst high/middle/low voltage condition
+@cs14_vmax_wst	= ("2.10", "1.62", "0.72");
+@ln17_vmax_wst	= ("2.10", "1.62", "0.72"); 
+@cs28_vmax_wst	= ("2.10", "1.62", "0.81");
+@cs6st_vmax_wst	= ("2.70", "1.70", "0.90");	
+@cs6_vmax_wst	= ("2.60", "1.70", "1.08");
+@cs9_vmax_wst	= ("2.60", "1.70", "1.08");
+#########  high/middle/low voltage condition
+@cs14_vmax		= ("2.2V", "1.8V", "0.8V");
+@ln17_vmax		= ("2.2V", "1.8V", "0.8V"); 
+@cs28_vmax		= ("2.2V", "1.8V", "0.9V");
+@cs6st_vmax		= ("2.8V", "1.8V", "1.0V");
+@cs6_vmax		= ("2.8V", "1.8V", "1.2V");
+@cs9_vmax		= ("2.8V", "1.8V", "1.2V");
+
+#####################
+##  main function  ##
+#####################
+
+main();
+	
+sub main
+{
+	$usage = "  usage : DKgen [-v/h] [-xls file.xls] [-con bst/bst_tiv/tiv/wst] [-pro cs28/cs6/cs6st/cs9]";
+				#."  [-f1 file.mt0]"."  [-f2 file.mt0]"." [-f3  file.mt0]"." [-f4  file.mt0]"
+				#."  [-mc1 file.mt0]"."  [-mc2 file.mt0]"."  [-mc3 file.mt0]"."  [-mc4 file.mt0]"
+				#."  [-mc5 file.mt0]"."  [-con bst/bst_tiv/tiv/wst]";
+
+	$xlsfind = 0; $confind = 0; $profind = 0;
+	while ($_ = shift @ARGV) {
+		(/^\-xls.*$/i || /^\-i.*$/i) && do { # input file
+			$fileName = shift @ARGV;
+			$xlsfind = 1;
+			next;
+		};
+		/^\-con.*$/i  && do {
+			$constraint = shift @ARGV;
+			$constraint_CAP = uc($constraint);
+			$constraint = lc($constraint_CAP) if ($constraint eq $constraint_CAP);
+			$confind = 1;
+			next;
+		};
+		/^\-pro.*$/i  && do {
+			$process = shift @ARGV;
+			$profind = 1;
+			next;
+		};
+		/^\-v.*$/i  && do {
+			printf "  DKgen version v$DKgen_ver\n";
+			exit;
+		};
+		/^\-h.*$/i  && do {
+			printf "$usage\n".
+				   "  < Option list >\n".
+				   "    -v : Confirm the DKgen version\n".
+				   "    -h : Help\n".
+				   "    -xls <filename> : source Excel file\n".
+				   "    -con : coner constraint\n".
+				   "    -pro : Fab process\n";
+			exit;
+		};
+=pod
+		/^\-f1.*$/i  && do {
+			$FILE1 = shift @ARGV;
+			$f1find = 1;
+			next;
+		};	
+		/^\-f2.*$/i  && do {
+			$FILE2 = shift @ARGV;
+			$f2find = 1;
+			next;
+		};
+		/^\-f3.*$/i  && do {
+			$f3_fileName = shift @ARGV;
+			$f3find = 1;
+			next;
+		};
+		/^\-f4.*$/i  && do {
+			$f4_fileName = shift @ARGV;
+			$f4find = 1;
+			next;
+		};
+		/^\-mc1.*$/i  && do {
+			$mc1_fileName = shift @ARGV;
+			$mc1find = 1;
+			next;
+		};
+		/^\-mc2.*$/i  && do {
+			$mc2_fileName = shift @ARGV;
+			$mc2find = 1;
+			next;
+		};
+		/^\-mc3.*$/i  && do {
+			$mc3_fileName = shift @ARGV;
+			$mc3find = 1;
+			next;
+		};
+		/^\-mc4.*$/i  && do {
+			$mc4_fileName = shift @ARGV;
+			$mc4find = 1;
+			next;
+		};
+		/^\-mc5.*$/i  && do {
+			$mc5_fileName = shift @ARGV;
+			$mc5find = 1;
+			next;
+		};
+=cut
+	}
+
+	#if ($#ARGV < 2) {die "$usage\n";}
+
+	unless ($xlsfind and $confind and $profind)	{
+		printf "\n"; die "$usage\n"; #error("*Error >> Invalid input format\n$usage");
+		exit;
+	}
+
+	if ($process eq "cs14")	{
+		$high_vmax_bst = $cs14_vmax_bst[0];
+		$mid_vmax_bst = $cs14_vmax_bst[1];
+		$low_vmax_bst = $cs14_vmax_bst[2];
+		$high_vmax_wst = $cs14_vmax_wst[0];
+		$mid_vmax_wst = $cs14_vmax_wst[1];
+		$low_vmax_wst = $cs14_vmax_wst[2];
+		$high_voltage_level = $cs14_vmax[0];
+		$mid_voltage_level = $cs14_vmax[1];
+		$low_voltage_level = $cs14_vmax[2];
+	}
+
+	elsif ($process eq "ln17")	{
+		$high_vmax_bst = $ln17_vmax_bst[0];
+		$mid_vmax_bst = $ln17_vmax_bst[1];
+		$low_vmax_bst = $ln17_vmax_bst[2];
+		$high_vmax_wst = $ln17_vmax_wst[0];
+		$mid_vmax_wst = $ln17_vmax_wst[1];
+		$low_vmax_wst = $ln17_vmax_wst[2];
+		$high_voltage_level = $ln17_vmax[0];
+		$mid_voltage_level = $ln17_vmax[1];
+		$low_voltage_level = $ln17_vmax[2];
+	}
+
+
+	elsif ($process eq "cs28")	{
+		$high_vmax_bst = $cs28_vmax_bst[0];
+		$mid_vmax_bst = $cs28_vmax_bst[1];
+		$low_vmax_bst = $cs28_vmax_bst[2];
+		$high_vmax_wst = $cs28_vmax_wst[0];
+		$mid_vmax_wst = $cs28_vmax_wst[1];
+		$low_vmax_wst = $cs28_vmax_wst[2];
+		$high_voltage_level = $cs28_vmax[0];
+		$mid_voltage_level = $cs28_vmax[1];
+		$low_voltage_level = $cs28_vmax[2];
+	}
+	elsif ($process eq "cs6")	{
+		$high_vmax_bst = $cs6_vmax_bst[0];
+		$mid_vmax_bst = $cs6_vmax_bst[1];
+		$low_vmax_bst = $cs6_vmax_bst[2];
+		$high_vmax_wst = $cs6_vmax_wst[0];
+		$mid_vmax_wst = $cs6_vmax_wst[1];
+		$low_vmax_wst = $cs6_vmax_wst[2];
+		$high_voltage_level = $cs6_vmax[0];
+		$mid_voltage_level = $cs6_vmax[1];
+		$low_voltage_level = $cs6_vmax[2];
+	}
+	elsif ($process eq "cs6st")	{
+		$high_vmax_bst = $cs6st_vmax_bst[0];
+		$mid_vmax_bst = $cs6st_vmax_bst[1];
+		$low_vmax_bst = $cs6st_vmax_bst[2];
+		$high_vmax_wst = $cs6st_vmax_wst[0];
+		$mid_vmax_wst = $cs6st_vmax_wst[1];
+		$low_vmax_wst = $cs6st_vmax_wst[2];
+		$high_voltage_level = $cs6st_vmax[0];
+		$mid_voltage_level = $cs6st_vmax[1];
+		$low_voltage_level = $cs6st_vmax[2];
+	}
+	elsif ($process eq "cs9")	{
+		$high_vmax_bst = $cs9_vmax_bst[0];
+		$mid_vmax_bst = $cs9_vmax_bst[1];
+		$low_vmax_bst = $cs9_vmax_bst[2];
+		$high_vmax_wst = $cs9_vmax_wst[0];
+		$mid_vmax_wst = $cs9_vmax_wst[1];
+		$low_vmax_wst = $cs9_vmax_wst[2];
+		$high_voltage_level = $cs9_vmax[0];
+		$mid_voltage_level = $cs9_vmax[1];
+		$low_voltage_level = $cs9_vmax[2];
+	}
+	else	{
+		printf "\n"; error("*Error >> Invalid FAB process - $process -\n");
+		exit;
+	}
+
+	$FILE1_def = ($FILE1 =~ /\w+/g);
+	$FILE2_def = ($FILE2 =~ /\w+/g);
+	$FILE3_def = ($FILE3 =~ /\w+/g);
+	$FILE4_def = ($FILE4 =~ /\w+/g);
+	$MC1_def = ($MC1 =~ /\w+/g);
+	$MC2_def = ($MC2 =~ /\w+/g);
+	$MC3_def = ($MC3 =~ /\w+/g);
+	$MC4_def = ($MC4 =~ /\w+/g);
+	$MC5_def = ($MC5 =~ /\w+/g);
+	
+	($fileVersionInt, $fileVersionFrac) = $fileName =~ /(\d+).(\d+)/;
+	($errorcnt, $warningcnt) = (0, 0);
+	
+	$g_username = scalar getpwuid($<);
+	$g_header_format = 
+		"\n**********************************************************************************".
+		"\n**   DKgen_v$DKgen_ver generated ...".
+		"\n**".
+		"\n**   User : $g_username".
+		"\n**   Source excel file : %s".
+		"\n**   Source FILE1 : %s".
+		"\n**   Source FILE2 : %s".
+		"\n**   Source FILE3 : %s".
+		"\n**   Source FILE4 : %s".
+		"\n**   Source MC1   : %s".
+		"\n**   Source MC2   : %s".
+		"\n**   Source MC3   : %s".
+		"\n**   Source MC4   : %s".
+		"\n**   Source MC5   : %s".
+		"\n**".
+		"\n**********************************************************************************".
+		"\n\n";
+	printf $g_header_format, $fileName, $FILE1, $FILE2, $FILE3, $FILE4, 
+			$MC1, $MC2, $MC3, $MC4, $MC5;#, scalar localtime;
+
+	mk_folder();
+	read_excel();
+	@FILE1_array = read_mt_in($FILE1, "FILE1") if ($FILE1_def);
+	@FILE2_array = read_mt_out($FILE2, "FILE2") if ($FILE2_def);
+	@FILE3_array = read_mt_out($FILE3, "FILE3") if ($FILE3_def);
+	@FILE4_array = read_mt_out($FILE4, "FILE4") if ($FILE4_def);
+
+	@MC1_array = read_mt_in($MC1, "MC1") if ($MC1_def);
+	@MC2_array = read_mt_in($MC2, "MC2") if ($MC2_def);
+	@MC3_array = read_mt_in($MC3, "MC3") if ($MC3_def);
+	@MC4_array = read_mt_in($MC4, "MC4") if ($MC4_def);
+	@MC5_array = read_mt_in($MC5, "MC5") if ($MC5_def);
+
+	port_def() if ($portdesc_make);
+	atop_rtl();
+	pdt_gen();
+	udc_gen();
+	pg_pin_gen();
+
+	#complete(1);
+	printf "** Source file making is Completed\n\n";
+
+################
+##  Port def  ##
+################
+
+sub port_def
+{
+	printf "	Port description save as ... ";
+	$fileName2 = $cell_name;
+	$fileName2 =~ s/atop_//g;
+	$fileName2 = "./UDC_RESULT/".$fileName2."_port_v".$fileVersionInt.".".$fileVersionFrac.".txt";
+	open ($fileHandle, "> $fileName2") or die "Cannot open $fileName2 : $!";
+	
+	foreach $vlist (@port_array){
+		@array = split(/(,)/, $vlist);
+		foreach $m (2 .. ($maxcol) *2)	{
+			next if ($m%2 == 1);
+			#warning("*Warning 3 >> detected empty cell in $array[4] line") unless defined ($array[$m]);
+			warning("*Warning 3 >> detected empty or \"-\" data cell in 2 ~ 13 column @ $array[4] line") 
+					if ($array[$m] eq "-")&&(($m > 1)&&($m < 13*2));
+			printf $fileHandle $array[$m]."\t" unless ($m == $maxcol*2);
+			printf $fileHandle $array[$m] if ($m == $maxcol*2);
+		}
+		printf $fileHandle "\n";
+	}
+	close $fileHandle;
+	printf "$fileName2\n\n";
+}
+

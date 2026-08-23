@@ -1,0 +1,107 @@
+"""
+block4_writer.py
+
+Block 4 작성: `cell ({udc cell name}) { ... }` - Step2 공통 필드/Step3 Constants/
+파일명 파싱 결과(nom_voltage, nom_temperature)로 채우는 셀 속성들과, Port List의
+PWR/GND 핀으로부터 만드는 pg_pin 블록들.
+
+pg_pin 순서(2026-08 확정): Power 그룹 전체 먼저, 그 다음 Ground 그룹 전체. 각 그룹
+내부는 Port List에 나온 행 순서 그대로. Pin name이 Step3에서 선택한 Virtual Power
+(power gate) 핀과 같으면 internal_power 형태로 특별히 쓴다.
+
+값이 Port List에서 파싱되지 않는 경우(Volts 컬럼이 숫자로 안 읽히는 등)는 예외를
+던지지 않고 missing_data.py 규칙대로 표시한다.
+
+2026-08 수정: block5(pin()/bus())가 이 cell{} 안에 이어서 작성되므로, 이 모듈은
+더 이상 cell{}을 닫지 않는다 - 닫는 중괄호는 block5까지 다 쓴 뒤
+liberty_writter.py에서 처리한다.
+"""
+
+from __future__ import annotations
+
+from step4_generate.missing_data import INDENT_1, INDENT_2, INDENT_3, PORT_LIST_NOT_FOUND_TOKEN, write_missing_comment
+
+# TODO(질문): Virtual Power pg_pin의 pg_function 값("VDDD_08_ATOP_BL")과
+# switch_function 값("PG_ATOP_SLEEP_R_T")은 사용자 요청에 따라 우선 고정값으로
+# 하드코딩했다. 둘 다 셀/전압마다 달라질 수 있는 값으로 보이는데, 실제로 어디서
+# 가져와야 하는 값인지(PDK/DK 파일? 별도 입력?) 확인이 필요하다. switch_function은
+# 원래 Step3의 Enable signal 값을 그대로 썼었는데, 이번에 이 고정값으로 대체됐다.
+_VIRTUAL_POWER_PG_FUNCTION = "VDDD_08_ATOP_BL"
+_VIRTUAL_POWER_SWITCH_FUNCTION = "PG_ATOP_SLEEP_R_T"
+
+
+def _voltage_name_text(voltage_prefix: str, voltage_value: float | None) -> str:
+    if voltage_value is None:
+        return f"{voltage_prefix}_{PORT_LIST_NOT_FOUND_TOKEN}"
+    return "%s_%0.5f" % (voltage_prefix, voltage_value)
+
+
+def _write_standard_pg_pin(f_out, pin: dict, voltage_prefix: str, pg_type_suffix: str, pdk_filename: str) -> None:
+    pin_name = pin["pin_name"]
+    voltage_value = pin["voltage_value"]
+    if voltage_value is None:
+        write_missing_comment(f_out, f"Volts value for pin '{pin_name}' (Port List)", pdk_filename)
+    voltage_name = _voltage_name_text(voltage_prefix, voltage_value)
+
+    f_out.write(f"{INDENT_2}pg_pin ({pin_name}) {{\n")
+    f_out.write(f"{INDENT_3}voltage_name : {voltage_name} ;\n")
+    f_out.write(f"{INDENT_3}pg_type : primary_{pg_type_suffix} ;\n")
+    f_out.write(f"{INDENT_2}}}\n")
+
+
+def _write_virtual_power_pg_pin(
+    f_out, pin: dict, voltage_prefix: str, pdk_filename: str,
+) -> None:
+    pin_name = pin["pin_name"]
+    voltage_value = pin["voltage_value"]
+    if voltage_value is None:
+        write_missing_comment(f_out, f"Volts value for pin '{pin_name}' (Port List)", pdk_filename)
+    voltage_name = _voltage_name_text(voltage_prefix, voltage_value)
+
+    f_out.write(f"{INDENT_2}pg_pin ({pin_name}) {{\n")
+    f_out.write(f"{INDENT_3}voltage_name : {voltage_name} ;\n")
+    f_out.write(f"{INDENT_3}pg_type : internal_power ;\n")
+    f_out.write(f"{INDENT_3}direction : output ;\n")
+    f_out.write(f'{INDENT_3}switch_function : "{_VIRTUAL_POWER_SWITCH_FUNCTION}" ;\n')
+    f_out.write(f'{INDENT_3}pg_function : "{_VIRTUAL_POWER_PG_FUNCTION}" ;\n')
+    f_out.write(f"{INDENT_2}}}\n")
+
+
+def write_block4(f_out, job: dict) -> None:
+    """
+    Args:
+        job: liberty_assembler.build_job()의 결과 (cell_name, process_prefix,
+             class_value, area/width/height, nom_voltage/nom_temperature,
+             pwr_pins/gnd_pins, virtual_power_pin, enable_signal 포함).
+    """
+    pdk_filename = job["pdk_filename"]
+    cell_name = job["cell_name"]
+    process_prefix = job["process_prefix"]
+
+    f_out.write(f"{INDENT_1}cell ({cell_name}) {{\n")
+    f_out.write(f"{INDENT_2}is_macro_cell : true ;\n")
+    f_out.write(f"{INDENT_2}switch_cell_type : fine_grain ;\n")
+    f_out.write(f"{INDENT_2}{process_prefix}_class : {job['class_value']} ;\n")
+    f_out.write(f"{INDENT_2}{process_prefix}_cell_type : core ;\n")
+    f_out.write(f"{INDENT_2}area : %0.5f ;\n" % job["area"])
+    f_out.write(f"{INDENT_2}{process_prefix}_width : %0.5f ;\n" % job["width"])
+    f_out.write(f"{INDENT_2}{process_prefix}_height : %0.5f ;\n" % job["height"])
+    f_out.write(f"{INDENT_2}dont_use : true ;\n")
+    f_out.write(f"{INDENT_2}dont_touch : true ;\n")
+    f_out.write(f'{INDENT_2}{process_prefix}_voltage : "%0.4f" ;\n' % job["nom_voltage"])
+    f_out.write(f'{INDENT_2}{process_prefix}_temperature : "%0.4f" ;\n' % job["nom_temperature"])
+    f_out.write(f"{INDENT_2}cell_leakage_power : 0.00000 ;\n")
+    f_out.write("\n")
+
+    virtual_power_pin = job["virtual_power_pin"]
+
+    for pin in job["pwr_pins"]:
+        if pin["pin_name"] == virtual_power_pin:
+            _write_virtual_power_pg_pin(f_out, pin, "VDD", pdk_filename)
+        else:
+            _write_standard_pg_pin(f_out, pin, "VDD", "power", pdk_filename)
+
+    for pin in job["gnd_pins"]:
+        _write_standard_pg_pin(f_out, pin, "VSS", "ground", pdk_filename)
+
+    # cell{}은 아직 닫지 않는다 - block5(pin()/bus())가 이어서 이 안에 써진다.

@@ -1,0 +1,4 @@
+DKgen_bst  		-xls Port_List.xls -con bst 		-pro ln17 
+DKgen_bst_tiv  	-xls Port_List.xls -con bst_tiv 	-pro ln17 
+DKgen_wst  		-xls Port_List.xls -con wst 		-pro ln17 
+DKgen_tiv  	    -xls Port_List.xls -con tiv 	    -pro ln17 

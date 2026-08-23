@@ -1,0 +1,4 @@
+cp ./LIB_RESULT/???_bst.lib		./LIBmt0/ln17lpv_???_ffpg_sigcmin_0p9000v_m40c.lib
+cp ./LIB_RESULT/???_bst_tiv.lib	./LIBmt0/ln17lpv_???_ffpg_sigcmin_0p9000v_125c.lib
+cp ./LIB_RESULT/???_wst.lib		./LIBmt0/ln17lpv_???_sspg_sigcmax_0p6750v_125c.lib
+cp ./LIB_RESULT/???_wst_tiv.lib	./LIBmt0/ln17lpv_???_sspg_sigcmax_0p6750v_m40c.lib	

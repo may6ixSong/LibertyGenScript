@@ -1,0 +1,127 @@
+# Liberty Generator — 프로젝트 현황 요약 (다음 세션 이어가기용)
+
+## 프로젝트 개요
+
+사내 HPC망 VWP 환경에서 실행되는 PyQt5 GUI 프로그램. Excel Port List + PDK/DK 라이브러리
+파일을 입력받아, UDC(cell) 단위 설정을 만들고, 최종적으로 liberty(.lib) 파일을 생성하는
+4단계 마법사(wizard) 형태.
+
+## 실행 환경 (중요, 절대 잊지 말 것)
+
+- **실행 Python**: Anaconda Python 3.7.6 (`/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7/bin/python3`)
+  - 시스템 기본 `python3`, `python3.11`에는 PyQt5 없음
+  - 이 Anaconda에만 PyQt5, PyInstaller, openpyxl 등이 설치되어 있음 (SSL 정상 동작해서 `pip install` 가능)
+- **Python 3.7 문법 호환 필수**: `list[dict]`, `int | None` 등 3.9+ 문법 쓰려면 파일 맨 위에
+  `from __future__ import annotations` 필수
+- **PyQt5 특이사항**: 이 환경의 Qt는 `QFontMetrics.horizontalAdvance()`(Qt 5.11+) 없음 →
+  `fm.width()`로 폴백해야 함. QSS의 `cursor` 속성도 미지원("Unknown property cursor") →
+  커서는 전역 이벤트 필터(`_PointerCursorFilter`)로 구현함
+- **배포**: `run_generator.sh`(소스 실행), `build_exe.sh`(PyInstaller 단일 실행파일 빌드, 결과물
+  `dist/liberty_generator`) 둘 다 있음. 둘 다 Anaconda python 사용
+
+## 폴더 구조
+
+```
+generator/
+├── run_generator.sh
+├── build_exe.sh
+├── config/                    # 전부 JSON, 앱 실행 위치 옆에 자동 생성
+│   ├── user_config.json         # Step1 입력 경로
+│   ├── udc_settings.json        # Step2 UDC 목록
+│   └── step3_settings.json      # Step3 Constants/Pins/Output Path
+├── output/                     # 미사용 (Step3에서 user가 직접 output path 지정하는 걸로 대체됨)
+└── src/
+    ├── main.py                   # 진입점
+    ├── runtime_paths.py           # 소스실행/빌드된exe 양쪽 다 경로 잘 잡아주는 헬퍼
+    ├── core/
+    │   ├── generator_core.py       # OUTPUT_DIR 관리만 (레거시, 현재 미사용)
+    │   └── liberty_writer.py       # ★ 실제 liberty 파일 생성 로직 (아래 "미해결 이슈" 참고)
+    ├── ui/
+    │   ├── theme.py                 # 색상/QSS 상수
+    │   ├── ui_common.py             # 공용 위젯: add_shadow, DetailsList, NoWheelComboBox
+    │   ├── loading_overlay.py       # 전역 로딩 오버레이
+    │   └── gui_app.py               # MainWindow, QStackedWidget으로 Step1~4 전환
+    ├── step1_setup/                # Step1: 입력 경로 + Validate
+    │   ├── field_defs.py             # PDK_FILE_EXTENSIONS(.lib/.lib_css_tn), Port List 컬럼 정의
+    │   ├── config_manager.py         # user_config.json 저장/로드 (CONFIG_DIR 여기 정의됨)
+    │   ├── file_scanner.py           # PDK(.lib/.lib_css_tn)/DBS(.mt0) 파일 스캔
+    │   ├── port_list_reader.py       # Port List Excel 파싱 (.xls/.xlsx), pin 이름 추출 함수들
+    │   └── setup_view.py             # Step1 화면 (가로 스텝 인디케이터 A→B→C)
+    ├── step2_udc/                  # Step2: UDC Setting 목록
+    │   ├── udc_field_defs.py         # 필드 정의, library 파일명 파싱(min/max_Xv 추출)
+    │   ├── udc_manager.py            # udc_settings.json 저장/로드
+    │   ├── udc_validator.py          # library 중복/존재 검사
+    │   └── udc_view.py               # Step2 화면 (좁은 리스트 + 넓은 폼)
+    ├── step3_settings/             # Step3: Constants + Pin 설정
+    │   ├── constants_field_defs.py   # 스칼라 6개 + 전압 테이블 3종(bst/wst/plain) + 공정 자동감지
+    │   ├── pin_field_defs.py         # Pin 4종 정의, 와일드카드 패턴 파서
+    │   ├── settings_manager.py       # step3_settings.json 저장/로드 (output_path 포함)
+    │   ├── settings_validator.py     # Pin 설정만 검사 (Constants는 검사 안 함)
+    │   └── settings_view.py          # Step3 화면 (병합된 전압 테이블 + 자동 하이라이트)
+    ├── step4_generate/             # Step4: 생성 진행률
+    │   └── generate_view.py          # ★ 지금 placeholder 파일만 씀 (아래 참고)
+    └── (CLAUDE.md, README.md 있음, 최신화 필요할 수 있음)
+```
+
+## 각 Step 요약
+
+- **Step1 (Setup & Validate)**: PDK Folder, DBS Simulation Folder, Port List(.xls/.xlsx) 3개 입력
+  → Validate 클릭 시 가로 스텝(A→B→C)으로 순차 검사 (lib 파일 개수, mt0 파일 개수, Port List
+  시트/필수컬럼/포트개수) → 전부 통과 시 Next 활성화
+- **Step2 (UDC Settings)**: UDC(=cell) 여러 개 관리. 각 UDC는 area/width/height/static_current/
+  cell_name/library_name_wst(드롭다운, PDK 파일 중 선택, 다른 UDC가 쓰는 파일 제외+`(None)`
+  옵션)/MC·HDA·OUT_timing_state(rising/falling)/전기적 특성 14개(nom_voltage 등, 원본 키 이름
+  그대로 라벨 사용). library_name_wst는 빨간 글씨, 전압 부분(`{}v`)은 파란 글씨로 직접 페인트
+  (`_LibraryComboBox.paintEvent` 커스텀). Add(헤더 `+`아이콘)/Clone/Delete(행 아이콘)로 관리.
+  Validate는 library 중복 및 PDK 폴더 재스캔 대조. 통과 시 Next 활성화
+- **Step3 (Constants & Pin Settings)**: 상수(DKgen_ver 등 6개 스칼라 + 전압조건 테이블
+  1개로 병합됨: 기술명(cs14/ln17/cs28/cs6st/cs6/cs9) × 9열(BST/WST/plain 각 High/Mid/Low)),
+  PDK 폴더에서 실제 감지된 기술 행은 하이라이트. Pin 4종: Virtual Power(PWR 타입 드롭다운),
+  Enable signal(텍스트, PORT 타입과 정확히 일치해야 함), Power down control signal/DBS output
+  signal(와일드카드 `*`, 뱃지로 인식 표시, `[0:8511]` 같은 범위 표기는 매칭에서 제외하고
+  분리 표시). Validate는 Pin만 검사. 통과 시 Output Path 활성화(영속화됨) → Generate 활성화
+- **Step4 (Generate)**: UDC 개수만큼 1초에 하나씩 파일 아이콘이 페이드인 애니메이션으로
+  나타남. **지금은 실제 `.lib` 파일을 쓰긴 하지만 내용은 UDC 설정값 텍스트 덤프일 뿐,
+  `core.liberty_writer.write_liberty()`를 호출하지 않음** (아래 미해결 이슈 참고)
+
+## 최근 확정된 사실들 (중요 컨텍스트)
+
+- **UDC Setting 1개 = liberty 파일 1개** (1:1). 사용자가 UDC를 `UDC_GEN_BST`,
+  `UDC_GEN_BST_TIV`, `UDC_GEN_TIV`, `UDC_GEN_WST`처럼 constraint별로 직접 4개 만드는 방식.
+  Step4의 "총 개수"는 UDC 개수 그대로 맞음 (4배 아님, 이전에 혼동 있었으나 정정됨)
+- **process(cs14/ln17/cs28/cs6st/cs6/cs9)는 PDK 파일명 접두어에서 자동 감지**
+  (`constants_field_defs.detect_process_from_filename()`). 별도 선택 UI 불필요함이 확인됨
+- **`process_prefix` 문제 해결됨**: `write_liberty()`가 이제 template_lib 파일의
+  `comment` 줄 다음부터 `voltage_map` 줄 직전까지를 그대로 복사(verbatim copy)하는 방식으로
+  바뀌어서, `define(%s_...)` 같은 줄들을 직접 재구성할 필요가 없어짐 (템플릿에 이미 포함됨)
+- **`abc.xls`(DKgen 인자) = Step1의 Port List Excel과 동일 파일** 확인됨
+
+## ⚠️ 미해결 핵심 이슈 (다음 세션에서 반드시 짚어야 함)
+
+`core/liberty_writer.py`의 `write_liberty(f_name_template_lib, f_name_udc, f_name_pg_pin,
+f_name_pdt, f_name_liberty)`는 실제 로직이 완성되어 유닛테스트도 통과했지만, **4개의 입력
+파일을 어디서/어떻게 만들어낼지가 전혀 설계되지 않음**:
+
+1. **template_lib**: constraint(bst/bst_tiv/wst/wst_tiv)별로 다른 템플릿 파일. 어디서 오는가?
+   사용자가 각 constraint당 템플릿 파일을 업로드/지정하게 해야 하는가?
+2. **UDC 파일**: `cell (name) { library_family: ...; area: ...; voltage_level ... { vmax ... } }`
+   형식의 텍스트 파일. **Step2의 UDC Setting 데이터 + Step3의 전압조건 테이블 값을 조합해서
+   우리가 이 포맷으로 직접 만들어내야 할 가능성이 높음** — 아직 변환 함수 없음
+3. **pg_pin 파일**: `pg_pin_bst`/`pg_pin_wst` 형식 (핀이름, 타입, 전압 파일명 컬럼).
+   Step3의 Virtual Power 등 Pin 설정에서 만들어낼 수 있을 것 같은데, 정확한 포맷/생성 로직
+   미정
+4. **pdt 파일**: UDC 파일과 동일 포맷, `cell_name`이 일치해야 함. UDC 파일과 정확히 뭐가
+   다른지 아직 불명확 (사용자가 별도로 제공하는 파일인지, UDC에서 파생되는 것인지)
+
+**이 4가지가 정리되기 전까지 Step4는 계속 placeholder 상태로 둘 수밖에 없음.** 또한
+`write_liberty()`는 원본 스크립트가 `default_operating_conditions` 줄까지만 제공되어
+거기서 끊겨 있음 — 이어지는 cell/pin 작성 부분(전체 liberty 파일의 대부분)은 아직 포팅 전.
+
+## 기타 알아둘 점
+
+- Step1 안내 문구 등은 전부 **영어**로 통일 (User 요청)
+- "config"라는 단어는 UI에서 안 쓰고 "Settings"로 통일
+- Duplicate/Clone은 대부분 값을 복사하되 고유해야 하는 필드(library_name_wst)는 비움
+- 모든 버튼에 pointer 커서, 모든 QComboBox는 마우스 휠로 값 안 바뀌게(`NoWheelComboBox`)
+- 매 기능 추가 시 실제 PyQt5 설치 + xvfb 가상 디스플레이로 GUI를 띄워서 동작 검증하는 방식으로
+  작업해왔음 (그냥 코드만 주지 않고 실제 실행 결과 확인 후 전달)

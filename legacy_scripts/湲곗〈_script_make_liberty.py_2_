@@ -1,0 +1,278 @@
+#write pg_pin information start
+    for split_pg_line in data_pg_pin:
+        f_liberty_out.write("   pg_pin ({parameter}) {{\n" .format(parameter=split_pg_line[1]))
+        
+        #split pg_voltage into prefix and value
+        pg_voltage_prefix = split_pg_line[2].split('_')[0]
+        pg_voltage_value = float(split_pg_line[2].split('_')[1])
+    
+        #type of voltage == only 3.0 or 1.1 or 0.0 or 1.9?
+        #3.0 == VDD_ANA, 1.1 == VDD_
+        
+        ######################## back up start
+        #pg_voltage_name = ""
+        #if pg_voltage_value == data_UDC["high_vmax"]: pg_voltage_name = "VDD_ANA"
+        #elif pg_voltage_value == data_UDC["low_vmax"]: pg_voltage_name = "VDD_DIG"
+        #elif pg_voltage_value == data_UDC["middle_vmax"]: pg_voltage_name = "VDD_%0.5f" % data_UDC["middle_vmax"] #correct?
+        #elif pg_voltage_value == 0.0: pg_voltage_name = "VSS_0.00000"
+        #else: print("pg_pin mismatch exception occurred")
+        #f_liberty_out.write("      voltage_name : {v_name} ;\n" .format(v_name=pg_voltage_name))
+        ######################## back up end
+        f_liberty_out.write("      voltage_name : %s_%0.5f ;\n" % (pg_voltage_prefix, pg_voltage_value))
+        
+        pg_type = ""
+    #    if pg_voltage_prefix == "VDD": pg_type = "primary_power"
+    #    elif pg_voltage_prefix == "VSS": pg_type = "primary_ground"
+    #    else: print("unknown pg_pin type detected")
+        f_liberty_out.write("      pg_type : {pg_type} ;\n" .format(pg_type=split_pg_line[3]))
+        f_liberty_out.write("   }\n")
+    f_liberty_out.write("\n")
+    #write pg_pin information end
+    
+    #write UDC pin information
+    #for i in range(1, len(data_UDC["pin"])+1): 
+    if True:
+        for pin_info in data_UDC["pin"]:
+            if ("order" in pin_info) == False: 
+                print("ERROR: there is no \"order\" in pin_info ")
+                sys.exit()
+                
+            #if pin_info["order"] == i:
+            if True:
+                #check pin_type and write pin_name and pin_type
+                if pin_info["pin_type"] == "data":
+                    f_liberty_out.write("   pin({pin_name}) {{\n" .format(pin_name=pin_info["name"]))
+                elif pin_info["pin_type"] == "clock":
+                    f_liberty_out.write("   pin({pin_name}) {{\n" .format(pin_name=pin_info["name"]))
+                elif pin_info["pin_type"] == "data_bus":
+                    bus_name = pin_info["name"].split('[')[0]
+                    f_liberty_out.write("   bus({bus_name}) {{\n" .format(bus_name=bus_name))
+                    #extract bus information
+                    bus_express = pin_info["name"].split('[')[1]
+                    bus_express = bus_express.replace(']', '')
+                    bus_MSB = int(bus_express.split(':')[0])
+                    bus_LSB = int(bus_express.split(':')[1])
+                    bus_width = bus_MSB - bus_LSB + 1
+                    f_liberty_out.write("    bus_type : bus_%d_%d_%d_%s;\n" % (bus_LSB, bus_MSB, bus_width, data_UDC["cell_name"]))
+                    f_liberty_out.write("    pin({pin_name}) {{\n" .format(pin_name=pin_info["name"]))
+                else:
+                    print("WARNNING: unknown pin_type detected: %s" %pin_info["pin_type"])
+                
+                f_liberty_out.write("      {process_prefix}_pin_type : {pin_type};\n" .format(process_prefix=process_prefix, pin_type=pin_info["pin_type"]))
+                f_liberty_out.write("      direction   : {direction};\n" .format(direction=pin_info["direction"]))
+                
+                if pin_info["pin_type"] == "clock":
+                    f_liberty_out.write("      clock       : true;\n")
+                
+                f_liberty_out.write("      capacitance : %0.6f;\n" % pin_info["capacitance"])
+                
+                #write max_capacitance                
+                if "timing" in pin_info:
+                    #find table index with parameter name refer_to_table_index
+                    table_index_referred = {}
+                    for table_index in data_UDC["table_index"]:
+                        if table_index["parameter"] == pin_info["timing"]["timing_type"][0]["refer_to_table_index"]: # refer_to_table_index in [0], [1], [2] are same?
+                            table_index_referred = table_index.copy()
+                
+                    if not table_index_referred:  print("ERROR: there is NO table_index with paramter name \"refer_to_table_index\" in UDC file")
+                    #table_index=table_index_out
+                    #genenrally table_index=data_UDC["table_index"][2]["parameter"]
+                    
+                    
+                    max_cap = 0.0
+                    if table_index_referred["x_index_var"] == "output_load_cap":
+                        #find max cap in table_index
+                        max_cap = 0.0
+                        for cur_cap in table_index_referred["x_index"]:
+                            if cur_cap > max_cap: max_cap = cur_cap
+                        
+                    elif table_index_referred["y_index_var"] == "output_load_cap":
+                        #find max cap in table_index
+                        max_cap = 0.0
+                        for cur_cap in table_index_referred["y_index"]:
+                            if cur_cap > max_cap: max_cap = cur_cap
+                    else: 
+                        print("ERROR: output_load_cap is not in table_index!")
+                        sys.exit()
+                    f_liberty_out.write("      max_capacitance : %0.6f;\n" % max_cap)
+                
+                #check related_power_pin and write
+                related_power_pin_name = ""
+                for power_pin_info in data_pdt["pin"]:
+                    if power_pin_info["pin_type"] == "power":
+                        if "related_pin" in power_pin_info:
+                            for related_pin in power_pin_info["related_pin"]:
+                                if pin_info["name"].split('[')[0] == related_pin:
+                                    related_power_pin_name = power_pin_info["name"]
+                                    break
+                f_liberty_out.write("      related_power_pin : {power_pin};\n" .format(power_pin=related_power_pin_name))
+                if len(related_power_pin_name) == 0:
+                    print("WARNNING: pin without related_power_pin was detected: %s" %pin_info["name"])
+                #check related_ground_pin and write
+                related_ground_pin_name = ""    
+                for ground_pin_info in data_pdt["pin"]:
+                    if ground_pin_info["pin_type"] == "ground":
+                        if "related_pin" in ground_pin_info:
+                            for related_pin in ground_pin_info["related_pin"]:
+                                if pin_info["name"].split('[')[0] == related_pin:
+                                    related_ground_pin_name = ground_pin_info["name"]
+                                    break
+                f_liberty_out.write("      related_ground_pin : {ground_pin};\n" .format(ground_pin=related_ground_pin_name))
+                if len(related_ground_pin_name) == 0:
+                    print("WARNNING: pin without related_ground_pin was detected: %s" %pin_info["name"])
+                    
+                #check pin direction and write the signal_level
+                #get value from pg_voltage for signal_level
+                signal_level = 0.0
+                for split_pg_line in data_pg_pin:
+                    if split_pg_line[1] == related_power_pin_name:
+                        signal_level = float(split_pg_line[2].split('_')[1])
+                f_liberty_out.write("      %s_%s_signal_level : %0.5f ;\n" % (process_prefix, pin_info["direction"], signal_level))
+    
+                #check timing and write
+                if "timing" in pin_info:
+                    f_liberty_out.write("\n")
+                    f_liberty_out.write("      timing () {\n")
+
+                    ################################################ back up start
+                    #extract name of related_bus_pins in related_pin
+                    #related_bus_pins = ""
+                    #if pin_info["timing"]["related_pin"][-2:] == "_A": #it's ok?
+                    #    related_bus_pins = pin_info["timing"]["related_pin"][:-2]
+                    #else:
+                    #    print("ERROR: unexpected related_pin name: {pin_name}" .format(pin_name=pin_info["timing"]["related_pin"]))
+                    #    sys.exit()
+                    
+                    #find related_bus_pins in UDC file
+                    #for pin_info_2 in data_UDC["pin"]:
+                    #    if pin_info_2["name"].startswith(related_bus_pins+"["):
+                    #        related_bus_pins = pin_info_2["name"]
+                                        
+                    #f_liberty_out.write("         related_bus_pins  : \"{related_bus_pins}\";\n" .format(related_bus_pins=related_bus_pins))
+                    ################################################ back up end
+                    
+                    f_liberty_out.write("         related_pin  : \"{related_pin}\";\n" .format(related_pin=pin_info["timing"]["related_pin"]))
+                    
+                    f_liberty_out.write("	 timing_sense  : {timing_sense};\n" .format(timing_sense=pin_info["timing"]["timing_sense"]))
+                    
+                    #timing_type = ""
+                    #if (pin_info["timing"]["timing_state"] == "falling_edge") or (pin_info["timing"]["timing_state"] == "rising_edge"):
+                    #    timing_type = "combinational_rise"
+                    #else:
+                    #    print("ERROR: invalid timing_type: {timing_type}" .format(timing_type=pin_info["timing"]["timing_state"]))
+                    #    sys.exit()
+                        
+                    #f_liberty_out.write("	 timing_type : {timing_type};\n" .format(timing_type=timing_type))
+                    f_liberty_out.write("	 timing_type : {timing_type};\n" .format(timing_type=pin_info["timing"]["timing_state"]))
+                    for timing_type in pin_info["timing"]["timing_type"]:
+                        timing_name = ""
+                        #correct???
+                        if timing_type["parameter"] == "tphl": timing_name = "cell_fall"
+                        elif timing_type["parameter"] == "tplh": timing_name = "cell_rise"
+                        elif timing_type["parameter"] == "tr": timing_name = "rise_transition"
+                        elif timing_type["parameter"] == "tf": timing_name = "fall_transition"
+    #f_liberty_out.write("   lu_table_template ({cell_name}_{table_index}) {{\n" .format(cell_name=data_UDC["cell_name"], table_index=data_UDC["table_index"][2]["parameter"]))                       
+                        f_liberty_out.write("	 {timing_name}({cell_name}_{refer_to_table_index}) {{\n" .format(timing_name=timing_name, cell_name=data_UDC["cell_name"], refer_to_table_index=timing_type["refer_to_table_index"]))
+
+                        for i_value in range(len(timing_type["value"])):
+                            if i_value == 0:
+                                f_liberty_out.write("	    values (\"")
+                            else:
+                                f_liberty_out.write("	            \"")
+                            for j_value in range(len(timing_type["value"][i_value])):
+                                f_liberty_out.write(" %0.5f" % timing_type["value"][i_value][j_value])
+                                if (j_value != len(timing_type["value"])-1):
+                                    f_liberty_out.write(",")
+                                else:
+                                    f_liberty_out.write("\"")
+                                    if (i_value != len(timing_type["value"])-1):
+                                        f_liberty_out.write(",\\\n")
+                                    else:
+                                        f_liberty_out.write(");\n")
+                        #f_liberty_out.write("	    values (\" %0.5f, %0.5f, %0.5f, %0.5f, %0.5f\",\\\n" % (timing_type["value"][0], timing_type["value"][1], timing_type["value"][2], timing_type["value"][3], timing_type["value"][4]))
+                        #f_liberty_out.write("	            \" %0.5f, %0.5f, %0.5f, %0.5f, %0.5f\",\\\n" % (timing_type["value"][5], timing_type["value"][6], timing_type["value"][7], timing_type["value"][8], timing_type["value"][9]))
+                        #f_liberty_out.write("	            \" %0.5f, %0.5f, %0.5f, %0.5f, %0.5f\",\\\n" % (timing_type["value"][10], timing_type["value"][11], timing_type["value"][12], timing_type["value"][13], timing_type["value"][14]))
+                        #f_liberty_out.write("	            \" %0.5f, %0.5f, %0.5f, %0.5f, %0.5f\",\\\n" % (timing_type["value"][15], timing_type["value"][16], timing_type["value"][17], timing_type["value"][18], timing_type["value"][19]))
+                        #f_liberty_out.write("	            \" %0.5f, %0.5f, %0.5f, %0.5f, %0.5f\");\n" % (timing_type["value"][20], timing_type["value"][21], timing_type["value"][22], timing_type["value"][23], timing_type["value"][24]))
+                        f_liberty_out.write("	 }\n")
+                    f_liberty_out.write("      }\n")         
+                #timing write end
+                
+                #guard close if bus pin
+                if pin_info["pin_type"] == "data_bus":
+                    f_liberty_out.write("    }\n")
+                
+                f_liberty_out.write("   }\n")
+    #writing pin information end
+    
+    #write pdt_pin information
+    for pin_info in data_pdt["pin"]:
+        f_liberty_out.write("   {process_prefix}_pdt_pin({pin_name}) {{\n" .format(process_prefix=process_prefix, pin_name=pin_info["name"]))
+        f_liberty_out.write("      {process_prefix}_pdt_pin_type : {pin_type} ;\n" .format(process_prefix=process_prefix, pin_type=pin_info["pin_type"]))
+    
+        if "related_pin" in pin_info:
+            f_liberty_out.write("      %s_pdt_related_pin : \"" % process_prefix)
+            for i in range(len(pin_info["related_pin"])):
+                f_liberty_out.write("{related_pin} " .format(related_pin=pin_info["related_pin"][i]))
+                if i != (len(pin_info["related_pin"]) - 1):
+                    f_liberty_out.write(",")
+                else:
+                    f_liberty_out.write(" \";\n")
+        f_liberty_out.write("   }\n")
+    f_liberty_out.write(" }\n")
+    f_liberty_out.write("}\n")
+    
+    f_UDC.close()
+    f_pg_pin.close()
+    f_pdt.close()
+    
+    f_liberty_out.close()
+    
+#    print("Liberty file has been created")
+#end function write_liberty()
+
+#need to modify to get value by user input
+process_prefix ="sec"
+
+#get file name
+f_cell_name = sys.argv[1]
+
+if len(sys.argv) != 6:
+    print("Insufficient arguments")
+    sys.exit()
+
+#for bst liberty
+f_name_template_lib0 = sys.argv[2]
+f_name_UDC = "UDC_RESULT/" + f_cell_name + "_bst.udc"
+f_name_pg_pin = "UDC_RESULT/" + "pg_pin_bst"
+f_name_pdt = "UDC_RESULT/" + f_cell_name + ".pdt"
+f_name_liberty = "LIB_RESULT/" + f_cell_name + "_bst.lib"
+write_liberty(f_name_template_lib0, f_name_UDC, f_name_pg_pin, f_name_pdt, f_name_liberty)
+print("bst liberty file has been created")
+
+#for bst_tiv liberty
+f_name_template_lib1 = sys.argv[3]
+f_name_UDC = "UDC_RESULT/" + f_cell_name + "_bst_tiv.udc"
+f_name_pg_pin = "UDC_RESULT/" + "pg_pin_bst"
+f_name_pdt = "UDC_RESULT/" + f_cell_name + ".pdt"
+f_name_liberty = "LIB_RESULT/" + f_cell_name + "_bst_tiv.lib"
+write_liberty(f_name_template_lib1, f_name_UDC, f_name_pg_pin, f_name_pdt, f_name_liberty)
+print("bst_tiv liberty file has been created")
+
+#for wst liberty
+f_name_template_lib2 = sys.argv[4]
+f_name_UDC = "UDC_RESULT/" + f_cell_name + "_wst.udc"
+f_name_pg_pin = "UDC_RESULT/" + "pg_pin_wst"
+f_name_pdt = "UDC_RESULT/" + f_cell_name + ".pdt"
+f_name_liberty = "LIB_RESULT/" + f_cell_name + "_wst.lib"
+write_liberty(f_name_template_lib2, f_name_UDC, f_name_pg_pin, f_name_pdt, f_name_liberty)
+print("wst liberty file has been created")
+
+#for wst_tiv liberty
+f_name_template_lib3 = sys.argv[5]
+f_name_UDC = "UDC_RESULT/" + f_cell_name + "_wst_tiv.udc"
+f_name_pg_pin = "UDC_RESULT/" + "pg_pin_wst"
+f_name_pdt = "UDC_RESULT/" + f_cell_name + ".pdt"
+f_name_liberty = "LIB_RESULT/" + f_cell_name + "_wst_tiv.lib"
+write_liberty(f_name_template_lib3, f_name_UDC, f_name_pg_pin, f_name_pdt, f_name_liberty)
+print("wst_tiv liberty file has been created")

@@ -1,0 +1,722 @@
+import time
+import sys
+import os
+
+#exception has not been implemented
+
+def read_UDC_pdt(lines_data):
+    i = 0
+    data_return = {}
+    
+    for line_data in lines_data:
+        #find main func "cell"
+        
+        ##line_data = lines_data[i]
+        split_line_data = line_data.split()
+        if len(split_line_data) == 0:
+            continue
+        elif split_line_data[0] == "cell":
+            cell_line = line_data.replace('(', "")
+            cell_line = cell_line.replace(')', "")
+            cell_line = cell_line.split()
+            data_return["cell_name"] = cell_line[1]
+                
+            #atop_xxx = split_line[1]
+            i += 1
+            while i < len(lines_data):
+                #remove round bracket
+                line_temp = lines_data[i]
+                line_temp = line_temp.replace('(', ' ')
+                line_temp = line_temp.replace(')', ' ')
+                
+                #split_line = lines_data[i].split()
+                split_line = line_temp.split()
+                                
+                if split_line[0] == "library_family":
+                    data_return["lib_name"] = split_line[2].replace(';', '')
+                    if data_return["lib_name"].split('_')[0] != "cis":
+                        data_return["lib_name"] = "cis_" + data_return["lib_name"]
+                elif split_line[0] == "class":           data_return["class"] = split_line[2].replace(';', '')  
+                elif split_line[0] == "cell_type":       data_return["cell_type"] = split_line[2].replace(';', '')
+                elif split_line[0] == "area":            data_return["area"] = float(split_line[2].replace(';', ''))
+                elif split_line[0] == "width":           data_return["width"] = float(split_line[2].replace(';', ''))
+                elif split_line[0] == "height":          data_return["height"] = float(split_line[2].replace(';', ''))
+                #elif split_line[0] == "static_current":  static_current = split_line[2]
+                elif split_line[0] == "voltage_level":              
+                    #for type of voltage level
+                    #need to split the type of voltage level into prefix and value?
+                    v_level = split_line[1]
+                    if "high" in v_level:
+                        v_level = "high"
+                    elif "middle" in v_level:
+                        v_level = "middle"
+                    elif "low" in v_level:
+                        v_level = "low"
+                    else:
+                        print("ERROR: there are No keywords(high or middle or low) in voltage_level parameter\n")
+                        sys.exit()
+                        
+                    while True: #escape when meet len(subline) == 1 and subline[0] == '}'
+                        i += 1
+                        subline = lines_data[i].replace(':', '')
+                        subline = subline.split()
+                        if len(subline) == 1 and subline[0] == '}': break
+                        elif subline[0] == "vmax": data_return[v_level+"_vmax"] = float(subline[1].replace(';', ''))
+                        elif subline[0] == "vmin": data_return[v_level+"_vmin"] = float(subline[1].replace(';', ''))
+            
+                elif split_line[0] == "timing_derating": 
+                    if ("timing_derating" in data_return) == False:
+                        data_return["timing_derating"] = []
+                    timing_derating = {"parameter":split_line[1]}
+                    
+                    while True: #escape when meet len(subline) == 1 and subline[0] == '}'
+                        i += 1
+                        #subline = lines_data[i].replace('(', '')
+                        #subline = subline.replace(')', '')
+                        #subline = subline.replace(',', '')
+                        subline = lines_data[i].replace(';', '')
+                        subline = subline.replace(':', ' ')
+                        subline = subline.split()
+                        if len(subline) == 1 and subline[0] == '}': break
+                        elif subline[0] == "refer_to_table_index": timing_derating["refer_to_table_index"] = subline[1]
+                        elif subline[0] == "nom_voltage": timing_derating["nom_voltage"] = float(subline[1])
+                        elif subline[0] == "nom_temperature": timing_derating["nom_temperature"] = float(subline[1])
+                    data_return["timing_derating"].append(timing_derating)
+                elif split_line[0] == "timing_process_cond": #usless?
+                    while True: #escape when meet len(subline) == 1 and subline[0] == '}'
+                        i += 1
+                        subline = lines_data[i].split()
+                        if len(subline) == 1 and subline[0] == '}': break
+                        elif subline[0] == "max": data_return["_max"] = subline[2]
+                        elif subline[0] == "typ": data_return["_typ"] = subline[2]
+                        elif subline[0] == "min": data_return["_min"] = subline[2]
+                elif split_line[0] == "table_index": 
+                    if ("table_index" in data_return) == False: 
+                        data_return["table_index"] = []
+                    table_index = {"parameter":split_line[1]}
+                    
+                    while True: #escape when meet len(subline) == 1 and subline[0] == '}'
+                        i += 1
+                        subline = lines_data[i].replace('(', '')
+                        subline = subline.replace(')', '')
+                        subline = subline.replace(',', '')
+                        subline = subline.replace(';', '')
+                        subline = subline.replace(':', ' ')
+                        subline = subline.split()
+                        if len(subline) == 1 and subline[0] == '}': break
+                        elif subline[0] == "y_index_var": table_index["y_index_var"] = subline[1]
+                        elif subline[0] == "x_index_var": table_index["x_index_var"] = subline[1]
+                        elif subline[0] == "y_index": table_index["y_index"] = list(map(float, subline[1:]))
+                        elif subline[0] == "x_index": table_index["x_index"] = list(map(float, subline[1:]))
+                        
+                    data_return["table_index"].append(table_index)
+                
+                elif split_line[0] == "pin":
+                    if ("pin" in data_return) == False:
+                        data_return["pin"] = []
+                    pin_info = {"name":split_line[1]}
+                                        
+                    while True: #escape when meet len(subline) == 1 and subline[0] == '}'
+                        i += 1
+                        subline = lines_data[i].replace(',', '')
+                        subline = subline.replace(';', '')
+                        subline = subline.replace(':', ' ')
+                        subline = subline.split()
+                        if len(subline) == 1 and subline[0] == '}': 
+                            if pin_info["pin_type"] == "data_bus":
+                                if ("type_bus" in data_return) == False:
+                                    data_return["type_bus"] = {}
+                                bus_express = pin_info["name"].split('[')[1].replace(']', '')
+                                bus_MSB = int(bus_express.split(':')[0])
+                                bus_LSB = int(bus_express.split(':')[1])
+                                bus_width = bus_MSB - bus_LSB + 1
+                                type_bus_name = "bus_" + str(bus_LSB) + '_' + str(bus_MSB) + '_' + str(bus_width)
+                                if (type_bus_name in data_return["type_bus"]) == False:
+                                    data_return["type_bus"][type_bus_name] = {}
+                                data_return["type_bus"][type_bus_name]["bit_width"] = bus_width
+                                data_return["type_bus"][type_bus_name]["bit_from"] = bus_MSB
+                                data_return["type_bus"][type_bus_name]["bit_to"] = bus_LSB
+                                
+                            break
+                        elif subline[0] == "order": pin_info["order"] = int(subline[1])
+                        elif subline[0] == "voltage_level": pin_info["voltage_level"] = subline[1]
+                        elif subline[0] == "direction": pin_info["direction"] = subline[1]
+                        elif subline[0] == "pin_type": pin_info["pin_type"] = subline[1]
+                        elif subline[0] == "capacitance": pin_info["capacitance"] = float(subline[1])
+                        elif subline[0] == "related_pin": #for pdt
+                            related_pin = subline[1:]
+                            pin_info["related_pin"] = related_pin
+                        elif subline[0] == "timing":
+                            #guard_count = 1
+                            
+                            #processing timing
+                            timing_info = {}
+                            while True:
+                                i += 1
+                                subline_timing = lines_data[i].replace(':', ' ')
+                                subline_timing = subline_timing.replace(';', ' ')
+                                subline_timing = subline_timing.replace(',', ' ')
+                                subline_timing = subline_timing.replace('(', ' ')
+                                subline_timing = subline_timing.replace(')', ' ')
+                                subline_timing = subline_timing.replace('\"', ' ')
+                                
+                                #guard_count += subline_timing.count('{')
+                                #guard_count -= subline_timing.count('}')
+                                
+                                subline_timing = subline_timing.split()
+                                if subline_timing[0] == "timing_arc": timing_info["timing_arc"] = subline_timing[1]
+                                elif subline_timing[0] == "related_pin": timing_info["related_pin"] = subline_timing[1]
+                                elif subline_timing[0] == "timing_sense": timing_info["timing_sense"] = subline_timing[1]
+                                elif subline_timing[0] == "timing_state": timing_info["timing_state"] = subline_timing[1]
+                                elif subline_timing[0] == "timing_type":
+                                    if ("timing_type" in timing_info) == False:
+                                        timing_info["timing_type"] = []
+                                    timing_type = {"parameter":subline_timing[1]}
+                                    #processing timing_type
+                                    while True:
+                                        i += 1
+                                        subline_timing_type = lines_data[i].replace(':', ' ')
+                                        subline_timing_type = subline_timing_type.replace(';', ' ')
+                                        subline_timing_type = subline_timing_type.replace(',', ' ')
+                                        subline_timing_type = subline_timing_type.replace('(', ' ')
+                                        subline_timing_type = subline_timing_type.replace(')', ' ')
+                                        subline_timing_type = subline_timing_type.split()
+                                        
+                                        if subline_timing_type[0] == "refer_to_table_index": timing_type["refer_to_table_index"] = subline_timing_type[1]
+                                        elif subline_timing_type[0] == "derating": timing_type["derating"] = subline_timing_type[1]
+                                        elif subline_timing_type[0] == "process": timing_type["process"] = subline_timing_type[1]
+                                        elif subline_timing_type[0] == "value": 
+                                            #processing value
+                                            value_list = []
+                                            value_list_i = 0
+                                            while True:
+                                                value_list_line = []
+                                                value_list.append(value_list_line)
+                                                subline_value = lines_data[i].replace(',', ' ')
+                                                subline_value = subline_value.replace(';', '')
+                                                subline_value = subline_value.split()
+                                                #processing within line of value 
+                                                finish_processing_value = False
+                                                for split_value in subline_value:
+                                                    if split_value == "value": continue
+                                                    elif split_value == '(': continue
+                                                    elif split_value == ')':
+                                                        finish_processing_value = True
+                                                        break
+                                                    else:
+                                                        value_list[value_list_i].append(float(split_value))
+                                                if finish_processing_value: 
+                                                    break
+                                                value_list_i += 1
+                                                i += 1
+                                            timing_type["value"] = value_list
+                                        elif len(subline_timing_type) == 1 and subline_timing_type[0] == '}':
+                                            break #finish processing timing_type
+                                    timing_info["timing_type"].append(timing_type)
+                                elif len(subline_timing) == 1 and subline_timing[0] == '}':
+                                    break #finish processing timing
+                            #end while
+                            pin_info["timing"] = timing_info
+                            
+                    data_return["pin"].append(pin_info)
+                #elif split_line[0] == "":
+                #else:
+                #useless token?
+                # ....
+                i += 1              
+            break #escape - if split_line[0] == "cell":
+        i += 1
+    return data_return
+
+def read_pg_pin(lines_pg_pin):
+    data_pg_pin = []
+    for line_pg_pin in lines_pg_pin:
+        split_line = line_pg_pin.split()
+        data_pg_pin.append(split_line)
+    return data_pg_pin
+
+def read_template_lib(lines_template_lib):
+    data_template_lib ={}
+    
+    i = 0
+    for line_data in lines_template_lib:
+        split_line_data = line_data.replace('(', ' ').replace(')', ' ').split()
+        if len(split_line_data) == 0:
+            continue
+        elif split_line_data[0] == "library":
+            data_template_lib["library_name"] = split_line_data[1]
+            
+            i += 1
+            while i < len(lines_template_lib):
+                line_temp = lines_template_lib[i].replace(':', ' ').replace(';', ' ').replace('(', ' ').replace(')', ' ')
+                split_line = line_temp.split()
+                
+                if split_line[0] == "delay_model":
+                    data_template_lib["delay_model"] = split_line[1]
+                elif split_line[0] == "time_unit":
+                    data_template_lib["time_unit"] = split_line[1]
+                elif split_line[0] == "voltage_unit":
+                    data_template_lib["voltage_unit"] = split_line[1]
+                elif split_line[0] == "current_unit":
+                    data_template_lib["current_unit"] = split_line[1]
+                elif split_line[0] == "pulling_resistance_unit":
+                    data_template_lib["pulling_resistance_unit"] = split_line[1]
+#                elif split_line[0] == "input_threshold_pct_fall":
+#                    data_template_lib[""] = split_line[1]
+#                elif split_line[0] == "input_threshold_pct_rise":
+#                    data_template_lib[""] = split_line[1]
+#                elif split_line[0] == "output_threshold_pct_fall":
+#                    data_template_lib[""] = split_line[1]
+#                elif split_line[0] == "output_threshold_pct_rise":
+#                    data_template_lib[""] = split_line[1]
+                elif split_line[0] == "slew_derate_from_library":
+                    data_template_lib["slew_derate_from_library"] = float(split_line[1])
+                elif split_line[0] == "slew_lower_threshold_pct_fall":
+                    data_template_lib["slew_lower_threshold_pct_fall"] = float(split_line[1])
+                elif split_line[0] == "slew_lower_threshold_pct_rise":
+                    data_template_lib["slew_lower_threshold_pct_rise"] = float(split_line[1])
+                elif split_line[0] == "slew_upper_threshold_pct_fall":
+                    data_template_lib["slew_upper_threshold_pct_fall"] = float(split_line[1])
+                elif split_line[0] == "slew_upper_threshold_pct_rise":
+                    data_template_lib["slew_upper_threshold_pct_rise"] = float(split_line[1])
+                elif split_line[0] == "nom_temperature":
+                    data_template_lib["nom_temperature"] = float(split_line[1])
+                elif split_line[0] == "nom_voltage":
+                    data_template_lib["nom_voltage"] = float(split_line[1])
+                
+                elif split_line[0] == "default_max_transition":
+                    data_template_lib["default_max_transition"] = float(split_line[1])
+                elif split_line[0] == "sec_default_unit_area_cell":
+                    data_template_lib["sec_default_unit_area_cell"] = split_line[1]
+                
+                elif split_line[0] == "input_voltage":
+                    if "input_voltage" not in data_template_lib:
+                        data_template_lib["input_voltage"] = []
+                    input_voltage = {}
+                    input_voltage["param"] = split_line[1]
+                    for j in range (4):
+                        i += 1
+                        input_line = lines_template_lib[i].replace(':', ' ').replace(';', ' ').replace('(', ' ').replace(')', ' ')
+                        input_line = input_line.split()
+                        input_voltage[input_line[0]] = float(input_line[1])
+                    
+                    data_template_lib["input_voltage"].append(input_voltage)
+                elif split_line[0] == "output_voltage":
+                    if "output_voltage" not in data_template_lib:
+                        data_template_lib["output_voltage"] = []
+                    output_voltage = {}
+                    output_voltage["param"] = split_line[1]
+                    for j in range (4):
+                        i += 1
+                        output_line = lines_template_lib[i].replace(':', ' ').replace(';', ' ').replace('(', ' ').replace(')', ' ')
+                        output_line = output_line.split()
+                        output_voltage[output_line[0]] = float(output_line[1])
+                    
+                    data_template_lib["output_voltage"].append(output_voltage)                  
+                i += 1
+        i += 0
+    return data_template_lib
+            
+def write_liberty(f_name_template_lib, f_name_UDC, f_name_pg_pin, f_name_pdt, f_name_liberty):
+    # need to modify file name to use variable
+    # ex) mlib "input_file1" "input_file2" "input_file3"
+    f_template_lib = open("%s" % f_name_template_lib, 'r')
+    f_UDC = open("./%s" % f_name_UDC, 'r')
+    f_pg_pin = open("./%s" % f_name_pg_pin, 'r')
+    f_pdt = open("./%s" % f_name_pdt, 'r')
+    
+    lines_template_lib = []
+    num_input_voltage = 0
+    num_output_voltage = 0
+    read4lines = 0
+    while True:
+        line_template_lib = f_template_lib.readline()
+        if not line_template_lib: break
+        if len(line_template_lib.split()) == 0:
+            continue
+        
+        lines_template_lib.append(line_template_lib)
+        
+        line_split = line_template_lib.replace('(', ' ').replace(')', ' ').replace(':', ' ').replace(';', ' ')
+        line_split = line_split.split()
+        
+        if line_split[0] == "input_voltage": 
+            num_input_voltage += 1
+        if line_split[0] == "output_voltage":
+            num_output_voltage += 1
+        
+        if (num_input_voltage > 0) and (num_input_voltage == num_output_voltage):
+            read4lines += 1
+        if read4lines > 4:
+            break
+        
+    
+    lines_UDC = f_UDC.readlines()
+    lines_pg_pin = f_pg_pin.readlines()
+    lines_pdt = f_pdt.readlines()
+    
+    #entire_pdt = f_pdt.read()
+    
+    
+    f_liberty_out = open("./%s" % f_name_liberty, 'w') # modify to w
+
+    cur_entire_time = time.ctime()
+    cur_day = cur_entire_time.split()[0]
+    cur_month = cur_entire_time.split()[1]
+    cur_date = cur_entire_time.split()[2]
+    cur_time = cur_entire_time.split()[3]
+    cur_year = cur_entire_time.split()[4]
+
+    data_template_lib = read_template_lib(lines_template_lib)
+    data_UDC = read_UDC_pdt(lines_UDC)
+    data_pdt = read_UDC_pdt(lines_pdt)
+    data_pg_pin = read_pg_pin(lines_pg_pin)
+    
+    #combine pin information UDC pin and pdt pin
+    #data_pin = data_UDC["pin"].append(data_pdt)
+    
+    if data_UDC["cell_name"] != data_pdt["cell_name"]: 
+        print("ERROR: Cell name mismatch ERROR!\n")
+        sys.exit()
+    
+    
+    #intro comment
+    #need to modify contents
+    if True:
+        f_liberty_out.write("/**************************************************\n")
+        f_liberty_out.write(" * This liberty is generated by DKgen v0.87 kch	*\n")
+        f_liberty_out.write(" * Date	: {day} {month} {date} {time} {year}			*\n" .format(day=cur_day, month=cur_month, date=cur_date, time=cur_time, year=cur_year))
+        f_liberty_out.write(" * Written by	: {user}						*\n" .format(user=os.getlogin()))
+        f_liberty_out.write(" **************************************************/\n")
+        f_liberty_out.write("\n")
+        f_liberty_out.write("/************************************************\n")
+        f_liberty_out.write(" * LIBRARY : {library_name}				*\n" .format(library_name=data_UDC["lib_name"]))
+        f_liberty_out.write(" * LIBRARY FAMILY : {library_name}			*\n" .format(library_name=data_UDC["lib_name"]))
+        f_liberty_out.write(" * ADB VERSION : 3111				*\n")
+        f_liberty_out.write(" * DATE    : {day} {month} {date} {time} {year}		*\n" .format(day=cur_day, month=cur_month, date=cur_date, time=cur_time, year=cur_year))
+        f_liberty_out.write(" * TECHNOLOGY FILE REVISION : 1.000		*\n")
+        f_liberty_out.write(" * VENDOR  : Samsung Electronics      		*\n")
+        f_liberty_out.write(" * VERSION : 2.335				*\n")
+        f_liberty_out.write(" * HAZARD MARGIN : 0.00000			*\n")
+        f_liberty_out.write(" ************************************************/\n")
+        f_liberty_out.write("\n")
+        f_liberty_out.write("/************************************************\n")
+        f_liberty_out.write(" * GENERATE OPTION : -format synopsys -cell_name {cell_name} \n" .format(cell_name=data_UDC["cell_name"]))
+        f_liberty_out.write("   -output ./{liberty_name} -all_derating -state_dependency \n" .format(liberty_name=f_name_liberty))
+        f_liberty_out.write("   -multiple -pdt -syn_ver 0606 \n")
+        f_liberty_out.write("   -pg_pin_info ./{pg_pin_name} \n". format(pg_pin_name=f_name_pg_pin))
+        f_liberty_out.write(" ************************************************/\n")
+        f_liberty_out.write("\n")
+
+    #null point exception? when "lib_name" has not been in the data_UDC, ERR
+    f_liberty_out.write("library (%s) {\n" % data_UDC["lib_name"])
+    
+    #check blank is space or tab
+    if True:
+        #process_prefix = ""
+        out_date = "   date     : \"{month}  {day}  {year}\" ;\n" .format(month=cur_month, day=cur_date, year=cur_year) 
+        f_liberty_out.write(out_date)
+        f_liberty_out.write("   revision : \"V1.000 (TECH. FILE : V1.000)\" ;\n")# argument?
+        f_liberty_out.write("   comment  : \"Copyright {year}, SAMSUNG Electronics\" ;\n" .format(year = cur_year))
+        f_liberty_out.write("\n")
+        f_liberty_out.write("   delay_model : table_lookup ;\n")# argument?
+        f_liberty_out.write("   library_features(report_delay_calculation);\n")# argument?
+        f_liberty_out.write("   simulation\t\t\t: false ;\n")
+        time_unit = data_template_lib["time_unit"]
+        f_liberty_out.write("   time_unit\t\t\t: \"{unit}\" ;\n" .format(unit = time_unit))
+        voltage_unit = data_template_lib["voltage_unit"]
+        f_liberty_out.write("   voltage_unit\t\t\t: \"{unit}\";\n".format(unit = voltage_unit))
+        current_unit = data_template_lib["current_unit"]
+        f_liberty_out.write("   current_unit\t\t\t: \"{value}\";\n" .format(value = current_unit))
+        pulling_resistance_unit = data_template_lib["pulling_resistance_unit"]
+        f_liberty_out.write("   pulling_resistance_unit      : \"{unit}\";\n" .format(unit = pulling_resistance_unit))
+        leakage_power_unit = "1mW"
+        f_liberty_out.write("   leakage_power_unit      \t: \"{value}\";\n" .format(value = leakage_power_unit))
+        capacitive_load_unit_value = 1 # no default value in manual
+        capacitive_load_unit_unit = "pf" # no default value in manual
+        f_liberty_out.write("   capacitive_load_unit  ({value}, {unit});\n" .format(value = capacitive_load_unit_value, unit = capacitive_load_unit_unit))
+        f_liberty_out.write("   in_place_swap_mode           : match_footprint;\n")
+        f_liberty_out.write("   default_max_transition       : %0.5f ;\n" % round(data_template_lib["default_max_transition"], 5))
+        f_liberty_out.write("   /*default_connection_class     : default ;*/\n")
+        f_liberty_out.write("   default_fanout_load          : 1.00000 ;\n")
+        f_liberty_out.write("   default_input_pin_cap        : 0.00000 ;\n")
+        f_liberty_out.write("   default_output_pin_cap       : 0.00000 ;\n")
+        f_liberty_out.write("   default_inout_pin_cap        : 0.00000 ;\n")
+        f_liberty_out.write("   default_wire_load_capacitance : 0.005 ;\n")
+        default_cell_leakage_power = 0.0
+        f_liberty_out.write("   default_cell_leakage_power   : %0.5f ;\n" % default_cell_leakage_power)
+        f_liberty_out.write("   default_leakage_power_density : 0.00000 ;\n")
+        input_threshold_pct_fall = 50.0
+        f_liberty_out.write("   input_threshold_pct_fall : %0.0f ;\n" % input_threshold_pct_fall)
+        input_threshold_pct_rise = 50.0
+        f_liberty_out.write("   input_threshold_pct_rise : %0.0f ;\n" % input_threshold_pct_rise)
+        output_threshold_pct_fall = 50.0
+        f_liberty_out.write("   output_threshold_pct_fall : %0.0f ;\n" % output_threshold_pct_fall)
+        output_threshold_pct_rise = 50.0
+        f_liberty_out.write("   output_threshold_pct_rise : %0.0f ;\n" % output_threshold_pct_rise)
+        slew_lower_threshold_pct_fall = data_template_lib["slew_lower_threshold_pct_fall"]
+        f_liberty_out.write("   slew_lower_threshold_pct_fall : %0.1f ;\n" % slew_lower_threshold_pct_fall)
+        slew_upper_threshold_pct_fall = data_template_lib["slew_upper_threshold_pct_fall"]
+        f_liberty_out.write("   slew_upper_threshold_pct_fall : %0.1f ;\n" % slew_upper_threshold_pct_fall)
+        slew_lower_threshold_pct_rise = data_template_lib["slew_lower_threshold_pct_rise"]
+        f_liberty_out.write("   slew_lower_threshold_pct_rise : %0.1f ;\n" % slew_lower_threshold_pct_rise)
+        slew_upper_threshold_pct_rise = data_template_lib["slew_upper_threshold_pct_rise"]
+        f_liberty_out.write("   slew_upper_threshold_pct_rise : %0.1f ;\n" % slew_upper_threshold_pct_rise)
+        slew_derate_from_library = data_template_lib["slew_derate_from_library"]
+        f_liberty_out.write("   slew_derate_from_library     : %0.5f ;\n" % slew_derate_from_library)
+        f_liberty_out.write("   nom_process          : 1.00000;\n")
+
+        #nom_temperature = data_UDC["timing_derating"][1]["nom_temperature"]
+        #nom_voltage = data_UDC["timing_derating"][1]["nom_voltage"]
+        nom_temperature = data_template_lib["nom_temperature"]
+        nom_voltage =  data_template_lib["nom_voltage"]
+
+        f_liberty_out.write("   nom_temperature      : %0.5f;\n" % nom_temperature)
+        f_liberty_out.write("   nom_voltage          : %0.5f;\n" % nom_voltage)
+
+        f_liberty_out.write("   define(%s_input_signal_level, pin, float);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_output_signal_level, pin, float);\n" % process_prefix)
+        f_liberty_out.write("\n")
+        f_liberty_out.write("   define(%s_default_delay_calculation, library, boolean);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_default_unit_area_cell, library, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_default_connection_class, library, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_default_multi_vdd_new_kit, library, boolean);\n" % process_prefix)
+        f_liberty_out.write("   %s_default_delay_calculation : false;\n" % process_prefix) #need to check
+        f_liberty_out.write("   %s_default_unit_area_cell : %s;\n" % (process_prefix, data_template_lib["sec_default_unit_area_cell"])) #need to check
+        f_liberty_out.write("   %s_default_connection_class : internal;\n" % process_prefix) #need to check
+        f_liberty_out.write("   %s_default_multi_vdd_new_kit : true;\n" % process_prefix) #need to check
+        f_liberty_out.write("\n")
+        f_liberty_out.write("   define(%s_class, cell, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_cell_type, cell, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_weak_fn_delay, cell, float);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_external_voltage_type, cell, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_width, cell, float);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_height, cell, float);\n" % process_prefix)
+        f_liberty_out.write("\n")
+        f_liberty_out.write("   define(%s_pin_type, pin, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_driver_type, pin, string);\n" % process_prefix)
+        f_liberty_out.write("\n")
+        f_liberty_out.write("   define(%s_function, pin, string);\n" % process_prefix)
+        f_liberty_out.write("\n")
+        f_liberty_out.write("   define_group(%s_pdt_pin, cell);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_pdt_power_class, cell, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_pdt_voltage, cell, float);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_pdt_power_driver, cell, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_pdt_cell_prop, cell, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_pdt_supplied_port, %s_pdt_pin, string);\n" % (process_prefix, process_prefix))
+        f_liberty_out.write("   define(%s_pdt_pin_type, %s_pdt_pin, string);\n" % (process_prefix, process_prefix))
+        f_liberty_out.write("   define(%s_pdt_power_type, %s_pdt_pin, string);\n" % (process_prefix, process_prefix))
+        f_liberty_out.write("   define(%s_pdt_related_pin, %s_pdt_pin, string);\n" % (process_prefix, process_prefix))
+        f_liberty_out.write("   define(%s_pdt_supplied_port, pin, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_pdt_pin_type, pin, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_pdt_power_type, pin, string);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_pdt_related_pin, pin, string);\n" % process_prefix)
+        f_liberty_out.write("   define_group(%s_acore_internal_power, pin);\n" % process_prefix)
+        f_liberty_out.write("   define(%s_acore_rise_power, %s_acore_internal_power, float);\n" % (process_prefix, process_prefix))
+        f_liberty_out.write("   define(%s_acore_fall_power, %s_acore_internal_power, float);\n" % (process_prefix, process_prefix))
+        f_liberty_out.write("   define(%s_acore_power, %s_acore_internal_power, float);\n" % (process_prefix, process_prefix))
+        f_liberty_out.write("   define(%s_acore_when, %s_acore_internal_power, string);\n" % (process_prefix, process_prefix))
+        f_liberty_out.write("   define(\"%s_voltage\", \"cell\", \"string\");\n" % process_prefix)
+        f_liberty_out.write("   define(\"%s_temperature\", \"cell\", \"string\");\n" % process_prefix)
+        f_liberty_out.write("   define(%s_esd_generated_power, pin, float);\n" % process_prefix)
+        f_liberty_out.write("\n")
+    
+    #write voltage map
+    f_liberty_out.write("")
+
+    #sorting types of pg_pin information start
+    pg_pin_values = []
+    for split_pg_line in data_pg_pin:
+        pg_voltage_value = float(split_pg_line[2].split('_')[1])
+        if pg_voltage_value not in pg_pin_values:
+            pg_pin_values.append(pg_voltage_value)
+        
+    #sorting types of pg_pin information end
+    
+    if data_UDC["low_vmax"] in pg_pin_values:
+        f_liberty_out.write("   voltage_map (VDD_%0.5f, %0.5f) ;\n" % (data_UDC["low_vmax"], data_UDC["low_vmax"]))
+    if data_UDC["high_vmax"] in pg_pin_values:
+        f_liberty_out.write("   voltage_map (VDD_%0.5f, %0.5f) ;\n" % (data_UDC["high_vmax"], data_UDC["high_vmax"]))
+    if data_UDC["middle_vmax"] in pg_pin_values:
+        f_liberty_out.write("   voltage_map (VDD_%0.5f, %0.5f) ;\n" % (data_UDC["middle_vmax"], data_UDC["middle_vmax"]))
+    if data_UDC["low_vmin"] in pg_pin_values:
+        f_liberty_out.write("   voltage_map (VSS_%0.5f, %0.5f) ;\n" % (data_UDC["low_vmin"], data_UDC["low_vmin"]))
+    f_liberty_out.write("\n")
+    f_liberty_out.write("\n")
+    #argument pass end
+    f_liberty_out.write("   operating_conditions ({library})  {{\n" .format(library=data_UDC["lib_name"].upper())) #is argument correct?
+    f_liberty_out.write("       process    	 : 1.000 ;\n") #timing_process_cond?
+    #add for loop for timing derating?
+    f_liberty_out.write("       temperature	 : %0.3f ;\n" % data_UDC["timing_derating"][1]["nom_temperature"])#is argument correct?
+    f_liberty_out.write("       voltage    	 : %0.5f ;\n" % data_UDC["timing_derating"][1]["nom_voltage"])#is argument correct?
+    f_liberty_out.write("       tree_type  	 : \"worst_case_tree\" ;\n") #fixed value? or it mean min timing process condition?
+    f_liberty_out.write("   }\n")
+    f_liberty_out.write("   default_operating_conditions : {library};\n" .format(library=data_UDC["lib_name"].upper()))
+    f_liberty_out.write("\n")
+    #need to check the cases where various input/output voltage types are used
+ #   if True:
+ #       #input_voltage
+ #       f_liberty_out.write("   input_voltage(clockpin) {\n")
+ #       f_liberty_out.write("      vil   : %0.5f ;\n" % data_UDC["low_vmin"])
+ #       f_liberty_out.write("      vih   : %0.5f ;\n" % data_UDC["low_vmax"])
+ #       f_liberty_out.write("      vimax : %0.5f ;\n" % data_UDC["low_vmax"])
+ #       f_liberty_out.write("      vimin : %0.5f ;\n" % data_UDC["low_vmin"])
+ #       f_liberty_out.write("   }\n")
+ #       f_liberty_out.write("   input_voltage(default) {\n")
+ #       f_liberty_out.write("      vil   : %0.5f ;\n" % data_UDC["low_vmin"])
+ #       f_liberty_out.write("      vih   : %0.5f ;\n" % data_UDC["low_vmax"])
+ #       f_liberty_out.write("      vimax : %0.5f ;\n" % data_UDC["low_vmax"])
+ #       f_liberty_out.write("      vimin : %0.5f ;\n" % data_UDC["low_vmin"])
+ #       f_liberty_out.write("   }\n")
+        #output_voltage
+ #       f_liberty_out.write("   output_voltage(clockpin) {\n")
+ #       f_liberty_out.write("      vol   : %0.5f ;\n" % data_UDC["low_vmin"])
+ #       f_liberty_out.write("      voh   : %0.5f ;\n" % data_UDC["low_vmax"])
+ #       f_liberty_out.write("      vomax : %0.5f ;\n" % data_UDC["low_vmax"])
+ #       f_liberty_out.write("      vomin : %0.5f ;\n" % data_UDC["low_vmin"])
+ #       f_liberty_out.write("   }\n")
+ #       f_liberty_out.write("   output_voltage(default) {\n")
+ #       f_liberty_out.write("      vol   : %0.5f ;\n" % data_UDC["low_vmin"])
+ #       f_liberty_out.write("      voh   : %0.5f ;\n" % data_UDC["low_vmax"])
+ #       f_liberty_out.write("      vomax : %0.5f ;\n" % data_UDC["low_vmax"])
+ #       f_liberty_out.write("      vomin : %0.5f ;\n" % data_UDC["low_vmin"])
+ #       f_liberty_out.write("   }\n")
+    if "input_voltage" in data_template_lib:
+        for input_voltage in data_template_lib["input_voltage"]:
+            f_liberty_out.write("   input_voltage(%s) {\n" % input_voltage["param"])
+            f_liberty_out.write("      vil   : %0.5f ;\n" % input_voltage["vil"])
+            f_liberty_out.write("      vih   : %0.5f ;\n" % input_voltage["vih"])
+            f_liberty_out.write("      vimax : %0.5f ;\n" % input_voltage["vimax"])
+            f_liberty_out.write("      vimin : %0.5f ;\n" % input_voltage["vimin"])
+            f_liberty_out.write("   }\n")
+    else:
+        print("ERROR: input_voltage is not in template liberty!")
+        sys.exit()
+    
+    if "output_voltage" in data_template_lib:
+        for output_voltage in data_template_lib["output_voltage"]:
+            f_liberty_out.write("   output_voltage(%s) {\n" % output_voltage["param"])
+            f_liberty_out.write("      vol   : %0.5f ;\n" % output_voltage["vol"])
+            f_liberty_out.write("      voh   : %0.5f ;\n" % output_voltage["voh"])
+            f_liberty_out.write("      vomax : %0.5f ;\n" % output_voltage["vomax"])
+            f_liberty_out.write("      vomin : %0.5f ;\n" % output_voltage["vomin"])
+            f_liberty_out.write("   }\n")
+    else:
+        print("ERROR: input_voltage is not in template liberty!")
+        sys.exit()
+    #input/output voltage end
+    
+    f_liberty_out.write("\n")
+    
+    #hard coding for k factor
+    #Should the k-factor be determined here?
+    if True:
+        f_liberty_out.write("/* Global k factor for cell delay and transition */\n")   
+        f_liberty_out.write("\n")   
+        f_liberty_out.write("      k_process_cell_rise : 1.0000000 ;\n")   
+        f_liberty_out.write("      k_process_cell_fall : 1.0000000 ;\n")   
+        f_liberty_out.write("      k_process_rise_transition : 1.0000000 ;\n")   
+        f_liberty_out.write("      k_process_fall_transition : 1.0000000 ;\n")   
+        f_liberty_out.write("      k_temp_cell_rise          : 0.0000000 ;\n")   
+        f_liberty_out.write("      k_temp_cell_fall          : 0.0000000 ;\n")   
+        f_liberty_out.write("      k_temp_rise_transition    : 0.0000000 ;\n")   
+        f_liberty_out.write("      k_temp_fall_transition    : 0.0000000 ;\n")   
+        f_liberty_out.write("      k_volt_cell_rise          : 0.0000000 ;\n")   
+        f_liberty_out.write("      k_volt_cell_fall          : 0.0000000 ;\n")   
+        f_liberty_out.write("      k_volt_rise_transition    : 0.0000000 ;\n")   
+        f_liberty_out.write("      k_volt_fall_transition    : 0.0000000 ;\n")   
+        f_liberty_out.write(" \n")   
+        f_liberty_out.write("/* Global k factor for hazard */\n")   
+        f_liberty_out.write("\n")   
+        f_liberty_out.write("      k_process_setup_rise      : 1.0000000 ;\n")
+        f_liberty_out.write("      k_process_setup_fall      : 1.0000000 ;\n")
+        f_liberty_out.write("      k_process_hold_rise       : 1.0000000 ;\n")
+        f_liberty_out.write("      k_process_hold_fall       : 1.0000000 ;\n")
+        f_liberty_out.write("      k_temp_setup_rise         : 0.0000000 ;\n")
+        f_liberty_out.write("      k_temp_setup_fall         : 0.0000000 ;\n")
+        f_liberty_out.write("      k_temp_hold_rise          : 0.0000000 ;\n")
+        f_liberty_out.write("      k_temp_hold_fall          : 0.0000000 ;\n")
+        f_liberty_out.write("      k_volt_setup_rise         : 0.0000000 ;\n")
+        f_liberty_out.write("      k_volt_setup_fall         : 0.0000000 ;\n")
+        f_liberty_out.write("      k_volt_hold_rise          : 0.0000000 ;\n")
+        f_liberty_out.write("      k_volt_hold_fall          : 0.0000000 ;\n")
+        f_liberty_out.write("      k_process_recovery_rise   : 1.0000000 ;\n")
+        f_liberty_out.write("      k_process_recovery_fall   : 1.0000000 ;\n")
+        f_liberty_out.write("      k_temp_recovery_rise      : 0.0000000 ;\n")
+        f_liberty_out.write("      k_temp_recovery_fall      : 0.0000000 ;\n")
+        f_liberty_out.write("      k_volt_recovery_rise      : 0.0000000 ;\n")
+        f_liberty_out.write("      k_volt_recovery_fall      : 0.0000000 ;\n")
+        f_liberty_out.write("      k_process_removal_rise    : 1.0000000 ;\n")
+        f_liberty_out.write("      k_process_removal_fall    : 1.0000000 ;\n")
+        f_liberty_out.write("      k_temp_removal_rise       : 0.0000000 ;\n")
+        f_liberty_out.write("      k_temp_removal_fall       : 0.0000000 ;\n")
+        f_liberty_out.write("      k_volt_removal_rise       : 0.0000000 ;\n")
+        f_liberty_out.write("      k_volt_removal_fall       : 0.0000000 ;\n")
+        f_liberty_out.write("      k_process_min_pulse_width_high : 1.0000000 ;\n")
+        f_liberty_out.write("      k_process_min_pulse_width_low  : 1.0000000 ;\n")
+        f_liberty_out.write("      k_temp_min_pulse_width_high    : 0.0000000 ;\n")
+        f_liberty_out.write("      k_temp_min_pulse_width_low     : 0.0000000 ;\n")
+        f_liberty_out.write("      k_volt_min_pulse_width_high    : 0.0000000 ;\n")
+        f_liberty_out.write("      k_volt_min_pulse_width_low     : 0.0000000 ;\n")
+        f_liberty_out.write("\n")
+        f_liberty_out.write("/* Global k factor for wire */\n")
+        f_liberty_out.write("\n")
+        f_liberty_out.write("    k_process_wire_res   : 0.0000000;\n")
+        f_liberty_out.write("    k_volt_wire_res      : 0.0000000;\n")
+        f_liberty_out.write("    k_temp_wire_res      : 0.0000000;\n")
+        f_liberty_out.write("\n")
+        f_liberty_out.write("    k_process_wire_cap   : 0.0000000;\n")
+        f_liberty_out.write("    k_volt_wire_cap      : 0.0000000;\n")
+        f_liberty_out.write("    k_temp_wire_cap      : 0.0000000;\n")
+        f_liberty_out.write("\n")
+    #k-factor end
+    
+    #write type_bus
+    for type_bus_name in data_UDC["type_bus"]:
+        f_liberty_out.write("   type({type_bus}_{cell_name}) {{\n" .format(type_bus=type_bus_name, cell_name=data_UDC["cell_name"]))
+        f_liberty_out.write("       base_type : array;\n")#hard coding
+        f_liberty_out.write("       data_type : bit;\n")#hard coding
+        f_liberty_out.write("       bit_width : %d;\n" % data_UDC["type_bus"][type_bus_name]["bit_width"])
+        f_liberty_out.write("       bit_from  : %d;\n" % data_UDC["type_bus"][type_bus_name]["bit_from"])
+        f_liberty_out.write("       bit_to    : %d;\n" % data_UDC["type_bus"][type_bus_name]["bit_to"]) 
+        f_liberty_out.write("       downto    : true;\n")#hard coding
+        f_liberty_out.write("   }\n")
+    
+    #find table index with parameter name "<cell_name>_out"
+    table_index_out = {}
+    for table_index in data_UDC["table_index"]:
+        if table_index["parameter"][:len(data_UDC["cell_name"])] == data_UDC["cell_name"]:
+            if table_index["parameter"][len(data_UDC["cell_name"])+1:] == "out":
+                table_index_out = table_index.copy()
+        
+    if not table_index_out:  print("ERROR: there is NO table_index with paramter name \"<cell_name>_out\" in UDC file")
+    #table_index=table_index_out
+    #genenrally table_index=data_UDC["table_index"][2]["parameter"]
+    f_liberty_out.write("   lu_table_template ({cell_name}_{table_index}) {{\n" .format(cell_name=data_UDC["cell_name"], table_index=table_index_out["parameter"]))   
+    udc_y_index_var = ""
+    udc_x_index_var = ""
+    
+    if table_index_out["y_index_var"] == "input_slope": udc_y_index_var = "input_net_transition"
+    if table_index_out["x_index_var"] == "output_load_cap": udc_x_index_var = "total_output_net_capacitance"
+    f_liberty_out.write("      variable_1 : {var1} ;\n" .format(var1=udc_y_index_var))   #correct?
+    f_liberty_out.write("      variable_2 : {var2} ;\n" .format(var2=udc_x_index_var))   #correct?
+    f_liberty_out.write("      index_1 (\"%0.5f ,%0.5f ,%0.5f ,%0.5f ,%0.5f \");\n" % (table_index_out["y_index"][0], table_index_out["y_index"][1], table_index_out["y_index"][2], table_index_out["y_index"][3], table_index_out["y_index"][4]))
+    f_liberty_out.write("      index_2 (\"%0.5f ,%0.5f ,%0.5f ,%0.5f ,%0.5f \");\n" % (table_index_out["x_index"][0], table_index_out["x_index"][1], table_index_out["x_index"][2], table_index_out["x_index"][3], table_index_out["x_index"][4]))
+    f_liberty_out.write("   }\n")   
+    f_liberty_out.write("\n")   
+    
+    f_liberty_out.write(" cell ({cell_name}) {{\n" .format(cell_name=data_UDC["cell_name"]))   
+    f_liberty_out.write("   {process_prefix}_class : {_class};\n" .format(process_prefix=process_prefix, _class=data_UDC["class"]))
+    f_liberty_out.write("   {process_prefix}_cell_type   : {cell_type};\n" .format(process_prefix=process_prefix, cell_type=data_UDC["cell_type"]))
+    f_liberty_out.write("   area : %0.5f;\n" % data_UDC["area"])
+    f_liberty_out.write("   %s_width : %0.5f;\n" % (process_prefix, data_UDC["width"]))
+    f_liberty_out.write("   %s_height : %0.5f;\n" % (process_prefix, data_UDC["height"]))
+    
+    f_liberty_out.write("   dont_use   : true;\n")   #hard coding
+    f_liberty_out.write("   dont_touch : true;\n")   #hard coding
+    
+    #Add for loop?
+    f_liberty_out.write("   %s_voltage : \"%0.5f\" ;\n" % (process_prefix, data_UDC["timing_derating"][1]["nom_voltage"]))
+    f_liberty_out.write("   %s_temperature : \"%0.5f\" ;\n" % (process_prefix, data_UDC["timing_derating"][1]["nom_temperature"]))
+    
+    f_liberty_out.write("   cell_leakage_power  : 00.00000000000000000000;\n")      #hard coding

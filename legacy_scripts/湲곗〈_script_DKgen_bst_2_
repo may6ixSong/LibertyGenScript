@@ -1,0 +1,406 @@
+################
+##  ATOP RTL  ##
+################
+
+sub atop_rtl
+{
+	printf "	Atop RTL save as ... ";
+	$fileName3 = "./UDC_RESULT/".$cell_name.".v";
+	open ($fileHandle, "> $fileName3") or die "Cannot open $fileName3 : $!";
+
+	printf $fileHandle "`timescale 1ns/1ps\n\n";
+	printf $fileHandle "module $cell_name(\n";
+	foreach $vlist (@port_array){
+		@array = split(/(,)/, $vlist);
+		@portName = $array[4] =~ /\w+/g;
+		if ($vlist eq $port_array[$#port_array])	{printf $fileHandle "\t\t".$portName[0]."\n";}
+		else	{printf $fileHandle "\t\t".$portName[0].",\n";}
+	}
+	#printf $fileHandle ");\n//CLK\n";
+	printf $fileHandle ");\n";
+	foreach $vlist (@port_array){
+		@array = split(/(,)/, $vlist);
+		($MSB, $LSB) = $array[4] =~ /(\d+):(\d+)/;
+		@BIT = $array[6] =~ /\d+/g;
+		warning("*Warning 1 >> difference bitwidth between Name & Bits in $array[4] line".
+				"// [$MSB:$LSB] != $BIT[0]\n\n") if ($BIT[0]!=1)&&($MSB-$LSB+1 != $BIT[0]);
+		@portName = $array[4] =~ /\w+/g;
+		@inoutref = $array[10] =~ /\w+/g;
+		if ($inoutref[0] eq "I")	{$inout = "input\t";}
+		elsif ($inoutref[0] eq "O")	{$inout = "output\t";}
+		elsif ($inoutref[0] eq "IO")	{$inout = "inout\t";}
+		else	{error("*Error 4 >> invalid port I/O info in $array[4] line"); $inout = "";}
+		if ((defined $MSB) and (defined $LSB))	{$bitwidth = "[$MSB:$LSB]\t";}
+		elsif ($BIT[0]>1)	{$bitwidth = "[$BIT[0]:0\t";}
+		else	{$bitwidth = "\t\t";}
+		if ($array[0] =~ /\w+/) {printf $fileHandle "//".$array[0]."\n";}
+		printf $fileHandle $inout.$bitwidth.$portName[0].";\n";
+	}
+	printf $fileHandle "\n";
+	foreach $vlist (@pwr_array){
+		@array = split(/(,)/, $vlist);
+		@portName = $array[4] =~ /\w+/g;
+		printf $fileHandle "supply1\t$portName[0];\n";
+	}	
+	foreach $vlist (@gnd_array){
+		@array = split(/(,)/, $vlist);
+		@portName = $array[4] =~ /\w+/g;
+		printf $fileHandle "supply0\t$portName[0];\n";
+	}
+	printf $fileHandle "\nendmodule";
+	close $fileHandle;
+	printf "$fileName3\n\n";
+}
+		
+
+################
+##  PDT FILE  ##
+################
+
+sub pdt_gen
+{
+	printf "	pdt file save as ... ";
+	$fileName4 = "./UDC_RESULT/".$cell_name.".pdt";
+	open ($fileHandle, "> $fileName4") or die "Cannot open $fileName4 : $!";
+
+	my $pdt_header_format = 
+		"//*****************************************************************************\n".
+		"//\tDevice Name\t: $cell_name\n".
+		"//\n".
+		"//\tFile Type\t\t: Verilog RTL\n".
+		"//\tFile Name\t\t: $fileName4\n".
+		"//\tModule Name\t: $cell_name\n".
+		"//\tObject\t\t: $cell_name hardmacro\n".
+		#"//\tVer\t\t\t: $DKgen_ver\n".
+		"//\tVer\t\t\t: 0.0\n".
+		"//\tDate\t\t\t: %s\n".
+		"//\n".
+		"//   Modify Descriptions\n".
+		"//   +------Date-------------+ver--------+By------------+Descriptions----------\n".
+		#"//   \t%s\t\t\t$DKgen_ver\t\t$g_username\t\tInitial Version\n".
+		"//       %s\t\t\t0.0\t\t$g_username\t\tInitial Version\n".
+		"//*****************************************************************************\n\n".
+		"cell ( $cell_name ) {\n";
+	#($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time); $year+=1900;
+	#printf $fileHandle $pdt_header_format, scalar localtime,"$year-$mon-$mday";
+	@local_time = localtime(time); $local_time[5]+=1900; $local_time[4]+=1;
+	printf $fileHandle $pdt_header_format, scalar localtime,"$local_time[5]-$local_time[4]-$local_time[3]";
+	#printf "@local_time\n\n";
+
+	foreach $vlist (@pwr_array){
+		@array = split(/(,)/, $vlist);
+		@portName = $array[4] =~ /\w+/g;
+		$related_pin = "";
+		foreach $port_list (@port_array)	{
+			@array2 = split(/(,)/, $port_list);
+			@relatedPower = $array2[9*2] =~ /\w+/g;
+			@portName2 = $array2[2*2] =~ /\w+/g;
+			if ($portName[0] eq $relatedPower[0])	{
+				$div_sign = ", ";	$div_sign = "" if ($related_pin eq "");
+				$related_pin .= $div_sign.$portName2[0];
+			}
+		}
+		$related_pin = "\t\trelated_pin : $related_pin;\n" unless ($related_pin eq "");
+		printf $fileHandle "\tpin( $portName[0] ){\n".
+						"\t\torder : $lastpinnum ;\n".$related_pin.
+						"\t\tpin_type : power ;\n\t}\n";
+		$lastpinnum++;
+	}	
+	foreach $vlist (@gnd_array){
+		@array = split(/(,)/, $vlist);
+		@portName = $array[4] =~ /\w+/g;
+		$related_pin = "";
+		foreach $port_list (@port_array)	{
+			@array2 = split(/(,)/, $port_list);
+			@relatedGround = $array2[10*2] =~ /\w+/g;
+			@portName2 = $array2[2*2] =~ /\w+/g;
+			if ($portName[0] eq $relatedGround[0])	{
+				$div_sign = ", ";	$div_sign = "" if ($related_pin eq "");
+				$related_pin .= $div_sign.$portName2[0];
+			}
+		}
+		$related_pin = "\t\trelated_pin : $related_pin;\n" unless ($related_pin eq "");
+		printf $fileHandle "\tpin( $portName[0] ){\n".
+						"\t\torder : $lastpinnum ;\n".$related_pin.
+						"\t\tpin_type : ground ;\n\t}\n";
+		$lastpinnum++;
+	}
+	printf $fileHandle "}\n";
+	close $fileHandle;
+	printf "$fileName4\n\n";
+}
+
+
+################
+##  UDC FILE  ##
+################
+
+sub udc_gen
+{
+	printf "	udc file save as ... \n";
+	#@udc_condition = ("bst", "tiv", "wst");
+	$udc_condition = "wst" if (($constraint =~ /wst/)||($constraint =~ /tiv/));
+	$udc_condition = "bst" if ($constraint =~ /bst/);
+	$udc_header_format = 
+		"// This is an UDC file for Analog, which is generated by DKgen.\n".
+		"// -- Default values are used for HDA and OUT timing.\n".
+		"// -- You must be confirm the values after opening output UDC file.\n".
+		"// library_family : %s; %s\n\n";
+	
+	#@library_name = ($library_name_bst, $library_name_tiv, $library_name_wst);
+		
+=pod		
+	@high_vmax = ("3.60",		## vmax @ bst high voltage condition
+	  		  "3.00",		## vmax @ tiv high voltage condition
+	  		  "3.00");	## vmax @ wst high voltage condition
+	  		   
+	@mid_vmax = ("1.98",		## vmax @ bst middle voltage condition
+	  		 "1.62",		## vmax @ tiv middle voltage condition
+	  		 "1.62");		## vmax @ wst middle voltage condition
+
+	@low_vmax = ("1.32",		## vmax @ bst low voltage condition
+	  		 "1.08",		## vmax @ tiv low voltage condition
+	  		 "1.08");		## vmax @ wst low voltage condition
+=cut
+	if ($udc_condition eq "bst")
+		{
+		# v0.86
+		#$high_vmax = "3.60";
+		#$mid_vmax = "1.98";
+		#$low_vmax = "1.32";
+		$high_vmax = $high_vmax_bst;
+		$mid_vmax = $mid_vmax_bst;
+		$low_vmax = $low_vmax_bst;
+	}
+	else
+		{
+		# v0.86
+		#$high_vmax = "3.00";
+		#$mid_vmax = "1.62";
+		#$low_vmax = "1.08";
+		$high_vmax = $high_vmax_wst;
+		$mid_vmax = $mid_vmax_wst;
+		$low_vmax = $low_vmax_wst;
+	}
+
+	@timing_derating = (## bst condition timing derating
+					   "		nom_voltage         : $nom_voltage[0]; \n".
+                            "		nom_temperature     : $nom_temperature[0]; \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n");
+=pod
+					   ## tiv condition timing derating
+					   "		nom_voltage         : $nom_voltage[1]; \n".
+                            "		nom_temperature     : $nom_temperature[1]; \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n",
+					   ## wst condition timing derating
+					   "		nom_voltage         : $nom_voltage[2]; \n".
+                            "		nom_temperature     : $nom_temperature[2]; \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n".
+                            "		case ( %.5f, %.5f ) { value(%.5f); } \n");
+=cut
+
+	foreach $vlist (@port_array)	{
+		#printf "$vlist\n";
+		@array = split(/(,)/, $vlist);
+		$udc_vline = "";
+		foreach $m (1*2 .. ($maxcol) *2)	{
+			next if ($m%2 == 1);
+			error("*Error 3 >> detected empty data cell in $array[4] line") unless defined ($array[$m]);
+			#push @udc_array, $array[$m]."\t" unless ($m == $maxcol*2);
+			#push @udc_array, $array[$m] if ($m == $maxcol*2);
+			$udc_vline .= $array[$m]."\t" unless ($m == $maxcol*2);
+			$udc_vline .= $array[$m] if ($m == $maxcol*2);
+		}
+		push @udc_array, $udc_vline;
+	}
+
+	## FILE4 measure data
+	$mt_cnt = 0;
+	foreach $vlist (@FILE4_array)	{
+		$mt_cnt++;
+		next if ($mt_cnt == 1);
+		@array = $vlist =~ /\S+/g;
+
+		$tphl_temp = &ExToReal($array[$htol_num]);
+		$tplh_temp = &ExToReal($array[$ltoh_num]);
+		$tr_temp = &ExToReal($array[$tr_num]);
+		$tf_temp = &ExToReal($array[$tf_num]);
+		
+		push @tphl_list4, $tphl_temp;
+		push @tplh_list4, $tplh_temp;
+		push @tr_list4, $tr_temp;
+		push @tf_list4, $tf_temp;
+
+	}
+	$mt_cnt--; #printf "$mt_cnt\n";
+	#error("*Error 6 >> Need more measured data (present : $mt_cnt // need : 30 data)") if ($mt_cnt < 30);
+	#complete(0) if ($mt_cnt < 30);
+	error("*Error 6 >> Need more FILE4 measured data (present : $mt_cnt // need : $mt_cnt_ref_output data)") if ($mt_cnt < $mt_cnt_ref_output)&&($FILE4_def);
+	complete(0) if ($mt_cnt < $mt_cnt_ref_output)&&($FILE4_def);
+
+	## FILE3 measure data
+	$mt_cnt = 0;
+	foreach $vlist (@FILE3_array)	{
+		$mt_cnt++;
+		next if ($mt_cnt == 1);
+		@array = $vlist =~ /\S+/g;
+
+		$tphl_temp = &ExToReal($array[$htol_num]);
+		$tplh_temp = &ExToReal($array[$ltoh_num]);
+		$tr_temp = &ExToReal($array[$tr_num]);
+		$tf_temp = &ExToReal($array[$tf_num]);
+		
+		push @tphl_list3, $tphl_temp;
+		push @tplh_list3, $tplh_temp;
+		push @tr_list3, $tr_temp;
+		push @tf_list3, $tf_temp;
+
+	}
+	$mt_cnt--; #printf "$mt_cnt\n";
+	#error("*Error 6 >> Need more measured data (present : $mt_cnt // need : 30 data)") if ($mt_cnt < 30);
+	#complete(0) if ($mt_cnt < 30);
+	error("*Error 6 >> Need more FILE3 measured data (present : $mt_cnt // need : $mt_cnt_ref_output data)") if ($mt_cnt < $mt_cnt_ref_output)&&($FILE3_def);
+	complete(0) if ($mt_cnt < $mt_cnt_ref_output)&&($FILE3_def);
+
+	## output measure data (FILE2)
+	$mt_cnt = 0;
+	foreach $vlist (@FILE2_array)	{
+		$mt_cnt++;
+		next if ($mt_cnt == 1);
+		@array = $vlist =~ /\S+/g;
+
+		$tphl_temp = &ExToReal($array[$htol_num]);
+		$tplh_temp = &ExToReal($array[$ltoh_num]);
+		$tr_temp = &ExToReal($array[$tr_num]);
+		$tf_temp = &ExToReal($array[$tf_num]);
+		
+		push @tphl_list2, $tphl_temp;
+		push @tplh_list2, $tplh_temp;
+		push @tr_list2, $tr_temp;
+		push @tf_list2, $tf_temp;
+
+	}
+	$mt_cnt--; #printf "$mt_cnt\n";
+	#error("*Error 6 >> Need more measured data (present : $mt_cnt // need : 30 data)") if ($mt_cnt < 30);
+	#complete(0) if ($mt_cnt < 30);
+	error("*Error 6 >> Need more FILE2 measured data (present : $mt_cnt // need : $mt_cnt_ref_output data)") if ($mt_cnt < $mt_cnt_ref_output)&&($FILE2_def);
+	complete(0) if ($mt_cnt < $mt_cnt_ref_output)&&($FILE2_def);
+
+
+	## input measure data  (FILE1)
+	$mt_cnt2 = 0;
+	foreach $vlist (@FILE1_array)	{
+		$mt_cnt2++;
+		next if ($mt_cnt2 == 1);
+		@array = $vlist =~ /\S+/g;
+
+		$Tsetup_temp = &ExToReal($array[$Tsetup_num]);
+		$Thold_temp = &ExToReal($array[$Thold_num]);
+		
+		push @Tsetup_list, $Tsetup_temp;
+		push @Thold_list, $Thold_temp;
+
+	}
+	$mt_cnt2--; #printf "$mt_cnt\n";
+	#error("*Error 6 >> Need more measured data (present : $mt_cnt // need : 30 data)") if ($mt_cnt < 30);
+	#complete(0) if ($mt_cnt < 30);
+	error("*Error 6 >> Need more FILE1 measured data (present : $mt_cnt2 // need : $mt_cnt_ref_input data)") if ($mt_cnt2 < $mt_cnt_ref_input)&&($FILE1_def);
+	complete(0) if ($mt_cnt2 < $mt_cnt_ref_input)&&($FILE1_def);
+
+	## MC1 measure data
+	$mt_cnt2 = 0;
+	foreach $vlist (@MC1_array)	{
+		$mt_cnt2++;
+		next if ($mt_cnt2 == 1);
+		@array = $vlist =~ /\S+/g;
+
+		$Tsetup_temp = &ExToReal($array[$Tsetup_num]);
+		$Thold_temp = &ExToReal($array[$Thold_num]);
+		
+		push @Tsetup_list1, $Tsetup_temp;
+		push @Thold_list1, $Thold_temp;
+
+	}
+	$mt_cnt2--;
+	error("*Error 6 >> Need more MC1 measured data (present : $mt_cnt2 // need : $mt_cnt_ref_input data)") if ($mt_cnt2 < $mt_cnt_ref_input)&&($MC1_def);
+	complete(0) if ($mt_cnt2 < $mt_cnt_ref_input)&&($MC1_def);
+
+	## MC2 measure data
+	$mt_cnt2 = 0;
+	foreach $vlist (@MC2_array)	{
+		$mt_cnt2++;
+		next if ($mt_cnt2 == 1);
+		@array = $vlist =~ /\S+/g;
+
+		$Tsetup_temp = &ExToReal($array[$Tsetup_num]);
+		$Thold_temp = &ExToReal($array[$Thold_num]);
+		
+		push @Tsetup_list2, $Tsetup_temp;
+		push @Thold_list2, $Thold_temp;
+
+	}
+	$mt_cnt2--;
+	error("*Error 6 >> Need more MC2 measured data (present : $mt_cnt2 // need : $mt_cnt_ref_input data)") if ($mt_cnt2 < $mt_cnt_ref_input)&&($MC2_def);
+	complete(0) if ($mt_cnt2 < $mt_cnt_ref_input)&&($MC2_def);
+
+	## MC3 measure data
+	$mt_cnt2 = 0;
+	foreach $vlist (@MC3_array)	{
+		$mt_cnt2++;
+		next if ($mt_cnt2 == 1);
+		@array = $vlist =~ /\S+/g;
+
+		$Tsetup_temp = &ExToReal($array[$Tsetup_num]);
+		$Thold_temp = &ExToReal($array[$Thold_num]);
+		
+		push @Tsetup_list3, $Tsetup_temp;
+		push @Thold_list3, $Thold_temp;
+
+	}
+	$mt_cnt2--;
+	error("*Error 6 >> Need more MC3 measured data (present : $mt_cnt2 // need : $mt_cnt_ref_input data)") if ($mt_cnt2 < $mt_cnt_ref_input)&&($MC3_def);
+	complete(0) if ($mt_cnt2 < $mt_cnt_ref_input)&&($MC3_def);
+
+	## MC4 measure data
+	$mt_cnt2 = 0;
+	foreach $vlist (@MC4_array)	{
+		$mt_cnt2++;
+		next if ($mt_cnt2 == 1);
+		@array = $vlist =~ /\S+/g;
+
+		$Tsetup_temp = &ExToReal($array[$Tsetup_num]);
+		$Thold_temp = &ExToReal($array[$Thold_num]);
+		
+		push @Tsetup_list4, $Tsetup_temp;
+		push @Thold_list4, $Thold_temp;
+
+	}
+	$mt_cnt2--;
+	error("*Error 6 >> Need more MC4 measured data (present : $mt_cnt2 // need : $mt_cnt_ref_input data)") if ($mt_cnt2 < $mt_cnt_ref_input)&&($MC4_def);
+	complete(0) if ($mt_cnt2 < $mt_cnt_ref_input)&&($MC4_def);
+
+	## MC5 measure data
+	$mt_cnt2 = 0;
+	foreach $vlist (@MC5_array)	{
+		$mt_cnt2++;
+		next if ($mt_cnt2 == 1);
+		@array = $vlist =~ /\S+/g;
+
+		$Tsetup_temp = &ExToReal($array[$Tsetup_num]);
+		$Thold_temp = &ExToReal($array[$Thold_num]);
+		
+		push @Tsetup_list5, $Tsetup_temp;
+		push @Thold_list5, $Thold_temp;
+
+	}
+	$mt_cnt2--;
+	error("*Error 6 >> Need more MC5 measured data (present : $mt_cnt2 // need : $mt_cnt_ref_input data)") if ($mt_cnt2 < $mt_cnt_ref_input)&&($MC5_def);
+	complete(0) if ($mt_cnt2 < $mt_cnt_ref_input)&&($MC5_def);

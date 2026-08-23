@@ -1,0 +1,9 @@
+# template_lib에 들어가는 .lib은 PDK/DK file임
+
+project_name="???"
+template_lib_bst="cs17lpv_?!$@$!@$_min_0p920v_m40c.lib"
+template_lib_bst_tiv="cs17lpv_!$@$!@$_min_0p920v_125c.lib"
+template_lib_wst="cs17lpv_!$@$!@$_max_0p720v_125c.lib"
+template_lib_wst_tiv="cs17lpv_!$@$!@$_max_0p720v_m40c.lib"
+
+python make_liberty.py ${project_name} ${template_lib_bst} ${template_lib_bst_tiv} ${template_lib_wst} ${template_lib_wst_tiv}
