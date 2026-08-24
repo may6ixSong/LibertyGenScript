@@ -15,19 +15,16 @@ pg_pin 순서(2026-08 확정): Power 그룹 전체 먼저, 그 다음 Ground 그
 2026-08 수정: block5(pin()/bus())가 이 cell{} 안에 이어서 작성되므로, 이 모듈은
 더 이상 cell{}을 닫지 않는다 - 닫는 중괄호는 block5까지 다 쓴 뒤
 liberty_writter.py에서 처리한다.
+
+2026-08 수정: Virtual Power pg_pin의 switch_function / pg_function은 더 이상 코드에
+하드코딩하지 않는다. Step3 Pin Settings에서 Virtual Power (power gate) 바로 아래에
+연계 입력으로 받는 "Virtual Power Switch Function" / "Virtual Power PG Function" 값을
+그대로 쓴다 (둘 다 와일드카드 불가, Step3 Validate에서 빈 값/와일드카드를 거른다).
 """
 
 from __future__ import annotations
 
 from step4_generate.missing_data import INDENT_1, INDENT_2, INDENT_3, PORT_LIST_NOT_FOUND_TOKEN, write_missing_comment
-
-# TODO(질문): Virtual Power pg_pin의 pg_function 값("VDDD_08_ATOP_BL")과
-# switch_function 값("PG_ATOP_SLEEP_R_T")은 사용자 요청에 따라 우선 고정값으로
-# 하드코딩했다. 둘 다 셀/전압마다 달라질 수 있는 값으로 보이는데, 실제로 어디서
-# 가져와야 하는 값인지(PDK/DK 파일? 별도 입력?) 확인이 필요하다. switch_function은
-# 원래 Step3의 Enable signal 값을 그대로 썼었는데, 이번에 이 고정값으로 대체됐다.
-_VIRTUAL_POWER_PG_FUNCTION = "VDDD_08_ATOP_BL"
-_VIRTUAL_POWER_SWITCH_FUNCTION = "PG_ATOP_SLEEP_R_T"
 
 
 def _voltage_name_text(voltage_prefix: str, voltage_value: float | None) -> str:
@@ -51,6 +48,7 @@ def _write_standard_pg_pin(f_out, pin: dict, voltage_prefix: str, pg_type_suffix
 
 def _write_virtual_power_pg_pin(
     f_out, pin: dict, voltage_prefix: str, pdk_filename: str,
+    switch_function: str, pg_function: str,
 ) -> None:
     pin_name = pin["pin_name"]
     voltage_value = pin["voltage_value"]
@@ -62,8 +60,8 @@ def _write_virtual_power_pg_pin(
     f_out.write(f"{INDENT_3}voltage_name : {voltage_name} ;\n")
     f_out.write(f"{INDENT_3}pg_type : internal_power ;\n")
     f_out.write(f"{INDENT_3}direction : output ;\n")
-    f_out.write(f'{INDENT_3}switch_function : "{_VIRTUAL_POWER_SWITCH_FUNCTION}" ;\n')
-    f_out.write(f'{INDENT_3}pg_function : "{_VIRTUAL_POWER_PG_FUNCTION}" ;\n')
+    f_out.write(f'{INDENT_3}switch_function : "{switch_function}" ;\n')
+    f_out.write(f'{INDENT_3}pg_function : "{pg_function}" ;\n')
     f_out.write(f"{INDENT_2}}}\n")
 
 
@@ -72,7 +70,8 @@ def write_block4(f_out, job: dict) -> None:
     Args:
         job: liberty_assembler.build_job()의 결과 (cell_name, process_prefix,
              class_value, area/width/height, nom_voltage/nom_temperature,
-             pwr_pins/gnd_pins, virtual_power_pin, enable_signal 포함).
+             pwr_pins/gnd_pins, virtual_power_pin, enable_signal,
+             virtual_power_switch_function, virtual_power_pg_function 포함).
     """
     pdk_filename = job["pdk_filename"]
     cell_name = job["cell_name"]
@@ -97,7 +96,10 @@ def write_block4(f_out, job: dict) -> None:
 
     for pin in job["pwr_pins"]:
         if pin["pin_name"] == virtual_power_pin:
-            _write_virtual_power_pg_pin(f_out, pin, "VDD", pdk_filename)
+            _write_virtual_power_pg_pin(
+                f_out, pin, "VDD", pdk_filename,
+                job["virtual_power_switch_function"], job["virtual_power_pg_function"],
+            )
         else:
             _write_standard_pg_pin(f_out, pin, "VDD", "power", pdk_filename)
 

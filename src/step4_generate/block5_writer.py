@@ -33,6 +33,17 @@ pin() 몸체 내용은 pin name이 아래 중 어디에 매치되는지에 따�
 값이 Port List/DBS 파일에서 파싱되지 않는 경우는 예외를 던지지 않고 missing_data.py
 규칙대로 표시한다.
 
+2026-08 수정 (Step3 연계 입력 반영):
+  - DBS output pin의 timing{} 안 related_bus_pins는 Step3에서 "Check DBS Output Pins"로
+    인식한 pin마다 사용자가 직접 입력한 related pin을 쓴다(job["dbs_related_pins"]).
+    Step3 Validate가 이 값이 Port List에 실제 존재하는 pin이고 그 pin 행의 'Related Pin'
+    컬럼 값과 정확히 일치하는지까지 검사한다. 입력이 없는 예외적인 경우에만 Port List의
+    'Related Pin' 컬럼 값으로 폴백한다.
+  - timing_sense / timing_type도 하드코딩이 아니라 Step3 입력값(인식된 DBS output pin
+    전체 공통 1쌍)을 쓴다.
+  - Power down control signal 매치 pin의 {prefix}_acore_internal_power 안 rise/fall
+    power와 when 역시 Step3 입력값을 쓴다(예전 하드코딩 값이 그 입력의 기본값이다).
+
 2026-08 수정: DBS output signal 매치 pin의 timing 표(cell_fall/cell_rise/
 rise_transition/fall_transition)는 PDK/DK 파일과 완전히 무관하다는 피드백을 반영해,
 PDK/DK 파일의 DFF/primitive cell 검색 결과(sections)에 대한 의존을 전부 제거했다.
@@ -119,7 +130,6 @@ def _write_timing_block(f_out, pin: dict, job: dict, indent_decl: str) -> None:
     행/열 크기도 .mt0 파일 자체의 slope/cload 컬럼에서 derive_table_shape()로
     추론함).
     """
-    process_prefix = job["process_prefix"]
     cell_name = job["cell_name"]
     pdk_filename = job["pdk_filename"]
     dbs_filename = job["dbs_filename"]
@@ -129,16 +139,21 @@ def _write_timing_block(f_out, pin: dict, job: dict, indent_decl: str) -> None:
     body_indent = indent_decl + "  "
     table_indent = body_indent + "  "
 
+    # Step3에서 이 pin에 대해 직접 입력받은 related pin이 우선 (Step3 Validate가 Port
+    # List와의 일치까지 이미 확인함). 값이 없으면 Port List의 'Related Pin' 컬럼으로 폴백.
+    related_pin_value = (job.get("dbs_related_pins") or {}).get(pin["pin_name"], "")
+    if not str(related_pin_value).strip():
+        related_pin_value = pin.get("related_pin", "")
     related_pin = _text_or_missing(
-        f_out, pin.get("related_pin", ""), f"Related Pin for pin '{pin['pin_name']}' (Port List)", pdk_filename,
+        f_out, related_pin_value, f"Related Pin for pin '{pin['pin_name']}' (Step 3 / Port List)", pdk_filename,
     )
 
     row_count, col_count, shape_error = derive_table_shape(dbs_path)
 
     f_out.write(f"{indent_decl}timing () {{\n")
     f_out.write(f'{body_indent}related_bus_pins : "{related_pin}";\n')
-    f_out.write(f"{body_indent}timing_sense : non_unate;\n")
-    f_out.write(f"{body_indent}timing_type : combinational;\n")
+    f_out.write(f"{body_indent}timing_sense : {job['dbs_timing_sense']};\n")
+    f_out.write(f"{body_indent}timing_type : {job['dbs_timing_type']};\n")
 
     for liberty_key, mt0_column in _TIMING_ENTRIES:
         if shape_error:
@@ -212,9 +227,9 @@ def _write_pin_body(f_out, pin: dict, job: dict, body_indent: str, pin_type_valu
     if is_power_down:
         inner_body = body_indent + "  "
         f_out.write(f'{body_indent}{process_prefix}_acore_internal_power("{pin_name}") {{\n')
-        f_out.write(f"{inner_body}{process_prefix}_acore_rise_power : 30000000.0000 ;\n")
-        f_out.write(f"{inner_body}{process_prefix}_acore_fall_power : 0.0 ;\n")
-        f_out.write(f'{inner_body}{process_prefix}_acore_when : "1" ;\n')
+        f_out.write(f"{inner_body}{process_prefix}_acore_rise_power : {job['power_down_rise_power']} ;\n")
+        f_out.write(f"{inner_body}{process_prefix}_acore_fall_power : {job['power_down_fall_power']} ;\n")
+        f_out.write(f'{inner_body}{process_prefix}_acore_when : "{job["power_down_when"]}" ;\n')
         f_out.write(f"{body_indent}}}\n")
 
 
@@ -251,7 +266,9 @@ def write_block5(f_out, job: dict) -> None:
     Args:
         job: liberty_assembler.build_job()의 결과 (cell_name, process_prefix,
              port_pins, pwr_pins, gnd_pins, enable_signal_pattern,
-             power_down_pattern, dbs_output_pattern, dbs_path 포함).
+             power_down_pattern, power_down_rise_power/fall_power/when,
+             dbs_output_pattern, dbs_related_pins, dbs_timing_sense/timing_type,
+             dbs_path 포함).
     """
     cell_name = job["cell_name"]
     process_prefix = job["process_prefix"]

@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 실행 시 앱 옆에 자동 생성되는 폴더 (사용자별 설정/산출물)
+config/
+output/
+
+# build_exe.sh 산출물
+build/
+dist/
+*.spec
