@@ -32,6 +32,68 @@ cd "$SCRIPT_DIR/src" || exit 1
 "$ANACONDA_PYTHON" -c "
 import sys
 sys.setrecursionlimit(sys.getrecursionlimit() * 5)
+
+# PyInstaller 4.2의 load_ldconfig_cache()가 'ldconfig -p' 출력 중 자기 정규식과 안
+# 맞는 줄을 만나면(예: 이 서버의 glibc/ldconfig 출력 형식) None에 .groups()를 호출해서
+# AttributeError로 죽는 버그가 있다(이후 PyInstaller 버전에서 고쳐짐). 원본 로직은
+# 그대로 두고, 매칭 안 되는 줄만 건너뛰도록 patch한다.
+try:
+    import os
+    import re
+    import PyInstaller.depend.utils as _pi_utils
+    from PyInstaller import compat as _pi_compat
+    from PyInstaller.exceptions import ExecCommandFailed as _PIExecCommandFailed
+
+    def _patched_load_ldconfig_cache():
+        if _pi_utils.LDCONFIG_CACHE is not None:
+            return
+
+        from distutils.spawn import find_executable
+        ldconfig = find_executable('ldconfig')
+        if ldconfig is None:
+            ldconfig = find_executable('ldconfig', '/usr/sbin:/sbin:/usr/bin:/usr/sbin')
+            if ldconfig is None:
+                _pi_utils.LDCONFIG_CACHE = {}
+                return
+
+        if _pi_compat.is_freebsd or _pi_compat.is_openbsd:
+            ldconfig_arg = '-r'
+            splitlines_count = 2
+            pattern = re.compile(r'^\s+\d+:-l(\S+)(\s.*)? => (\S+)')
+        else:
+            ldconfig_arg = '-p'
+            splitlines_count = 1
+            pattern = re.compile(r'^\s+(\S+)(\s.*)? => (\S+)')
+
+        try:
+            text = _pi_compat.exec_command(ldconfig, ldconfig_arg)
+        except _PIExecCommandFailed:
+            _pi_utils.LDCONFIG_CACHE = {}
+            return
+
+        cache = {}
+        for line in text.strip().splitlines()[splitlines_count:]:
+            m = pattern.match(line)
+            if m is None:
+                continue
+            path = m.groups()[-1]
+            if _pi_compat.is_freebsd or _pi_compat.is_openbsd:
+                bname = os.path.basename(path).split('.so', 1)[0]
+                name = 'lib' + m.group(1)
+                if not name.startswith(bname):
+                    continue
+                name = bname + '.so' + name[len(bname):]
+            else:
+                name = m.group(1)
+            if name not in cache:
+                cache[name] = path
+
+        _pi_utils.LDCONFIG_CACHE = cache
+
+    _pi_utils.load_ldconfig_cache = _patched_load_ldconfig_cache
+except Exception as e:
+    sys.stderr.write('[경고] ldconfig 파싱 우회 패치를 적용하지 못했습니다: %r\n' % (e,))
+
 sys.argv = [
     'pyinstaller',
     '--onefile',
