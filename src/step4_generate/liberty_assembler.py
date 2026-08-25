@@ -1,11 +1,12 @@
 """
 liberty_assembler.py
 
-Step2(자동 페어링 + pair별 Voltage Condition 선택) + Step3(Constants, 단일 행
-Voltage Condition 9칸 테이블, DFF Cell Name/LUT Table/Worst case primitive liberty,
-Pin Settings와 그 연계 입력들) + Step1(PDK Folder, Port List)을 조합해서,
-liberty_writter의 write_liberty_file()에 바로 넘길 수 있는 "job"(파일 1개 생성에 필요한
-값 전부)을 메모리 상에서 만든다.
+Step2(자동 페어링 + pair별 Voltage Condition(bst/wst/tiv) 선택) + Step3(Constants,
+Voltage Map(BST/WST/TIV x Power Type1..N 값 + Power Type별 voltage name + power type
+개수), DFF Cell Name/LUT Table/Worst case primitive liberty, Pin Settings와 그 연계
+입력들) + Step1(PDK Folder, Port List)을 조합해서, liberty_writter의
+write_liberty_file()에 바로 넘길 수 있는 "job"(파일 1개 생성에 필요한 값 전부)을 메모리
+상에서 만든다.
 
 .udc/.pdt/pg_pin 같은 중간 파일은 만들지 않는다(2026-08 확정) - PDK 파일 자체는
 write_liberty_file()이 직접 스트리밍해서 읽으므로, 이 모듈은 그 외의 값(출력 파일명,
@@ -20,7 +21,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from step2_udc.udc_field_defs import VOLTAGE_CONDITION_OPTIONS
-from step3_settings.constants_field_defs import voltage_condition_field_key
+from step3_settings.constants_field_defs import (
+    POWER_TYPE_COUNT_DEFAULT, POWER_TYPE_COUNT_KEY, POWER_TYPE_DEFAULT_VOLTAGE,
+    voltage_map_name_key, voltage_map_value_key,
+)
 from step3_settings.pin_field_defs import (
     DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
     ENABLE_SIGNAL_KEY, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY,
@@ -55,7 +59,7 @@ def build_job(
     pdk_folder: str,
     dbs_folder: str,
     scalars: dict,
-    voltage_condition_table: dict,
+    voltage_map_settings: dict,
     port_bit_values: list[int],
     power_ground_pins: dict,
     pins: dict,
@@ -116,14 +120,41 @@ def build_job(
         else output_filename
     )
 
-    low_key = voltage_condition_field_key(voltage_condition_value, "low")
-    mid_key = voltage_condition_field_key(voltage_condition_value, "mid")
-    high_key = voltage_condition_field_key(voltage_condition_value, "high")
+    group_label = voltage_condition_value.upper()  # bst/wst/tiv -> BST/WST/TIV (VOLTAGE_MAP_GROUPS)
 
-    label = voltage_condition_value.upper()
-    voltage_low = _to_float(voltage_condition_table.get(low_key, ""), f"{label} Low", errors)
-    voltage_mid = _to_float(voltage_condition_table.get(mid_key, ""), f"{label} Mid", errors)
-    voltage_high = _to_float(voltage_condition_table.get(high_key, ""), f"{label} High", errors)
+    try:
+        power_type_count = int(voltage_map_settings.get(POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_DEFAULT))
+    except (TypeError, ValueError):
+        power_type_count = POWER_TYPE_COUNT_DEFAULT
+    voltage_map_values = voltage_map_settings.get("values", {}) or {}
+    voltage_map_names = voltage_map_settings.get("names", {}) or {}
+
+    # 이 job(pair)이 선택한 bst/wst/tiv 그룹의 Power Type1..N 값 - block2의 voltage_map
+    # 줄마다 (voltage name, value) 하나씩.
+    voltage_types: list[dict] = []
+    for type_index in range(1, power_type_count + 1):
+        value_key = voltage_map_value_key(group_label, type_index)
+        name_key = voltage_map_name_key(type_index)
+        value = _to_float(
+            voltage_map_values.get(value_key, ""), f"{group_label} Power Type{type_index}", errors,
+        )
+        name = str(voltage_map_names.get(name_key, "")).strip()
+        if not name:
+            errors.append(
+                f"[{pdk_filename}] Power Type{type_index} voltage name (Step 3 Voltage Map) is empty."
+            )
+        voltage_types.append({"name": name, "value": value})
+
+    # block4가 Port List Volts 값을 Power Type에 매칭시킬 때 쓰는 고정 임계값(대표
+    # 전압 0.8V/2.2V/1.8V) -> Power Type voltage name. bst/wst/tiv 구분과 무관하게
+    # power type 개수만큼만 포함한다 (2026-08 확정: power type 개수가 2면 1.8V도 매칭
+    # 대상에서 제외).
+    voltage_name_thresholds = {
+        POWER_TYPE_DEFAULT_VOLTAGE[type_index]: str(
+            voltage_map_names.get(voltage_map_name_key(type_index), "")
+        ).strip()
+        for type_index in range(1, power_type_count + 1)
+    }
 
     area = _to_float(common.get("area", ""), "Area (Common Fields)", errors)
     width = _to_float(common.get("width", ""), "Width (Common Fields)", errors)
@@ -152,9 +183,8 @@ def build_job(
         "library_name": library_name,
         "nom_voltage": pair["voltage"],
         "nom_temperature": pair["temperature"],
-        "voltage_low": voltage_low,
-        "voltage_mid": voltage_mid,
-        "voltage_high": voltage_high,
+        "voltage_types": voltage_types,
+        "voltage_name_thresholds": voltage_name_thresholds,
         "cell_name": cell_name,
         "dff_cell_name": dff_cell_name,
         "lut_table_name": lut_table_name,
@@ -194,7 +224,7 @@ def build_jobs(
     pdk_folder: str,
     dbs_folder: str,
     scalars: dict,
-    voltage_condition_table: dict,
+    voltage_map_settings: dict,
     port_bit_values: list[int],
     power_ground_pins: dict,
     pins: dict,
@@ -212,10 +242,12 @@ def build_jobs(
 
     for pair in pairs:
         pair_errors: list[str] = []
+        # Step2에서 pair별로 고른 bst/wst/tiv 선택값(voltage_map과는 다른 개념 - Step2의
+        # pair_settings 저장 key는 그대로 "voltage_condition" 유지).
         voltage_condition_value = pair_settings.get(pair["pdk_file"], {}).get("voltage_condition", "")
         job = build_job(
             pair, voltage_condition_value, common, pdk_folder, dbs_folder, scalars,
-            voltage_condition_table, port_bit_values, power_ground_pins, pins, port_pins, pair_errors,
+            voltage_map_settings, port_bit_values, power_ground_pins, pins, port_pins, pair_errors,
         )
         if job is None:
             errors.extend(pair_errors)

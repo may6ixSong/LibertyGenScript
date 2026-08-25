@@ -3,7 +3,8 @@ block2_writer.py
 
 Block 2 작성: `library (...) {` 선언부터 시작해서
   2-(1) library 선언 + 우리 쪽 date/revision/comment + PDK 본문(그대로 복사)
-  2-(2) voltage_map 4줄 (Step2/Step3 값으로 항상 전부 작성)
+  2-(2) voltage_map (power type 개수만큼의 VDD 줄 + VSS 1줄, Step2/Step3 값으로 항상
+        전부 작성 - 2026-08 Voltage Map 재설계)
   2-(3) operating_conditions / default_operating_conditions
   2-(4) input_voltage / output_voltage (PDK/DK 파일에서 그대로 읽어옴, 소수점 5자리)
   2-(5) Global k factor (하드코딩, kfactor_block.py)
@@ -77,10 +78,13 @@ def write_block2(f_out, job: dict, sections: dict, header_date_parts: tuple) -> 
     for line in sections["body_lines"]:
         f_out.write(f"{INDENT_1}{line}\n")
 
-    # ---- Block 2-(2): voltage_map - pg_pin 존재 여부와 무관하게 항상 4줄 전부 ----
-    f_out.write(f"{INDENT_1}voltage_map (VDD_%0.5f, %0.5f) ;\n" % (job["voltage_low"], job["voltage_low"]))
-    f_out.write(f"{INDENT_1}voltage_map (VDD_%0.5f, %0.5f) ;\n" % (job["voltage_high"], job["voltage_high"]))
-    f_out.write(f"{INDENT_1}voltage_map (VDD_%0.5f, %0.5f) ;\n" % (job["voltage_mid"], job["voltage_mid"]))
+    # ---- Block 2-(2): voltage_map - pg_pin 존재 여부와 무관하게 항상 전부 작성.
+    # power type 개수만큼의 VDD 줄(이름은 Step3에서 입력한 Power Type voltage name,
+    # 값은 이 job이 선택한 bst/wst/tiv 그룹의 해당 Power Type 값) + VSS 1줄(그대로).
+    for voltage_type in job["voltage_types"]:
+        f_out.write(
+            f"{INDENT_1}voltage_map (VDD_%s, %0.5f) ;\n" % (voltage_type["name"], voltage_type["value"])
+        )
     f_out.write(f"{INDENT_1}voltage_map (VSS_%0.5f, %0.5f) ;\n" % (0.0, 0.0))
     f_out.write("\n")
 

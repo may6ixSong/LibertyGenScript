@@ -192,7 +192,7 @@ class GenerateView(QWidget):
 
         self._jobs, self._prep_errors = liberty_assembler.build_jobs(
             pair_result["pairs"], udc_state["pair_settings"], udc_state["common"],
-            pdk_folder, dbs_folder, settings["scalars"], settings["voltage_condition"], port_bit_values,
+            pdk_folder, dbs_folder, settings["scalars"], settings["voltage_map"], port_bit_values,
             power_ground_pins, settings["pins"], port_pins,
         )
         self._total = len(self._jobs)
