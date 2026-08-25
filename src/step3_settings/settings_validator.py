@@ -1,7 +1,7 @@
 """
 settings_validator.py
 
-Step 3 Constants(output_prefix / Voltage Condition / DFF Cell Name / LUT Table /
+Step 3 Constants(output_prefix / Voltage Map / DFF Cell Name / LUT Table /
 Worst case primitive liberty) + Pin 설정(및 각 pin에 연계된 하위 필드)에 대한 유효성
 검사. GUI에 의존하지 않는 순수 함수로 작성.
 
@@ -9,7 +9,8 @@ Worst case primitive liberty) + Pin 설정(및 각 pin에 연계된 하위 필�
 단계(liberty 파일명/voltage_map/block3 lu_table_template/block4 cell·pg_pin/block5
 timing·internal_power)를 만들 수 없으므로 이제 Validate 단계에서 함께 걸러낸다:
   - output_prefix (출력 파일명에 쓰임)
-  - Voltage Condition 9칸 (BST/WST/TIV x High/Mid/Low, voltage_map에 쓰임)
+  - Voltage Map (BST/WST/TIV x Power Type1..N 값 + Power Type별 voltage name,
+    voltage_map에 쓰임 - power type 개수만큼만 검사)
   - DFF Cell Name / LUT Table (block3의 lu_table_template index_1/index_2를
     PDK/DK 파일에서 찾아오는 데 쓰임)
   - Worst case primitive liberty (그 lu_table_template을 어느 PDK에서 가져올지 -
@@ -34,7 +35,10 @@ import fnmatch
 from step1_setup.port_list_reader import (
     list_all_pin_names, list_pins_by_port_type, list_port_pins_detailed,
 )
-from step3_settings.constants_field_defs import VOLTAGE_CONDITION_FIELD_DEFS
+from step3_settings.constants_field_defs import (
+    POWER_TYPE_COUNT_DEFAULT, POWER_TYPE_COUNT_KEY, VOLTAGE_MAP_GROUPS, power_type_label,
+    voltage_map_name_key, voltage_map_value_key,
+)
 from step3_settings.pin_field_defs import (
     DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
     ENABLE_SIGNAL_KEY, ENABLE_SIGNAL_PORT_TYPE, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY,
@@ -74,12 +78,13 @@ _REQUIRED_PIN_NUMBER_FIELDS = [
 
 
 def validate_constants(
-    scalars: dict, voltage_condition: dict, paired_pdk_files: list[str] | None = None,
+    scalars: dict, voltage_map: dict, paired_pdk_files: list[str] | None = None,
 ) -> list[str]:
     """
     output_prefix / DFF Cell Name / LUT Table(비어있으면 출력 파일명 또는 block3를
     만들 수 없음), Worst case primitive liberty(lu_table_template을 가져올 PDK),
-    Voltage Condition 9칸(비어있으면 voltage_map 값을 채울 수 없음)이 전부 채워져
+    Voltage Map(BST/WST/TIV x Power Type1..N 값 + Power Type별 voltage name, 현재
+    power type 개수만큼만 - 비어있으면 voltage_map 값을 채울 수 없음)이 전부 채워져
     있는지 검사.
 
     Args:
@@ -102,15 +107,32 @@ def validate_constants(
             "currently form a 1:1 pair in Step 2. Select it again."
         )
 
-    for key, label in VOLTAGE_CONDITION_FIELD_DEFS:
-        value = str(voltage_condition.get(key, "")).strip()
+    try:
+        power_type_count = int(voltage_map.get(POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_DEFAULT))
+    except (TypeError, ValueError):
+        power_type_count = POWER_TYPE_COUNT_DEFAULT
+    values = voltage_map.get("values", {}) or {}
+    names = voltage_map.get("names", {}) or {}
+
+    for group in VOLTAGE_MAP_GROUPS:
+        for type_index in range(1, power_type_count + 1):
+            key = voltage_map_value_key(group, type_index)
+            label = f"Voltage Map {group} {power_type_label(type_index)}"
+            value = str(values.get(key, "")).strip()
+            if not value:
+                errors.append(f"{label} is empty.")
+                continue
+            try:
+                float(value)
+            except ValueError:
+                errors.append(f"{label} is not a valid number: {value!r}")
+
+    for type_index in range(1, power_type_count + 1):
+        key = voltage_map_name_key(type_index)
+        label = f"Voltage Map {power_type_label(type_index)} voltage name"
+        value = str(names.get(key, "")).strip()
         if not value:
-            errors.append(f"Voltage Condition '{label}' is empty.")
-            continue
-        try:
-            float(value)
-        except ValueError:
-            errors.append(f"Voltage Condition '{label}' is not a valid number: {value!r}")
+            errors.append(f"{label} is empty.")
 
     return errors
 

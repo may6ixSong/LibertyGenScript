@@ -2,8 +2,17 @@
 settings_view.py
 
 'Constants & Pin Settings' 화면 (Step 3, 2026-08 재설계): 상수 값(class/process_prefix/
-output_prefix/DFF Cell Name/LUT Table/Worst case primitive liberty)과 단일 행 Voltage
-Condition 테이블(BST/WST/TIV x High/Mid/Low 9칸), Pin 설정을 입력받는다.
+output_prefix/DFF Cell Name/LUT Table/Worst case primitive liberty)과 Voltage Map
+(BST/WST/TIV x Power Type1..N, power type 개수 조절 + Power Type별 voltage name),
+Pin 설정을 입력받는다.
+
+2026-08 Voltage Map 재설계: 예전에는 BST/WST/TIV x High/Mid/Low 9칸을 가로 한 줄
+테이블로 입력받았으나, "High/Mid/Low"가 정확한 용어가 아니라는 피드백에 따라
+Power Type1/2/3으로 이름을 바꾸고, BST/WST/TIV 세 그룹을 세로로 나열해 그룹마다
+Power Type별 전압 값을 입력받는 형태로 바꿨다. Power Type 개수는 과제에 따라 2개
+(High/Low만 있는 경우)일 수도 있어 화면에서 2~3 사이로 조절 가능하다(스핀박스).
+Power Type마다 리버티에 쓸 voltage name도 별도로 입력받는다(BST/WST/TIV 공통,
+Power Type당 하나).
 
 2026-08 추가 - 연계 입력(linked group):
   Virtual Power / Power down control signal / DBS output pin 세 개는 각각 "그 pin을
@@ -19,7 +28,7 @@ Condition 테이블(BST/WST/TIV x High/Mid/Low 9칸), Pin 설정을 입력받는
   다시 잠긴다.
 
 기존의 기술(technology)별 다중 행 Voltage Condition 테이블과 PDK 폴더 파일명으로부터의
-공정 자동 감지/하이라이트는 폐기되었다 - 이제 단일 행이라 하이라이트할 대상이 없다.
+공정 자동 감지/하이라이트는 폐기되었다.
 """
 
 from __future__ import annotations
@@ -29,7 +38,7 @@ from typing import Callable
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QAbstractItemView, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
+    QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -37,7 +46,10 @@ from step1_setup.file_scanner import list_dbs_mt0_files, list_pdk_lib_files
 from step1_setup.port_list_reader import list_pins_by_port_type
 from step2_udc.udc_field_defs import compute_pairs
 from step3_settings import settings_manager
-from step3_settings.constants_field_defs import SCALAR_CONSTANT_DEFS, VOLTAGE_CONDITION_FIELD_DEFS
+from step3_settings.constants_field_defs import (
+    POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_MAX, POWER_TYPE_COUNT_MIN, SCALAR_CONSTANT_DEFS,
+    VOLTAGE_MAP_GROUPS, power_type_label, voltage_map_name_key, voltage_map_value_key,
+)
 from step3_settings.pin_field_defs import (
     DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
     ENABLE_SIGNAL_KEY, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY,
@@ -91,7 +103,12 @@ class SettingsView(QWidget):
         self.settings: dict = settings_manager.load_settings()
 
         self.scalar_widgets: dict[str, QWidget] = {}
-        self.voltage_table: QTableWidget | None = None
+        self.power_type_count_spin: QSpinBox | None = None
+        self.voltage_value_edits: dict[str, QLineEdit] = {}
+        self.voltage_name_edits: dict[str, QLineEdit] = {}
+        # Power Type3 행(값/이름 둘 다) - power type 개수가 2일 때 숨길 대상.
+        # (라벨 위젯, 입력 위젯) 쌍의 목록.
+        self._power_type3_rows: list[tuple[QLabel, QLineEdit]] = []
         # "Check DBS Output Pins"를 눌러 현재 Port List로 pin을 펼친 상태인지 여부.
         # False인 동안에는 Validate 버튼이 잠겨 있다.
         self._dbs_check_done = False
@@ -175,34 +192,111 @@ class SettingsView(QWidget):
             "currently form a 1:1 pair with a DBS output file (Step 2) are listed."
         ))
 
-        table_title = QLabel("Voltage Condition")
+        table_title = QLabel("Voltage Map")
         table_title.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 600;")
         layout.addWidget(table_title)
 
-        self.voltage_table = self._build_voltage_table()
-        layout.addWidget(self.voltage_table)
+        layout.addWidget(self._build_voltage_map_section())
 
         layout.addWidget(self._hint(
             "Enter numeric values only (no unit suffix). Each pair in Step 2 selects "
-            "BST / WST / TIV, and its voltage_map values are taken from this single row."
+            "BST / WST / TIV, and its voltage_map values are taken from that group's "
+            "Power Type1..N values here."
         ))
 
         return card
 
-    def _build_voltage_table(self) -> QTableWidget:
-        """단일 행(BST/WST/TIV x High/Mid/Low = 9칸) Voltage Condition 테이블."""
-        column_labels = [label for _key, label in VOLTAGE_CONDITION_FIELD_DEFS]
-        table = QTableWidget(1, len(VOLTAGE_CONDITION_FIELD_DEFS))
-        table.setHorizontalHeaderLabels(column_labels)
-        table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(26)
-        table.setFixedHeight(26 * 2 + 6)
+    def _build_voltage_map_section(self) -> QWidget:
+        """
+        Voltage Map: power type 개수 조절(2~3) + BST/WST/TIV 세로 그룹(그룹마다 Power
+        Type1..N 값) + Power Type별 voltage name(그룹 공통, 하나씩).
+        """
+        self.voltage_value_edits = {}
+        self.voltage_name_edits = {}
+        self._power_type3_rows = []
 
-        saved_voltage = self.settings["voltage_condition"]
-        for col, (key, _label) in enumerate(VOLTAGE_CONDITION_FIELD_DEFS):
-            table.setItem(0, col, QTableWidgetItem(saved_voltage.get(key, "")))
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
 
-        return table
+        voltage_map = self.settings["voltage_map"]
+        saved_count = voltage_map.get(POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_MAX)
+        saved_values = voltage_map.get("values", {})
+        saved_names = voltage_map.get("names", {})
+
+        count_row = QHBoxLayout()
+        count_row.addWidget(QLabel("Power Type Count"))
+        self.power_type_count_spin = QSpinBox()
+        self.power_type_count_spin.setRange(POWER_TYPE_COUNT_MIN, POWER_TYPE_COUNT_MAX)
+        self.power_type_count_spin.setValue(saved_count)
+        self.power_type_count_spin.valueChanged.connect(self._on_power_type_count_changed)
+        count_row.addWidget(self.power_type_count_spin)
+        count_row.addStretch()
+        layout.addLayout(count_row)
+
+        for group in VOLTAGE_MAP_GROUPS:
+            group_frame = QFrame()
+            group_frame.setObjectName("card")
+            group_layout = QVBoxLayout(group_frame)
+            group_layout.setContentsMargins(12, 10, 12, 10)
+            group_layout.setSpacing(4)
+
+            group_title = QLabel(group)
+            group_title.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 600;")
+            group_layout.addWidget(group_title)
+
+            group_form = QFormLayout()
+            group_form.setSpacing(6)
+            for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
+                key = voltage_map_value_key(group, type_index)
+                edit = QLineEdit(str(saved_values.get(key, "")))
+                self.voltage_value_edits[key] = edit
+                row_label = QLabel(power_type_label(type_index))
+                group_form.addRow(row_label, edit)
+                if type_index == POWER_TYPE_COUNT_MAX:
+                    self._power_type3_rows.append((row_label, edit))
+            group_layout.addLayout(group_form)
+
+            layout.addWidget(group_frame)
+
+        name_frame = QFrame()
+        name_frame.setObjectName("card")
+        name_layout = QVBoxLayout(name_frame)
+        name_layout.setContentsMargins(12, 10, 12, 10)
+        name_layout.setSpacing(4)
+
+        name_title = QLabel("Voltage Name")
+        name_title.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 600;")
+        name_layout.addWidget(name_title)
+
+        name_form = QFormLayout()
+        name_form.setSpacing(6)
+        for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
+            key = voltage_map_name_key(type_index)
+            edit = QLineEdit(str(saved_names.get(key, "")))
+            self.voltage_name_edits[key] = edit
+            row_label = QLabel(power_type_label(type_index))
+            name_form.addRow(row_label, edit)
+            if type_index == POWER_TYPE_COUNT_MAX:
+                self._power_type3_rows.append((row_label, edit))
+        name_layout.addLayout(name_form)
+
+        layout.addWidget(name_frame)
+
+        self._apply_power_type_count_visibility(saved_count)
+
+        return container
+
+    def _on_power_type_count_changed(self, value: int) -> None:
+        self._apply_power_type_count_visibility(value)
+
+    def _apply_power_type_count_visibility(self, count: int) -> None:
+        """Power Type3 행(BST/WST/TIV 값 + voltage name)을 count에 따라 보이거나 숨긴다."""
+        visible = count >= POWER_TYPE_COUNT_MAX
+        for row_label, edit in self._power_type3_rows:
+            row_label.setVisible(visible)
+            edit.setVisible(visible)
 
     def _populate_worst_case_pdk_combo(self) -> None:
         """
@@ -623,12 +717,13 @@ class SettingsView(QWidget):
             else:
                 scalars[key] = widget.text().strip()
 
-        voltage_condition = {}
-        for col, (key, _label) in enumerate(VOLTAGE_CONDITION_FIELD_DEFS):
-            item = self.voltage_table.item(0, col)
-            voltage_condition[key] = item.text().strip() if item else ""
+        voltage_map = {
+            POWER_TYPE_COUNT_KEY: self.power_type_count_spin.value(),
+            "values": {key: edit.text().strip() for key, edit in self.voltage_value_edits.items()},
+            "names": {key: edit.text().strip() for key, edit in self.voltage_name_edits.items()},
+        }
 
-        return {"scalars": scalars, "voltage_condition": voltage_condition}
+        return {"scalars": scalars, "voltage_map": voltage_map}
 
     def _collect_pins(self) -> dict:
         return {
@@ -650,7 +745,7 @@ class SettingsView(QWidget):
         constants = self._collect_constants()
         return {
             "scalars": constants["scalars"],
-            "voltage_condition": constants["voltage_condition"],
+            "voltage_map": constants["voltage_map"],
             "pins": self._collect_pins(),
             "output_path": self.output_path_edit.text().strip(),
         }
@@ -674,7 +769,7 @@ class SettingsView(QWidget):
 
         self._persist()
         errors = validate_constants(
-            self.settings["scalars"], self.settings["voltage_condition"], self.paired_pdk_files(),
+            self.settings["scalars"], self.settings["voltage_map"], self.paired_pdk_files(),
         )
         errors += validate_pin_settings(self.settings["pins"], self.get_port_list_file())
 

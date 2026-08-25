@@ -20,25 +20,44 @@ liberty_writter.py에서 처리한다.
 하드코딩하지 않는다. Step3 Pin Settings에서 Virtual Power (power gate) 바로 아래에
 연계 입력으로 받는 "Virtual Power Switch Function" / "Virtual Power PG Function" 값을
 그대로 쓴다 (둘 다 와일드카드 불가, Step3 Validate에서 빈 값/와일드카드를 거른다).
+
+2026-08 Voltage Map 재설계: pg_pin의 voltage_name은 더 이상 항상 Port List Volts 값을
+그대로 포맷해서 쓰지 않는다. 그 Volts 값이 Power Type 대표 전압(0.8V/2.2V/1.8V, power
+type 개수가 2면 1.8V는 제외)과 일치하면 Step3 Voltage Map에서 그 Power Type에 입력한
+voltage name을 대신 쓰고(block2가 쓰는 voltage_map 이름과 정확히 같아야 리버티 문법상
+유효하므로 둘 다 이름만 사용), 일치하는 Power Type이 없으면 기존처럼 Volts 값을 그대로
+포맷해서 쓴다 (job["voltage_name_thresholds"], liberty_assembler.build_job 참고).
 """
 
 from __future__ import annotations
 
 from step4_generate.missing_data import INDENT_1, INDENT_2, INDENT_3, PORT_LIST_NOT_FOUND_TOKEN, write_missing_comment
 
+# Port List Volts 값을 Power Type 대표 전압과 매칭시킬 때 쓰는 허용 오차. 대표 전압들이
+# 서로 최소 0.6V 이상 떨어져 있으므로(0.8/1.8/2.2) 넉넉히 잡아도 오검출 위험이 없다.
+_VOLTAGE_MATCH_TOLERANCE = 1e-3
 
-def _voltage_name_text(voltage_prefix: str, voltage_value: float | None) -> str:
+
+def _voltage_name_text(
+    voltage_prefix: str, voltage_value: float | None, voltage_name_thresholds: dict[float, str],
+) -> str:
     if voltage_value is None:
         return f"{voltage_prefix}_{PORT_LIST_NOT_FOUND_TOKEN}"
+    for threshold, name in voltage_name_thresholds.items():
+        if name and abs(voltage_value - threshold) < _VOLTAGE_MATCH_TOLERANCE:
+            return f"{voltage_prefix}_{name}"
     return "%s_%0.5f" % (voltage_prefix, voltage_value)
 
 
-def _write_standard_pg_pin(f_out, pin: dict, voltage_prefix: str, pg_type_suffix: str, pdk_filename: str) -> None:
+def _write_standard_pg_pin(
+    f_out, pin: dict, voltage_prefix: str, pg_type_suffix: str, pdk_filename: str,
+    voltage_name_thresholds: dict[float, str],
+) -> None:
     pin_name = pin["pin_name"]
     voltage_value = pin["voltage_value"]
     if voltage_value is None:
         write_missing_comment(f_out, f"Volts value for pin '{pin_name}' (Port List)", pdk_filename)
-    voltage_name = _voltage_name_text(voltage_prefix, voltage_value)
+    voltage_name = _voltage_name_text(voltage_prefix, voltage_value, voltage_name_thresholds)
 
     f_out.write(f"{INDENT_2}pg_pin ({pin_name}) {{\n")
     f_out.write(f"{INDENT_3}voltage_name : {voltage_name} ;\n")
@@ -48,13 +67,13 @@ def _write_standard_pg_pin(f_out, pin: dict, voltage_prefix: str, pg_type_suffix
 
 def _write_virtual_power_pg_pin(
     f_out, pin: dict, voltage_prefix: str, pdk_filename: str,
-    switch_function: str, pg_function: str,
+    switch_function: str, pg_function: str, voltage_name_thresholds: dict[float, str],
 ) -> None:
     pin_name = pin["pin_name"]
     voltage_value = pin["voltage_value"]
     if voltage_value is None:
         write_missing_comment(f_out, f"Volts value for pin '{pin_name}' (Port List)", pdk_filename)
-    voltage_name = _voltage_name_text(voltage_prefix, voltage_value)
+    voltage_name = _voltage_name_text(voltage_prefix, voltage_value, voltage_name_thresholds)
 
     f_out.write(f"{INDENT_2}pg_pin ({pin_name}) {{\n")
     f_out.write(f"{INDENT_3}voltage_name : {voltage_name} ;\n")
@@ -93,17 +112,19 @@ def write_block4(f_out, job: dict) -> None:
     f_out.write("\n")
 
     virtual_power_pin = job["virtual_power_pin"]
+    voltage_name_thresholds = job["voltage_name_thresholds"]
 
     for pin in job["pwr_pins"]:
         if pin["pin_name"] == virtual_power_pin:
             _write_virtual_power_pg_pin(
                 f_out, pin, "VDD", pdk_filename,
                 job["virtual_power_switch_function"], job["virtual_power_pg_function"],
+                voltage_name_thresholds,
             )
         else:
-            _write_standard_pg_pin(f_out, pin, "VDD", "power", pdk_filename)
+            _write_standard_pg_pin(f_out, pin, "VDD", "power", pdk_filename, voltage_name_thresholds)
 
     for pin in job["gnd_pins"]:
-        _write_standard_pg_pin(f_out, pin, "VSS", "ground", pdk_filename)
+        _write_standard_pg_pin(f_out, pin, "VSS", "ground", pdk_filename, voltage_name_thresholds)
 
     # cell{}은 아직 닫지 않는다 - block5(pin()/bus())가 이어서 이 안에 써진다.

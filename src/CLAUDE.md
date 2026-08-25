@@ -68,12 +68,23 @@ PDK Folder / DBS Simulation Folder / Port List Excel 3개 경로 입력 및 검�
 - **삭제된 필드**: `DKgen_ver`, `portdesc_make`, `mt_make`, `mt_cnt_ref_output`,
   `mt_cnt_ref_input` (liberty 파일 내용에 안 쓰이는 것으로 확인 완료 — 원본 스크립트에서
   주석/로그 전용이거나 별도 문서 생성/검증 임계값 용도였음)
-- **Voltage Condition 테이블**: 더 이상 공정(technology)별 다중 행 테이블이 아님. 단일
-  행으로, `BST High/Mid/Low`, `WST High/Mid/Low`, `TIV High/Mid/Low` 9칸을 사용자가
-  직접 입력 (숫자만, 단위 없음). 코드에 기본값 하드코딩 안 함, config에만 저장. `TIV`는
-  예전 "plain"(기술별 매칭용) 컬럼 자리를 대체.
-- Port List의 Volts 컬럼과 매칭하는 로직(구 `build_pg_pin_rows`)은 **폐기**. voltage_map
-  값은 이제 Step2에서 선택한 Voltage Condition으로 이 단일 테이블에서 직접 조회.
+- **Voltage Map** (2026-08 재설계, 구 "Voltage Condition"): `BST`/`WST`/`TIV` 세 그룹
+  각각에 대해 `Power Type1`~`PowerType{N}` 전압 값을 세로로 입력받는다 (숫자만, 단위
+  없음). `N`(Power Type 개수)은 화면의 스핀박스로 **2~3 사이 조절 가능**(기본 3) —
+  과제에 따라 Power Type이 2개(예전 표현으로 "High/Low"만)뿐일 수 있기 때문. 예전
+  "High/Mid/Low"는 정확한 용어가 아니라서 폐기했고, 각 Power Type 라벨에는 그 type의
+  TIV 대표 전압을 괄호로 표시한다(`Power Type1 (0.8V)` / `Power Type2 (2.2V)` /
+  `Power Type3 (1.8V)`) — 실제 BST/WST/TIV 값은 사용자가 자유롭게 조정 가능하고, 이
+  대표값은 이름을 정하기 위해 고른 값일 뿐이다. 값 입력 필드는 이 대표값으로 미리
+  채워진 채 시작한다(과거 "전부 빈 값" 방침에서 변경). 저장 key: `voltage_map` =
+  `{power_type_count, values: {bst_type1, ..., tiv_type3}, names: {power_type1_name,
+  ...}}` (`step3_settings/constants_field_defs.py`).
+- Power Type마다 **voltage name**도 하나씩 입력받는다 (BST/WST/TIV 공통 - group별로
+  따로 있지 않음). 이 이름은 block2의 `voltage_map` 이름과 block4 pg_pin의
+  `voltage_name`을 매칭시키는 데 쓰인다 (아래 Step4 참고).
+- Port List의 Volts 컬럼과 매칭하는 로직(구 `build_pg_pin_rows`)은 **폐기**. block2의
+  voltage_map 값은 이제 Step2에서 선택한 bst/wst/tiv 그룹에 따라 이 Voltage Map
+  표에서 직접 조회.
 
 ### Pin Settings (2026-08 연계 입력 추가)
 상위 pin 입력 3개는 각각 "그 pin을 입력했기 때문에 같이 입력해야 하는" 하위 필드를
@@ -106,8 +117,9 @@ block5에서 실제로 `pin()`/`bus()`로 쓰이는 행들과 동일하게 `Port
 ### Step 3 Validate 검사 항목
 - Constants: `class` / `process_prefix` / `output_prefix` / `DFF Cell Name` /
   `LUT Table`이 비어있지 않은지, `Worst case primitive liberty`가 선택돼 있고 **현재
-  1:1 pair가 성립하는 PDK 목록 안에 있는지**, Voltage Condition 9칸이 전부 채워진
-  숫자인지.
+  1:1 pair가 성립하는 PDK 목록 안에 있는지**, Voltage Map의 BST/WST/TIV x
+  Power Type1..N(현재 power type 개수만큼만) 값이 전부 채워진 숫자인지, 그 개수만큼의
+  voltage name이 전부 채워져 있는지.
 - Pin: 위의 모든 하위 필드가 비어있지 않은지(rise/fall power는 숫자인지), 와일드카드
   불가 필드에 `*`가 없는지, Virtual Power가 PWR pin인지, Enable/Power down 패턴이 실제
   pin과 매치되는지.
@@ -133,14 +145,25 @@ liberty 내부의 `library (...)` 이름도 이 파일명에서 `.lib`만 뺀 �
    쓴 뒤, PDK/DK 파일을 줄 단위로 스트리밍하며 `library (...) {` 다음부터 `voltage_map`
    직전까지 그대로 복사. **PDK 자체의 `date`/`revision`/`comment` 줄(줄 첫 토큰 기준)은
    순서/위치에 상관없이 만날 때마다 개별적으로 스킵** (중복 방지, 2026-08 확정).
-3. **Block 2-(2) (voltage_map)**: Step2에서 이 pair에 선택된 Voltage Condition에 따라
-   Step3 단일 테이블의 해당 3칸(High/Mid/Low)을 가져와 4줄을 **항상 전부** 작성
-   (`VDD_low`, `VDD_high`, `VDD_middle`, `VSS_low_vmin`). `low_vmin`은 원본 Perl에서
-   세 전압 레벨 블록 전부 `vmin: 0.00` 하드코딩으로 확인됨 → **항상 0.00 고정**.
+3. **Block 2-(2) (voltage_map)** (2026-08 Voltage Map 재설계): Step2에서 이 pair에
+   선택된 bst/wst/tiv 그룹에 따라 Step3 Voltage Map 표의 해당 그룹 Power Type1..N
+   값을 가져와, **power type 개수만큼의 VDD 줄 + VSS 1줄**을 항상 전부 작성한다.
+   VDD 줄은 `voltage_map (VDD_{power type voltage name}, {value}) ;` 형태로, 이름은
+   Step3에서 그 Power Type에 입력한 voltage name을 그대로 쓴다(값이 아니라 이름만 -
+   block4 pg_pin의 `voltage_name`과 정확히 일치해야 하므로). VSS 줄은 기존과 동일
+   (`voltage_map (VSS_0.00000, 0.00000) ;`, 하드코딩).
 4. **Block 2-(3) (operating_conditions)**: `nom_temperature`/`nom_voltage`는 Step2에서
    파일명 파싱으로 얻은 값. 괄호 안 library명은 PDK 파일도 우리 출력 파일도 아닌,
    **PDK 파일 내부 자신의 `operating_conditions(library명) { ... }` 선언에서 추출한 값**
    (voltage_map 근처에 위치, 스트리밍 중 계속 찾다가 발견하면 멈춤).
+5. **Block 4 pg_pin의 `voltage_name`** (2026-08 Voltage Map 재설계): 예전에는 항상
+   Port List Volts 값을 그대로 포맷(`VDD_0.80000`)해서 썼지만, 이제 그 Volts 값이
+   Power Type 대표 전압(0.8V/2.2V/1.8V, power type 개수가 2면 1.8V는 매칭 대상에서
+   제외)과 일치하면 그 Power Type의 voltage name을 대신 쓴다(`VDD_{voltage name}` -
+   block2가 쓴 voltage_map 이름과 정확히 같아야 리버티 문법상 유효하므로). 일치하는
+   Power Type이 없으면 기존처럼 `VDD_{value}` 그대로. 매칭 기준은 **고정 임계값**이며
+   Step3에서 BST/WST/TIV 표의 값을 조정해도 바뀌지 않는다 (`block4_writer.py`의
+   `_voltage_name_text`, `liberty_assembler.build_job`의 `voltage_name_thresholds`).
 
 ### 결측 데이터 처리
 하드코딩되는 부분(예: `vmin: 0.00`, `process: 1.000`)을 제외하고, PDK 파일에서 기대한

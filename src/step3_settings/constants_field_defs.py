@@ -1,14 +1,24 @@
 """
 constants_field_defs.py
 
-Step 3 'Constants & Pin Settings' 화면의 Constants 섹션 정의 (2026-08 전면 재설계).
+Step 3 'Constants & Pin Settings' 화면의 Constants 섹션 정의 (2026-08 전면 재설계,
+2026-08 Voltage Map 재설계).
 
 기존 `DKgen_ver`/`portdesc_make`/`mt_make`/`mt_cnt_ref_output`/`mt_cnt_ref_input` 필드는
 liberty 파일 내용에 쓰이지 않는 것으로 확인되어 전부 삭제했다 (원본 스크립트에서
 주석/로그 전용이거나 별도 문서 생성/검증 임계값 용도였음).
 
-Voltage Condition은 더 이상 공정(technology)별 다중 행 테이블이 아니라, 한 번만
-입력하는 단일 행(BST/WST/TIV 각 High/Mid/Low = 9칸)이다.
+Voltage Map(구 "Voltage Condition")은 BST/WST/TIV 세 그룹 각각에 대해 "Power Type"별
+전압 값을 입력받는다. Power Type 개수는 2~3개로 사용자가 조절 가능(기본 3개)하며,
+기존의 High/Mid/Low라는 이름은 정확한 용어가 아니어서 Power Type1/2/3으로 이름을
+바꿨다. 각 Power Type 라벨에는 그 type의 TIV 대표 전압값을 괄호로 표시한다
+(Power Type1 (0.8V) / Power Type2 (2.2V) / Power Type3 (1.8V)) - 실제 BST/WST/TIV별
+값은 사용자가 자유롭게 조정 가능하고, 이 대표값은 이름을 정하기 위해 고른 값일 뿐이다.
+이 대표값은 block4에서 Port List Volts 값을 Power Type에 매칭시키는 고정 임계값으로도
+쓰인다 (settings_validator/liberty_assembler/block4_writer 참고).
+
+Power Type별로 voltage name(리버티 voltage_map/pg_pin에 쓰일 이름)도 별도로 입력받는다
+- 이 이름은 BST/WST/TIV 구분 없이 Power Type마다 하나씩만 존재한다.
 """
 
 from __future__ import annotations
@@ -46,23 +56,45 @@ SCALAR_CONSTANT_DEFS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Voltage Condition: 단일 행, BST/WST/TIV x High/Mid/Low = 9칸.
-# 코드에 기본값을 하드코딩하지 않는다 (전부 빈 값으로 시작, config에만 저장).
-# TIV는 예전 "plain"(기술별/Port List Volts 컬럼 매칭용) 컬럼 자리를 대체한다 - 그
-# 매칭 로직은 폐기되었고, 이제 Step2에서 선택한 Voltage Condition으로 이 테이블에서
-# 직접 조회한다.
+# Voltage Map (구 Voltage Condition): BST/WST/TIV x Power Type1..N.
 # ---------------------------------------------------------------------------
-VOLTAGE_CONDITION_GROUPS = ["BST", "WST", "TIV"]
-VOLTAGE_CONDITION_LEVELS = ["High", "Mid", "Low"]
+VOLTAGE_MAP_GROUPS = ["BST", "WST", "TIV"]
+
+POWER_TYPE_COUNT_KEY = "power_type_count"
+POWER_TYPE_COUNT_MIN = 2
+POWER_TYPE_COUNT_MAX = 3
+POWER_TYPE_COUNT_DEFAULT = 3
+
+# Power Type별 대표(TIV) 전압값. (a) BST/WST/TIV x Power Type 칸의 초기 기본값,
+# (b) block4에서 Port List Volts 값을 Power Type에 매칭시키는 고정 임계값, 두 곳에
+# 쓰인다. 실제 BST/WST/TIV 표의 값은 사용자가 자유롭게 조정할 수 있고, 이 값이 바뀌어도
+# (b)의 매칭 기준은 이 대표값 그대로 고정이다.
+POWER_TYPE_DEFAULT_VOLTAGE = {1: 0.8, 2: 2.2, 3: 1.8}
 
 
-def voltage_condition_field_key(group: str, level: str) -> str:
-    return f"{group.lower()}_{level.lower()}"
+def power_type_label(type_index: int) -> str:
+    return f"Power Type{type_index} ({POWER_TYPE_DEFAULT_VOLTAGE[type_index]}V)"
 
 
-# (field_key, 화면에 보일 컬럼 라벨) - 화면/저장 양쪽에서 공용으로 쓰는 컬럼 순서.
-VOLTAGE_CONDITION_FIELD_DEFS = [
-    (voltage_condition_field_key(group, level), f"{group} {level}")
-    for group in VOLTAGE_CONDITION_GROUPS
-    for level in VOLTAGE_CONDITION_LEVELS
+def voltage_map_value_key(group: str, type_index: int) -> str:
+    """BST/WST/TIV 표에서 (그룹, Power Type) 하나의 전압 값 필드 key."""
+    return f"{group.lower()}_type{type_index}"
+
+
+def voltage_map_name_key(type_index: int) -> str:
+    """Power Type마다 하나뿐인 voltage name 필드 key (그룹 무관)."""
+    return f"power_type{type_index}_name"
+
+
+# 항상 POWER_TYPE_COUNT_MAX(=3) 만큼 정의해 둔다. 화면에 실제로 보이고 검증되는 건
+# 그 시점의 power_type_count 만큼뿐이지만, 설정을 3->2->3으로 바꿔도 이미 입력해 둔
+# Power Type3 값이 날아가지 않도록 필드 정의/저장 구조 자체는 항상 최대 개수로 둔다.
+VOLTAGE_MAP_VALUE_FIELD_DEFS = [
+    (voltage_map_value_key(group, i), group, i)
+    for group in VOLTAGE_MAP_GROUPS
+    for i in range(1, POWER_TYPE_COUNT_MAX + 1)
+]
+
+VOLTAGE_MAP_NAME_FIELD_DEFS = [
+    (voltage_map_name_key(i), i) for i in range(1, POWER_TYPE_COUNT_MAX + 1)
 ]
