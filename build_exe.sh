@@ -24,13 +24,26 @@ export LD_LIBRARY_PATH="/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7/lib:$LD_L
 
 cd "$SCRIPT_DIR/src" || exit 1
 
-"$ANACONDA_PYTHON" -m PyInstaller \
-    --onefile \
-    --name liberty_generator \
-    --distpath "$SCRIPT_DIR/dist" \
-    --workpath "$SCRIPT_DIR/build" \
-    --specpath "$SCRIPT_DIR/build" \
-    main.py
+# PyInstaller가 Anaconda의 site-packages(패키지 수가 많음)에서 모듈 의존성 그래프를
+# 재귀적으로 훑다가 파이썬 기본 재귀 한도(1000)를 넘는 경우가 있어("RecursionError:
+# maximum recursion depth exceeded"), PyInstaller 공식 안내대로 재귀 한도를 올려서
+# 실행한다. `-m PyInstaller ...`로 바로 실행하면 이 한도를 미리 못 올리므로,
+# run()을 직접 호출하는 짧은 파이썬 코드로 감싼다.
+"$ANACONDA_PYTHON" -c "
+import sys
+sys.setrecursionlimit(sys.getrecursionlimit() * 5)
+sys.argv = [
+    'pyinstaller',
+    '--onefile',
+    '--name', 'liberty_generator',
+    '--distpath', '$SCRIPT_DIR/dist',
+    '--workpath', '$SCRIPT_DIR/build',
+    '--specpath', '$SCRIPT_DIR/build',
+    'main.py',
+]
+from PyInstaller.__main__ import run
+run()
+"
 
 status=$?
 if [ $status -ne 0 ]; then
