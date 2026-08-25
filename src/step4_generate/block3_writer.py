@@ -8,13 +8,18 @@ Block 3 작성:
   3-(2) lu_table_template: variable_1/variable_2는 레거시 스크립트와 동일하게
         하드코딩(input_net_transition / total_output_net_capacitance)하고,
         index_1/index_2는 PDK/DK 파일에서 "cell (DFF Cell Name)" 선언 이후 처음
-        등장하는 Primitive Cell Name 블록(cell_rise/cell_fall)의 index_1/index_2
+        등장하는 LUT Table 블록(cell_rise/cell_fall)의 index_1/index_2
         줄에서 값(텍스트)만 가져와 우리 들여쓰기로 다시 쓴다.
 
-결측 데이터(DFF cell 못 찾음 / primitive cell 못 찾음 / index_1·index_2 못 찾음)는
+결측 데이터(DFF cell 못 찾음 / LUT Table 못 찾음 / index_1·index_2 못 찾음)는
 missing_data.py 규칙대로 표시하고 예외를 던지지 않는다.
 
 2026-08 수정: 들여쓰기를 항상 2칸 단위(INDENT_1/INDENT_2)로 통일했다.
+
+2026-08 재설계: lu_table_template은 pair마다 각자의 PDK에서 찾지 않는다. Step3에서 고른
+"Worst case primitive liberty" PDK 하나에서만 실행당 한 번 읽어(pdk_stream_reader.
+read_lut_table_sections) 생성하는 모든 liberty에 동일하게 쓴다. 따라서 결측 안내 주석에
+적히는 출처 파일명도 그 worst case PDK 파일명(job["worst_case_pdk_filename"])이다.
 """
 
 from __future__ import annotations
@@ -43,19 +48,20 @@ def _write_type_bus_entries(f_out, bits: list[int], cell_name: str) -> None:
         f_out.write(f"{INDENT_1}}}\n")
 
 
-def _write_lu_table_template(f_out, job: dict, sections: dict) -> None:
+def _write_lu_table_template(f_out, job: dict, lut_sections: dict) -> None:
     cell_name = job["cell_name"]
-    pdk_filename = job["pdk_filename"]
+    # 이 블록의 출처는 이 job의 PDK가 아니라 Step3에서 고른 worst case PDK다.
+    pdk_filename = job["worst_case_pdk_filename"]
     dff_cell_name = job["dff_cell_name"]
-    primitive_cell_name = job["primitive_cell_name"]
+    lut_table_name = job["lut_table_name"]
 
     template_name = f"{cell_name}_{cell_name}_out"
     f_out.write(f"{INDENT_1}lu_table_template ({template_name}) {{\n")
     f_out.write(f"{INDENT_2}variable_1 : {_VARIABLE_1} ;\n")
     f_out.write(f"{INDENT_2}variable_2 : {_VARIABLE_2} ;\n")
 
-    if not sections["dff_found"]:
-        seen = sections.get("cell_names_seen") or []
+    if not lut_sections["dff_found"]:
+        seen = lut_sections.get("cell_names_seen") or []
         if seen:
             shown = ", ".join(seen[:10])
             more = f", ... ({len(seen)} shown, more may exist)" if len(seen) >= 10 else ""
@@ -65,21 +71,24 @@ def _write_lu_table_template(f_out, job: dict, sections: dict) -> None:
         else:
             write_missing_comment(
                 f_out,
-                f"cell '{dff_cell_name}' (no 'cell (...)' declarations were seen at all after voltage_map)",
+                f"cell '{dff_cell_name}' (no 'cell (...)' declarations were seen at all)",
                 pdk_filename,
             )
-    elif not sections["primitive_found"]:
+    elif not lut_sections["primitive_found"]:
         write_missing_comment(
             f_out,
-            f"primitive cell '{primitive_cell_name}' (after cell '{dff_cell_name}')",
+            f"LUT Table '{lut_table_name}' (after cell '{dff_cell_name}')",
             pdk_filename,
         )
 
-    for key, index_line in (("index_1", sections.get("index_1_line")), ("index_2", sections.get("index_2_line"))):
+    for key, index_line in (
+        ("index_1", lut_sections.get("index_1_line")),
+        ("index_2", lut_sections.get("index_2_line")),
+    ):
         if index_line is not None:
             f_out.write(f"{INDENT_2}{index_line}\n")
         else:
-            if sections["dff_found"] and sections["primitive_found"]:
+            if lut_sections["dff_found"] and lut_sections["primitive_found"]:
                 write_missing_comment(f_out, key, pdk_filename)
             f_out.write(f"{INDENT_2}{key} ({NOT_FOUND_TOKEN}) ;\n")
 
@@ -87,12 +96,14 @@ def _write_lu_table_template(f_out, job: dict, sections: dict) -> None:
     f_out.write("\n")
 
 
-def write_block3(f_out, job: dict, sections: dict) -> None:
+def write_block3(f_out, job: dict, lut_sections: dict) -> None:
     """
     Args:
-        job: liberty_assembler.build_job()의 결과 (cell_name, bits,
-             dff_cell_name, primitive_cell_name, pdk_filename 포함).
-        sections: pdk_stream_reader.read_pdk_file()의 결과.
+        job: liberty_assembler.build_job()의 결과 (cell_name, bits, dff_cell_name,
+             lut_table_name, worst_case_pdk_filename 포함).
+        lut_sections: pdk_stream_reader.read_lut_table_sections()의 결과 - Step3에서
+             고른 worst case PDK 하나에서 실행당 한 번만 읽어, 모든 job에 그대로
+             재사용되는 값이다.
     """
     _write_type_bus_entries(f_out, job["bits"], job["cell_name"])
-    _write_lu_table_template(f_out, job, sections)
+    _write_lu_table_template(f_out, job, lut_sections)

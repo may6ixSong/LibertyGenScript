@@ -2,9 +2,10 @@
 liberty_assembler.py
 
 Step2(자동 페어링 + pair별 Voltage Condition 선택) + Step3(Constants, 단일 행
-Voltage Condition 9칸 테이블, DFF/Primitive Cell Name, Pin Settings) + Step1(PDK
-Folder, Port List)을 조합해서, liberty_writter의 write_liberty_file()에 바로 넘길
-수 있는 "job"(파일 1개 생성에 필요한 값 전부)을 메모리 상에서 만든다.
+Voltage Condition 9칸 테이블, DFF Cell Name/LUT Table/Worst case primitive liberty,
+Pin Settings와 그 연계 입력들) + Step1(PDK Folder, Port List)을 조합해서,
+liberty_writter의 write_liberty_file()에 바로 넘길 수 있는 "job"(파일 1개 생성에 필요한
+값 전부)을 메모리 상에서 만든다.
 
 .udc/.pdt/pg_pin 같은 중간 파일은 만들지 않는다(2026-08 확정) - PDK 파일 자체는
 write_liberty_file()이 직접 스트리밍해서 읽으므로, 이 모듈은 그 외의 값(출력 파일명,
@@ -20,7 +21,12 @@ from pathlib import Path
 
 from step2_udc.udc_field_defs import VOLTAGE_CONDITION_OPTIONS
 from step3_settings.constants_field_defs import voltage_condition_field_key
-from step3_settings.pin_field_defs import split_pattern_and_range
+from step3_settings.pin_field_defs import (
+    DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
+    ENABLE_SIGNAL_KEY, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY,
+    POWER_DOWN_WHEN_KEY, VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY,
+    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, split_pattern_and_range,
+)
 
 
 def _to_float(value, field_label: str, errors: list[str]) -> float | None:
@@ -77,9 +83,19 @@ def build_job(
         errors.append(f"[{pdk_filename}] DFF Cell Name (Step 3 Constants) is empty.")
         return None
 
-    primitive_cell_name = str(scalars.get("primitive_cell_name", "")).strip()
-    if not primitive_cell_name:
-        errors.append(f"[{pdk_filename}] Primitive Cell Name (Step 3 Constants) is empty.")
+    # primitive_cell_name: 화면 라벨은 "LUT Table" (config key만 예전 이름 유지)
+    lut_table_name = str(scalars.get("primitive_cell_name", "")).strip()
+    if not lut_table_name:
+        errors.append(f"[{pdk_filename}] LUT Table (Step 3 Constants) is empty.")
+        return None
+
+    # lu_table_template은 이 pair의 PDK가 아니라 Step3에서 고른 worst case PDK 하나에서만
+    # 읽는다 (generate_view가 실행당 한 번 읽어서 모든 job에 같은 결과를 넘겨줌).
+    worst_case_pdk_filename = str(scalars.get("worst_case_pdk", "")).strip()
+    if not worst_case_pdk_filename:
+        errors.append(
+            f"[{pdk_filename}] Worst case primitive liberty (Step 3 Constants) is not selected."
+        )
         return None
 
     process_prefix = str(scalars.get("process_prefix", "")).strip()
@@ -119,9 +135,13 @@ def build_job(
     pdk_path = str(Path(pdk_folder) / pdk_filename)
     dbs_path = str(Path(dbs_folder) / dbs_filename)
 
-    enable_signal_pattern, _ = split_pattern_and_range(pins.get("enable_signal", ""))
-    power_down_pattern, _ = split_pattern_and_range(pins.get("power_down_signal", ""))
-    dbs_output_pattern, _ = split_pattern_and_range(pins.get("dbs_output_signal", ""))
+    enable_signal_pattern, _ = split_pattern_and_range(pins.get(ENABLE_SIGNAL_KEY, ""))
+    power_down_pattern, _ = split_pattern_and_range(pins.get(POWER_DOWN_KEY, ""))
+    dbs_output_pattern, _ = split_pattern_and_range(pins.get(DBS_OUTPUT_KEY, ""))
+
+    dbs_related_pins = pins.get(DBS_RELATED_PINS_KEY)
+    if not isinstance(dbs_related_pins, dict):
+        dbs_related_pins = {}
 
     return {
         "pdk_path": pdk_path,
@@ -137,7 +157,8 @@ def build_job(
         "voltage_high": voltage_high,
         "cell_name": cell_name,
         "dff_cell_name": dff_cell_name,
-        "primitive_cell_name": primitive_cell_name,
+        "lut_table_name": lut_table_name,
+        "worst_case_pdk_filename": worst_case_pdk_filename,
         "bits": list(port_bit_values),
         "process_prefix": process_prefix,
         "class_value": class_value,
@@ -146,11 +167,19 @@ def build_job(
         "height": height,
         "pwr_pins": power_ground_pins.get("pwr_pins", []),
         "gnd_pins": power_ground_pins.get("gnd_pins", []),
-        "virtual_power_pin": pins.get("virtual_power", ""),
-        "enable_signal": pins.get("enable_signal", ""),
+        "virtual_power_pin": pins.get(VIRTUAL_POWER_KEY, ""),
+        "virtual_power_switch_function": pins.get(VIRTUAL_POWER_SWITCH_FUNCTION_KEY, ""),
+        "virtual_power_pg_function": pins.get(VIRTUAL_POWER_PG_FUNCTION_KEY, ""),
+        "enable_signal": pins.get(ENABLE_SIGNAL_KEY, ""),
         "enable_signal_pattern": enable_signal_pattern,
         "power_down_pattern": power_down_pattern,
+        "power_down_rise_power": pins.get(POWER_DOWN_RISE_POWER_KEY, ""),
+        "power_down_fall_power": pins.get(POWER_DOWN_FALL_POWER_KEY, ""),
+        "power_down_when": pins.get(POWER_DOWN_WHEN_KEY, ""),
         "dbs_output_pattern": dbs_output_pattern,
+        "dbs_related_pins": dbs_related_pins,
+        "dbs_timing_sense": pins.get(DBS_TIMING_SENSE_KEY, ""),
+        "dbs_timing_type": pins.get(DBS_TIMING_TYPE_KEY, ""),
         "port_pins": port_pins,
         # 다음 라운드를 위해 함께 넘겨두는 공통 필드 - 현재 block1~5에서는 직접
         # 쓰이지 않는다.

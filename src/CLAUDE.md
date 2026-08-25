@@ -55,7 +55,16 @@ PDK Folder / DBS Simulation Folder / Port List Excel 3개 경로 입력 및 검�
 ### Constants (2026-08 재설계)
 - 스칼라 필드: `class`(기본 `"analog"`), `process_prefix`(기본 `"sec"`, 신규 — liberty
   벤더 커스텀 attribute 접두어, cell/pin 작성 라운드부터 실사용), `output_prefix`(신규 —
-  출력 파일명에 사용, 아래 참고)
+  출력 파일명에 사용, 아래 참고), `DFF Cell Name`, `LUT Table`,
+  `Worst case primitive liberty`
+- **`LUT Table`**: 예전 화면 라벨 `Primitive Cell Name`을 이름만 바꾼 것 (config key는
+  호환 때문에 `primitive_cell_name` 그대로). block3의 `lu_table_template`
+  index_1/index_2를 PDK/DK 파일에서 찾을 때, `cell (DFF Cell Name)` 선언 다음으로 이
+  이름이 처음 등장하는 `cell_rise`/`cell_fall` 블록을 쓴다.
+- **`Worst case primitive liberty`** (신규): 드롭다운. 후보는 **Step2에서 DBS output과
+  1:1 pair가 성립한 PDK 파일들뿐**이다. 위 `lu_table_template`은 **pair마다 각자의
+  PDK에서 찾지 않고, 여기서 고른 PDK 하나에서 실행당 딱 한 번만 읽어 생성하는 모든
+  liberty에 그대로 재사용**한다 (2026-08 확정).
 - **삭제된 필드**: `DKgen_ver`, `portdesc_make`, `mt_make`, `mt_cnt_ref_output`,
   `mt_cnt_ref_input` (liberty 파일 내용에 안 쓰이는 것으로 확인 완료 — 원본 스크립트에서
   주석/로그 전용이거나 별도 문서 생성/검증 임계값 용도였음)
@@ -66,9 +75,47 @@ PDK Folder / DBS Simulation Folder / Port List Excel 3개 경로 입력 및 검�
 - Port List의 Volts 컬럼과 매칭하는 로직(구 `build_pg_pin_rows`)은 **폐기**. voltage_map
   값은 이제 Step2에서 선택한 Voltage Condition으로 이 단일 테이블에서 직접 조회.
 
-### Pin Settings
-변경 없음 (`Virtual Power`, `Enable signal`, `Power down control signal`,
-`DBS output signal`).
+### Pin Settings (2026-08 연계 입력 추가)
+상위 pin 입력 3개는 각각 "그 pin을 입력했기 때문에 같이 입력해야 하는" 하위 필드를
+갖는다. 화면에서도 상위 pin 바로 아래에 세로선 + 들여쓰기로 묶어서 보여준다.
+
+1. **Virtual Power (power gate)** (Port List의 PWR pin 드롭다운)
+   - `Enable Signal for power gate` — 와일드카드 허용 (기존과 동일하게 사용)
+   - `Virtual Power Switch Function` — **와일드카드 불가**. block4 pg_pin의
+     `switch_function` 값으로 그대로 들어감.
+   - `Virtual Power PG Function` — **와일드카드 불가**. block4 pg_pin의 `pg_function`
+     값으로 그대로 들어감. (이 둘은 예전에 코드에 하드코딩되어 TODO로 남아 있던 값이다.)
+2. **Power down control signal** (와일드카드 허용)
+   - `rise power` / `fall power` / `when` — block5의
+     `{prefix}_acore_internal_power` 블록에 들어감. 기본값은 예전 하드코딩 값
+     (`30000000.0000` / `0.0` / `"1"`).
+3. **DBS output pin** (와일드카드 허용)
+   - `timing_sense` / `timing_type` — 인식된 DBS output pin **전체 공통 1쌍**,
+     block5의 `timing()` 블록에 들어감. 기본값은 예전 하드코딩 값
+     (`non_unate` / `combinational`).
+   - 인식된 pin마다 `related pin` 하나씩 — block5 `timing()`의 `related_bus_pins`.
+
+**Check가 Validate보다 항상 먼저 (2026-08 확정)**: Port List 파일이 바뀌면 같은
+와일드카드라도 인식되는 DBS output pin 집합이 달라진다. 그래서 화면에
+`1) Check DBS Output Pins` 버튼을 두고, 이걸 눌러 **현재 Port List 기준으로 pin을 다시
+펼친 뒤에야** 각 pin의 related pin을 입력할 수 있고 `2) Validate` 버튼이 열린다. DBS
+output pin 입력을 고치거나 화면을 다시 열면(Step1에서 Port List를 바꿨을 수 있으므로)
+Check 결과는 무효가 되고 Validate가 다시 잠긴다. 와일드카드가 인식하는 대상은
+block5에서 실제로 `pin()`/`bus()`로 쓰이는 행들과 동일하게 `Port == "PORT"`인 행뿐이다.
+
+### Step 3 Validate 검사 항목
+- Constants: `class` / `process_prefix` / `output_prefix` / `DFF Cell Name` /
+  `LUT Table`이 비어있지 않은지, `Worst case primitive liberty`가 선택돼 있고 **현재
+  1:1 pair가 성립하는 PDK 목록 안에 있는지**, Voltage Condition 9칸이 전부 채워진
+  숫자인지.
+- Pin: 위의 모든 하위 필드가 비어있지 않은지(rise/fall power는 숫자인지), 와일드카드
+  불가 필드에 `*`가 없는지, Virtual Power가 PWR pin인지, Enable/Power down 패턴이 실제
+  pin과 매치되는지.
+- DBS output pin의 related pin: **① Check로 인식해 둔 pin 집합이 지금 Port List로 다시
+  펼친 결과와 같은지** (다르면 "다시 Check" 에러), ② 각 related pin이 비어있지 않은지,
+  ③ Port List에 실제 존재하는 Pin name인지, ④ **그 DBS output pin이 있는 Port List 행의
+  `Related Pin` 컬럼 값과 정확히 일치하는지** (예: 입력이 `A`인데 Port List 값이 `AA`면
+  에러, `A`라는 pin이 Port List에 아예 없어도 에러).
 
 ## 출력 파일명
 
@@ -78,9 +125,7 @@ PDK Folder / DBS Simulation Folder / Port List Excel 3개 경로 입력 및 검�
 
 liberty 내부의 `library (...)` 이름도 이 파일명에서 `.lib`만 뺀 문자열과 동일.
 
-## Step 4 — Liberty 생성 (현재 구현 범위: `library ~ default_operating_conditions`)
-
-cell/pin 본문(timing table 등)은 아직 미구현 (원본 스크립트의 해당 부분 이식 대기 중).
+## Step 4 — Liberty 생성
 
 ### 처리 순서
 1. **Block 1 (헤더 주석)**: 기존과 동일한 포맷, `GENERATE OPTION` 블록만 완전히 삭제.
@@ -106,16 +151,31 @@ cell/pin 본문(timing table 등)은 아직 미구현 (원본 스크립트의 �
 operating_conditions (<NOT_FOUND_IN_PDK>) {
 ```
 
-### 성능/안정성
+### 성능/안정성 (2026-08 재설계)
 - PDK/DK 파일이 30만 줄 이상일 수 있음 → **`readlines()`로 전체를 메모리에 올리지 않고
-  줄 단위로 스트리밍**, `voltage_map` 발견 즉시 읽기 중단.
+  줄 단위로 스트리밍**하며, 필요한 걸 다 얻는 즉시 읽기를 중단한다.
+- PDK 읽기는 두 갈래로 완전히 분리되어 있다 (`pdk_stream_reader.py`):
+  1. `read_pdk_library_sections(pdk_path)` — **liberty 하나당 한 번**, block2용.
+     library 선언 / 본문 / `operating_conditions` 이름 / `input_voltage` /
+     `output_voltage`만 필요하고 이것들은 전부 첫 `cell (...)` 선언보다 앞에 있으므로,
+     **첫 cell 선언을 만나는 즉시 중단**한다. 파일의 대부분(cell 본문 수십만 줄)은 아예
+     읽지 않는다.
+  2. `read_lut_table_sections(pdk_path, dff, lut)` — **실행당 한 번**, block3용.
+     Step3에서 고른 worst case PDK 하나에서만 읽고, index_1/index_2를 찾는 즉시 중단.
+     결과는 모든 job이 그대로 재사용한다.
+- `write_liberty_file()`은 block2를 다 쓴 직후 `sections.clear()`로 PDK에서 읽어온 값
+  (특히 `body_lines`)을 즉시 놓아준다 — block5의 timing 표 작성이 그 뒤에 이어지므로
+  그때까지 붙들고 있을 이유가 없다.
 - 여러 liberty를 동시에(병렬로) 생성하지 않음 — **한 번에 하나씩 순차 처리** (Step4 UI의
   1초 간격 tick 방식 유지).
 
 ## 아직 안 한 것 (TODO)
 - Config export/import 기능, 프로그램 시작 시 초기화 — 코드에 TODO만 남김, 미구현.
-- Cell/pin 본문 작성 (원본 스크립트 이식 대기).
-- `process_prefix` 필드의 실사용 (cell/pin 작성 라운드부터).
+- block5의 `#max_capacitance : No Answer;` — 실제로 어떤 값을 써야 하는지 아직 확인
+  안 됨 (코드에 TODO 주석으로 남아 있음).
+
+(해결됨) block4 pg_pin의 `switch_function` / `pg_function` 하드코딩 TODO — 2026-08에
+Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
 
 ## 실행 환경
 - PyQt5는 Anaconda Python 3.7.6 (`/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7`)에서만

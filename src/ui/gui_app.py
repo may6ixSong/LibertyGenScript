@@ -60,8 +60,8 @@ class MainWindow(QMainWindow):
             self._get_pdk_folder, self._get_dbs_folder, self._on_udc_next, self._on_udc_back,
         )
         self.settings_view = SettingsView(
-            self._get_pdk_folder, self._get_port_list_file, self._on_generate,
-            self._show_loading, self._hide_loading, self._on_settings_back,
+            self._get_pdk_folder, self._get_dbs_folder, self._get_port_list_file,
+            self._on_generate, self._show_loading, self._hide_loading, self._on_settings_back,
         )
         self.generate_view = GenerateView()
 

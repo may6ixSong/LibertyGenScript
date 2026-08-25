@@ -15,7 +15,9 @@ from __future__ import annotations
 
 # ---------------------------------------------------------------------------
 # 단순 스칼라 상수: (key, label, kind, default)
-#   kind: "text"  (전부 텍스트 - 숫자/불리언 상수는 이번 재설계에서 전부 삭제됨)
+#   kind: "text"         - 자유 입력
+#         "pdk_dropdown" - PDK Folder 안에서 Step2 페어링에 성공한 PDK 파일 중 하나를
+#                          고르는 드롭다운 (settings_view에서 화면을 열 때마다 채움)
 # ---------------------------------------------------------------------------
 SCALAR_CONSTANT_DEFS = [
     ("class", "class", "text", "analog"),
@@ -29,10 +31,18 @@ SCALAR_CONSTANT_DEFS = [
     ("output_prefix", "output_prefix", "text", ""),
     # 2026-08 추가 (block3): lu_table_template의 index_1/index_2 값을 PDK/DK 파일에서
     # 그대로 복사해오기 위해 필요한 두 이름. PDK/DK 파일 안에서 "cell (DFF명)" 선언을
-    # 먼저 찾고, 그 다음부터 "primitive cell명"이 처음 등장하는 cell_rise/cell_fall
+    # 먼저 찾고, 그 다음부터 "LUT Table"명이 처음 등장하는 cell_rise/cell_fall
     # 블록의 index_1/index_2 줄을 그대로 복사한다.
+    #
+    # primitive_cell_name: 2026-08 화면 라벨이 "Primitive Cell Name" -> "LUT Table"로
+    # 바뀌었다. 저장된 config(step3_settings.json)와의 호환을 위해 내부 key 이름은
+    # 그대로 두고 라벨만 바꾼다.
     ("dff_cell_name", "DFF Cell Name", "text", ""),
-    ("primitive_cell_name", "Primitive Cell Name", "text", ""),
+    ("primitive_cell_name", "LUT Table", "text", ""),
+    # 2026-08 추가 (block3): lu_table_template은 pair마다 각자의 PDK에서 찾는 게 아니라,
+    # 여기서 고른 "worst case" PDK 하나에서만 찾아서 생성하는 모든 liberty에 동일하게
+    # 쓴다. 드롭다운 후보는 Step2에서 DBS output과 1:1 pair가 성립한 PDK 파일들뿐이다.
+    ("worst_case_pdk", "Worst case primitive liberty", "pdk_dropdown", ""),
 ]
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,11 @@ liberty_writter.write_liberty_file()가 block1~5를 실제 파일에 쓴다.
 여러 liberty를 동시에 생성하지 않는다 - 1초 간격으로 pair를 하나씩 순차 처리하며,
 각 tick에서 PDK 파일 하나만 열어서 순차로 읽는다.
 
+2026-08 재설계 (성능): block3의 lu_table_template(index_1/index_2)은 pair마다 각자의
+PDK에서 찾지 않고, Step3에서 고른 "Worst case primitive liberty" PDK 하나에서 생성을
+시작할 때 딱 한 번 읽어(read_lut_table_sections) 모든 job에 그대로 재사용한다. 덕분에
+각 tick의 PDK 읽기는 첫 `cell (...)` 선언 앞까지(파일의 극히 일부)로 끝난다.
+
 2026-08 수정: 반복(QTimer.start()) 방식 대신, 매번 다음 tick을
 QTimer.singleShot()으로 직접 다시 예약하는 방식으로 바꿨다 - 이전 tick이 끝난
 시점부터 정확히 1초 뒤에 다음 tick이 잡히도록 보장하기 위해서다. 또한 타일을 하나
@@ -40,6 +45,7 @@ from step2_udc.udc_field_defs import compute_pairs
 from step3_settings import settings_manager
 from step4_generate import liberty_assembler
 from step4_generate.liberty_writter import write_liberty_file
+from step4_generate.pdk_stream_reader import new_lut_sections, read_lut_table_sections
 from ui.theme import ERROR_COLOR, SUCCESS_COLOR, TEXT_COLOR
 from ui.ui_common import add_shadow
 
@@ -94,6 +100,9 @@ class GenerateView(QWidget):
         super().__init__(parent)
         self._jobs: list[dict] = []
         self._prep_errors: list[str] = []
+        # Step3에서 고른 worst case PDK에서 실행당 한 번만 읽는 lu_table_template 정보.
+        # 모든 job이 이 동일한 결과를 그대로 쓴다.
+        self._lut_sections: dict = new_lut_sections()
         self._output_path: str = ""
         self._total = 0
         self._done = 0
@@ -188,6 +197,10 @@ class GenerateView(QWidget):
         )
         self._total = len(self._jobs)
 
+        # worst case PDK의 lu_table_template을 여기서 딱 한 번만 읽는다 (job마다 다시
+        # 읽지 않음). 실패해도 생성 자체를 막지는 않고, block3가 결측 주석으로 표시한다.
+        self._load_lut_sections(pdk_folder, settings["scalars"])
+
         self.progress_bar.setMaximum(max(self._total, 1))
         self.progress_bar.setValue(0)
 
@@ -208,6 +221,29 @@ class GenerateView(QWidget):
             self.progress_label.setText(f"0 of {self._total} files generated")
 
         self._schedule_tick(current_token, 0)
+
+    def _load_lut_sections(self, pdk_folder: str, scalars: dict) -> None:
+        """
+        Step3에서 고른 "Worst case primitive liberty" PDK를 한 번만 읽어 block3의
+        lu_table_template(index_1/index_2)을 뽑아 둔다. 파일을 못 열면 예외를 던지지
+        않고 빈 결과를 쓰며(=block3가 결측 주석으로 표시), 사유는 prep_errors에 남긴다.
+        """
+        self._lut_sections = new_lut_sections()
+        worst_case_pdk = str(scalars.get("worst_case_pdk", "")).strip()
+        if not worst_case_pdk:
+            return
+
+        worst_case_path = str(Path(pdk_folder) / worst_case_pdk)
+        try:
+            self._lut_sections = read_lut_table_sections(
+                worst_case_path,
+                str(scalars.get("dff_cell_name", "")).strip(),
+                str(scalars.get("primitive_cell_name", "")).strip(),
+            )
+        except OSError as e:
+            self._prep_errors.append(
+                f"Failed to read the worst case primitive liberty '{worst_case_pdk}': {e}"
+            )
 
     def _schedule_tick(self, token: int, delay_ms: int) -> None:
         QTimer.singleShot(delay_ms, lambda: self._on_tick(token))
@@ -259,7 +295,7 @@ class GenerateView(QWidget):
     def _generate_one(self, job: dict, output_file: Path) -> tuple[bool, str | None]:
         """job 하나를 실제 liberty 파일로 생성. (성공 여부, 에러 메시지)를 반환."""
         try:
-            write_liberty_file(job, str(output_file))
+            write_liberty_file(job, str(output_file), self._lut_sections)
         except Exception as e:  # noqa: BLE001 - Step4에서는 모든 실패를 화면에 보여줘야 함
             return False, str(e)
         return True, None

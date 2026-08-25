@@ -1,25 +1,25 @@
 """
 pdk_stream_reader.py
 
-PDK/DK(template_lib) 파일 하나를 처음부터 끝까지 딱 한 번, 줄 단위로 순차
-스트리밍(`for line in f:` / `next(iterator)`)하면서 block2/block3 작성에 필요한
-모든 것을 뽑아내는 모듈. PDK/DK 파일이 30만 줄을 넘을 수 있으므로 readlines()로 전체를
-메모리에 올리지 않으며, 더 이상 읽을 필요가 없어지는 순간(마지막으로 필요한
-index_1/index_2를 찾는 즉시) 읽기를 멈춘다.
+PDK/DK(template_lib) 파일을 줄 단위로 순차 스트리밍(`for line in f:` / `next(iterator)`)
+하면서 필요한 것만 뽑아내는 모듈. PDK/DK 파일은 30만 줄이 넘는 대용량이므로 절대
+readlines()로 전체를 메모리에 올리지 않으며, 더 이상 읽을 필요가 없어지는 순간 즉시
+읽기를 멈춘다.
 
-한 번의 순차 스트리밍 안에서 아래 순서대로 진행한다 (실제 PDK/DK 파일 구조와 동일한
-순서):
-  1. `library (...) {` 줄을 찾는다.
-  2. 그 다음 줄부터 `voltage_map`이 처음 등장하기 직전까지를 body_lines로 모은다
-     (PDK 자체의 date/revision/comment 줄은 위치 상관없이 개별적으로 스킵).
-  3. voltage_map 이후, 아래를 계속 찾아 나간다(전부 한 번의 순회 안에서):
-     - 자신의 `operating_conditions(library명) {` 선언에서 library명
-     - `input_voltage(...)  { vil; vih; vimax; vimin; }` 블록들 (등장하는 순서대로 전부)
-     - `output_voltage(...) { vol; voh; vomax; vomin; }` 블록들 (등장하는 순서대로 전부)
-     - `cell (DFF_CELL_NAME)` 로 시작하는 첫 줄
-     - 그 이후 처음으로 PRIMITIVE_CELL_NAME이 등장하는 줄(보통
-       `cell_rise(PRIMITIVE_CELL_NAME) {` 또는 `cell_fall(...)` 형태) - 찾으면 그
-       블록 안에서 index_1/index_2 줄을 원문 그대로 캡처하고 즉시 스트리밍을 멈춘다.
+2026-08 재설계 (성능): 예전에는 파일 하나를 끝까지 훑으면서 block2용 데이터와 block3의
+lu_table_template(index_1/index_2)을 한 번에 뽑았다. 이제 lu_table_template은 pair마다
+각자의 PDK에서 찾는 게 아니라 Step3에서 고른 "Worst case primitive liberty" PDK 하나
+에서만 찾아 모든 liberty에 재사용하므로, 두 가지 읽기를 완전히 분리했다:
+
+  1. read_pdk_library_sections(pdk_path)  - liberty 하나당 한 번 (block2용)
+     library 선언 ~ voltage_map ~ operating_conditions / input_voltage / output_voltage
+     까지만 필요하다. 이 값들은 전부 첫 `cell (...)` 선언보다 앞에 있으므로, 첫 cell
+     선언을 만나는 즉시 읽기를 멈춘다 - 파일의 압도적인 대부분(cell 본문 수십만 줄)은
+     아예 읽지 않는다.
+
+  2. read_lut_table_sections(pdk_path, dff_cell_name, lut_table_name) - 실행당 한 번
+     (block3용, worst case PDK 전용) cell 영역만 보므로 body_lines 같은 건 아예 모으지
+     않고, index_1/index_2를 찾는 즉시 멈춘다.
 
 결측 데이터 처리: 어떤 마커든 못 찾으면 예외를 던지지 않고 해당 필드를 비운 채
 (None / 빈 리스트 / False) 반환한다. 실제 "결측 표시" 주석/토큰은 이 값들을 사용하는
@@ -37,7 +37,7 @@ _PAREN_CONTENT_PATTERN = re.compile(r"\(([^)]*)\)")
 # index_1/index_2 검색을 무한정 계속하지 않도록 하는 안전장치(비정상적으로 큰
 # cell_rise/cell_fall 블록을 만나도 멈추도록).
 _MAX_INDEX_SEARCH_LINES = 2000
-# DFF cell을 못 찾았을 때 "실제로 어떤 cell 이름들이 있었는지" 진단 메시지에 보여줄
+# LUT Table을 못 찾았을 때 "실제로 어떤 cell 이름들이 있었는지" 진단 메시지에 보여줄
 # 목적으로만 기록 - 너무 많이 쌓이지 않도록 상한을 둔다(30만 줄짜리 파일에 cell이
 # 수천 개 있어도 메모리에 문제 없도록).
 _MAX_CELL_NAMES_TRACKED = 30
@@ -66,22 +66,6 @@ def _apply_voltage_subline(entry: dict, line: str) -> None:
         pass
 
 
-def _new_result() -> dict:
-    return {
-        "found_library_decl": False,
-        "body_lines": [],
-        "found_voltage_map": False,
-        "operating_conditions_library": None,
-        "input_voltage_entries": [],
-        "output_voltage_entries": [],
-        "dff_found": False,
-        "primitive_found": False,
-        "index_1_line": None,
-        "index_2_line": None,
-        "cell_names_seen": [],
-    }
-
-
 def _read_voltage_block(it, first_line: str) -> dict:
     """
     'input_voltage(NAME) {' 또는 'output_voltage(NAME) {' 줄(first_line) 바로 다음
@@ -99,7 +83,7 @@ def _read_voltage_block(it, first_line: str) -> dict:
 
 def _capture_index_lines(it, opening_line: str) -> tuple[str | None, str | None]:
     """
-    primitive cell명이 처음 등장한 줄(opening_line, 보통 'cell_rise(PRIM) {' 형태)부터
+    LUT Table명이 처음 등장한 줄(opening_line, 보통 'cell_rise(LUT) {' 형태)부터
     시작해서 그 블록이 닫힐 때까지(중괄호 깊이 추적) index_1 / index_2 줄을 찾아
     반환한다. 둘 다 찾으면 블록이 끝나기 전이라도 즉시 멈춘다.
 
@@ -137,14 +121,29 @@ def _capture_index_lines(it, opening_line: str) -> tuple[str | None, str | None]
     return index_1_line, index_2_line
 
 
-def read_pdk_file(pdk_path: str, dff_cell_name: str, primitive_cell_name: str) -> dict:
-    """
-    PDK/DK 파일을 한 번만 순차 스트리밍하며 block2/block3 작성에 필요한 모든 것을
-    뽑아낸다. 파일 전체를 메모리에 올리지 않고, 필요한 만큼만 읽는다.
+# ---------------------------------------------------------------------------
+# 1) block2용: liberty 하나당 한 번. 첫 cell 선언을 만나면 즉시 멈춘다.
+# ---------------------------------------------------------------------------
+def new_library_sections() -> dict:
+    return {
+        "found_library_decl": False,
+        "body_lines": [],
+        "found_voltage_map": False,
+        "operating_conditions_library": None,
+        "input_voltage_entries": [],
+        "output_voltage_entries": [],
+    }
 
-    Returns: 위 _new_result()가 정의하는 형태의 dict.
+
+def read_pdk_library_sections(pdk_path: str) -> dict:
     """
-    result = _new_result()
+    block2 작성에 필요한 것만 뽑아낸다 (library 선언 / 본문 / operating_conditions
+    library명 / input_voltage / output_voltage). 이 값들은 전부 첫 `cell (...)` 선언
+    앞에 있으므로, 첫 cell 선언을 만나는 즉시 읽기를 멈춘다.
+
+    Returns: 위 new_library_sections()가 정의하는 형태의 dict.
+    """
+    result = new_library_sections()
 
     with open(pdk_path, "r", encoding="utf-8", errors="replace") as f:
         it = iter(f)
@@ -174,16 +173,21 @@ def read_pdk_file(pdk_path: str, dff_cell_name: str, primitive_cell_name: str) -
         if not result["found_voltage_map"]:
             return result
 
-        # 3단계: operating_conditions / input_voltage / output_voltage / DFF cell /
-        # primitive cell(index_1, index_2)을 한 번의 순회로 계속 찾는다.
+        # 3단계: operating_conditions / input_voltage / output_voltage 를 찾는다.
         #
         # 주의: input_voltage/output_voltage는 "블록 선언"(예: input_voltage(NAME) {)
         # 과 핀 안에서의 "단순 값 대입"(예: input_voltage : NAME ;, 핀 개수만큼 반복)
         # 둘 다 첫 토큰이 동일하므로, 그 줄에 '{'가 있어야만(=진짜 블록 선언일 때만)
         # 블록으로 취급한다. '{'가 없는 단순 대입 줄은 그냥 건너뛴다.
-        looking_for_primitive = False
         for line in it:
             token = _first_token(line)
+
+            # cell 영역이 시작되면 block2에 필요한 건 전부 지나간 것이므로 즉시 중단.
+            # PDK 파일의 대부분(수십만 줄)이 여기부터이므로, 이 조기 중단이 성능의
+            # 핵심이다 (2026-08: lu_table_template을 worst case PDK 하나에서만 읽도록
+            # 바뀌면서 가능해짐).
+            if token == "cell" and "(" in line:
+                break
 
             if result["operating_conditions_library"] is None:
                 match = _OPERATING_CONDITIONS_PATTERN.search(line)
@@ -199,7 +203,46 @@ def read_pdk_file(pdk_path: str, dff_cell_name: str, primitive_cell_name: str) -
                 result["output_voltage_entries"].append(_read_voltage_block(it, line))
                 continue
 
-            if not result["dff_found"] and token == "cell":
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 2) block3용: 실행당 한 번, Step3에서 고른 worst case PDK에 대해서만.
+# ---------------------------------------------------------------------------
+def new_lut_sections() -> dict:
+    return {
+        "dff_found": False,
+        "primitive_found": False,
+        "index_1_line": None,
+        "index_2_line": None,
+        "cell_names_seen": [],
+    }
+
+
+def read_lut_table_sections(pdk_path: str, dff_cell_name: str, lut_table_name: str) -> dict:
+    """
+    block3의 lu_table_template에 쓸 index_1/index_2 줄을 뽑아낸다. "cell (DFF Cell
+    Name)" 선언을 먼저 찾고, 그 이후 처음으로 LUT Table명이 등장하는 줄(보통
+    `cell_rise(LUT) {` / `cell_fall(...)`)의 블록에서 index_1/index_2를 원문 그대로
+    캡처한 뒤 즉시 스트리밍을 멈춘다.
+
+    2026-08 확정: 이 결과는 pair마다 다시 읽지 않고, Step3에서 고른 worst case PDK
+    하나에 대해 실행당 한 번만 읽어서 생성하는 모든 liberty에 동일하게 재사용한다.
+
+    Returns: 위 new_lut_sections()가 정의하는 형태의 dict.
+    """
+    result = new_lut_sections()
+
+    with open(pdk_path, "r", encoding="utf-8", errors="replace") as f:
+        it = iter(f)
+        looking_for_primitive = False
+
+        for line in it:
+            token = _first_token(line)
+
+            if not result["dff_found"]:
+                if token != "cell":
+                    continue
                 cell_name_here = _paren_content(line)
                 if cell_name_here and len(result["cell_names_seen"]) < _MAX_CELL_NAMES_TRACKED:
                     result["cell_names_seen"].append(cell_name_here)
@@ -208,15 +251,13 @@ def read_pdk_file(pdk_path: str, dff_cell_name: str, primitive_cell_name: str) -
                     looking_for_primitive = True
                 continue
 
-            if looking_for_primitive and not result["primitive_found"]:
-                if primitive_cell_name and primitive_cell_name in line:
-                    result["primitive_found"] = True
-                    idx1, idx2 = _capture_index_lines(it, line)
-                    result["index_1_line"] = idx1
-                    result["index_2_line"] = idx2
-                    # index_1/index_2를 찾았으니(또는 못 찾았어도) 더 읽을 필요가 없음 -
-                    # 이 파일에서 필요한 마지막 정보였으므로 여기서 스트리밍을 멈춘다.
-                    break
-                continue
+            if looking_for_primitive and lut_table_name and lut_table_name in line:
+                result["primitive_found"] = True
+                idx1, idx2 = _capture_index_lines(it, line)
+                result["index_1_line"] = idx1
+                result["index_2_line"] = idx2
+                # index_1/index_2를 찾았으니(또는 못 찾았어도) 이 파일에서 필요한
+                # 마지막 정보였으므로 여기서 스트리밍을 멈춘다.
+                break
 
     return result
