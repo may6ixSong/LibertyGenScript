@@ -9,16 +9,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from step1_setup.field_defs import DBS_FILE_EXTENSION, PDK_FILE_EXTENSIONS
+from step1_setup.field_defs import DBS_FILE_EXTENSION, is_pdk_filename
 
 
 def list_pdk_lib_files(pdk_folder: str) -> list[str]:
     if not pdk_folder or not Path(pdk_folder).is_dir():
         return []
-    files: list[str] = []
-    for ext in PDK_FILE_EXTENSIONS:
-        files.extend(p.name for p in Path(pdk_folder).glob(f"*{ext}"))
-    return sorted(set(files))
+    return sorted(
+        p.name for p in Path(pdk_folder).iterdir() if p.is_file() and is_pdk_filename(p.name)
+    )
 
 
 def list_dbs_mt0_files(dbs_folder: str) -> list[str]:

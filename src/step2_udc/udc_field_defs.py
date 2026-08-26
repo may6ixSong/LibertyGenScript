@@ -6,9 +6,10 @@ Step 2 (UDC Settings) 화면의 필드 정의 (2026-08 전면 재설계).
 더 이상 UDC 항목을 사용자가 하나하나 수동으로 만들지 않는다:
   - 공통 필드(area/width/height/static_current/cell_name/MC·HDA·OUT Timing State)는
     이번에 생성하는 모든 조합에 1번만 입력한다.
-  - PDK Folder의 .lib(.lib_css_tn) 파일들과 DBS Simulation Folder의 .mt0 파일들은
-    파일명에서 파싱한 voltage+temperature 조합이 일치하는 것끼리 자동으로 pair(=liberty
-    1개 생성 대상)로 묶인다. 이 모듈은 그 파싱/페어링 로직을 담당한다.
+  - PDK Folder의 확장자가 .lib로 시작하는 파일들(.lib, .lib_css_tn 등)과 DBS Simulation
+    Folder의 .mt0 파일들은 파일명에서 파싱한 voltage+temperature 조합이 일치하는 것끼리
+    자동으로 pair(=liberty 1개 생성 대상)로 묶인다. 이 모듈은 그 파싱/페어링 로직을
+    담당한다.
 """
 
 from __future__ import annotations
@@ -44,9 +45,12 @@ def all_common_field_keys() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# 파일명 파싱 (2026-08 확정, 2026-08 수정: voltage 자릿수 3~4자리 모두 허용)
-#   PDK/DK : {prefix}_{min|max}_0p{voltage}v_{temperature}c.lib(_css_tn)
-#            예: cs17lpv_sc_min_0p920v_m40c.lib (3자리) / ..._0p9200v_... (4자리)
+# 파일명 파싱 (2026-08 확정, 2026-08 수정: voltage 자릿수 3~4자리 모두 허용,
+# 2026-08 수정: PDK 파일명에 temperature 뒤로 추가 접미사가 붙어도 허용)
+#   PDK/DK : {prefix}_{min|max}_0p{voltage}v_{temperature}c{추가 접미사?}.lib(_css_tn)
+#            예: cs17lpv_sc_min_0p920v_m40c.lib (3자리) / ..._0p9200v_... (4자리) /
+#            cs17lpv_sc_..._ffpg_nominal_min_0p7500v_75c_lvf_dth.lib (뒤에 _lvf_dth
+#            같은 추가 토큰이 붙는 경우도 있음)
 #   DBS    : {prefix}_0p{voltage}v_{temperature}c.mt0
 #            예: cs17lpv_sc_0p920v_m40c.mt0 / cs17lpv_sc_0p9200v_m40c.mt0
 #   - 0p{digits}v -> 0.{digits} (0p920v -> 0.920, 0p9200v -> 0.9200) - 자릿수가 3자리든
@@ -57,7 +61,7 @@ def all_common_field_keys() -> list[str]:
 #     같으면 pair로 인정
 # ---------------------------------------------------------------------------
 _PDK_STEM_PATTERN = re.compile(
-    r"^.+_(?:min|max)_0p(?P<volt>\d{3,4})v_(?P<temp>m?\d+)c$", re.IGNORECASE
+    r"^.+_(?:min|max)_0p(?P<volt>\d{3,4})v_(?P<temp>m?\d+)c(?:_.+)?$", re.IGNORECASE
 )
 _DBS_STEM_PATTERN = re.compile(
     r"^.+_0p(?P<volt>\d{3,4})v_(?P<temp>m?\d+)c$", re.IGNORECASE
@@ -88,9 +92,9 @@ def parse_pdk_filename(filename: str) -> dict | None:
     명명 규칙에 맞지 않으면 None. voltage의 자릿수(3자리/4자리)는 매칭에 영향을 주지
     않는다 - Decimal로 정확한 수치 비교를 하므로 0.920과 0.9200은 같은 값으로 취급된다.
     """
-    from step1_setup.field_defs import PDK_FILE_EXTENSIONS
+    from step1_setup.field_defs import strip_pdk_extension
 
-    stem = _strip_known_extension(filename, PDK_FILE_EXTENSIONS)
+    stem = strip_pdk_extension(filename)
     if stem is None:
         return None
     match = _PDK_STEM_PATTERN.match(stem)
