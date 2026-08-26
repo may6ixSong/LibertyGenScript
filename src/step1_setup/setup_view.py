@@ -25,7 +25,7 @@ from ui.theme import (
     BORDER_COLOR, ERROR_COLOR, MUTED_TEXT_COLOR, PENDING_COLOR,
     PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR,
 )
-from ui.ui_common import DetailsList, add_shadow
+from ui.ui_common import DetailsList, add_shadow, build_section_header
 
 STEP_DEFS = [
     ("pdk", "PDK Folder"),
@@ -34,6 +34,15 @@ STEP_DEFS = [
 ]
 
 _STEP_DELAY_MS = 350
+
+# 2026-08 레이아웃 개편: 예전에는 이 문구를 노란 배너로 화면에 깔아뒀지만, 세로 공간만
+# 차지해서 "Input Paths" 제목 옆 hover 정보 아이콘의 툴팁으로 옮겼다.
+_INPUT_PATHS_INFO = (
+    "The PDK Folder must contain only files whose extension starts with .lib "
+    "(e.g. .lib, .lib_css_tn), and the DBS Simulation Folder must contain only .mt0 files.\n\n"
+    "Extra files may lead to incorrect results.\n\n"
+    "The Port List must be an .xls / .xlsx file."
+)
 
 
 class _StepChip(QWidget):
@@ -129,8 +138,8 @@ class SetupView(QWidget):
     # ------------------------------------------------------------------
     def _build_layout(self, existing_config: dict) -> None:
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(24, 24, 24, 24)
-        outer.setSpacing(16)
+        outer.setContentsMargins(28, 24, 28, 20)
+        outer.setSpacing(14)
 
         title = QLabel("Liberty Generator")
         title.setObjectName("titleLabel")
@@ -140,7 +149,6 @@ class SetupView(QWidget):
         outer.addWidget(subtitle)
 
         outer.addWidget(self._build_input_card(existing_config))
-        outer.addWidget(self._build_note_banner())
         outer.addLayout(self._build_action_row())
         outer.addWidget(self._build_steps_card())
 
@@ -158,9 +166,7 @@ class SetupView(QWidget):
         card_layout.setHorizontalSpacing(10)
         card_layout.setVerticalSpacing(12)
 
-        section_label = QLabel("Input Paths")
-        section_label.setObjectName("sectionLabel")
-        card_layout.addWidget(section_label, 0, 0, 1, 3)
+        card_layout.addWidget(build_section_header("Input Paths", _INPUT_PATHS_INFO), 0, 0, 1, 3)
 
         for row, (key, label, kind, extensions) in enumerate(INPUT_PATH_FIELDS, start=1):
             card_layout.addWidget(QLabel(label), row, 0)
@@ -179,21 +185,6 @@ class SetupView(QWidget):
 
         card_layout.setColumnStretch(1, 1)
         return card
-
-    def _build_note_banner(self) -> QFrame:
-        note = QFrame()
-        note.setObjectName("noteBanner")
-        note_layout = QHBoxLayout(note)
-        note_layout.setContentsMargins(16, 12, 16, 12)
-        note_label = QLabel(
-            "Note: The PDK Folder must contain only files whose extension starts with .lib "
-            "(e.g. .lib, .lib_css_tn), and the DBS Simulation Folder must contain only .mt0 "
-            "files. Extra files may lead to incorrect results."
-        )
-        note_label.setObjectName("noteLabel")
-        note_label.setWordWrap(True)
-        note_layout.addWidget(note_label)
-        return note
 
     def _build_action_row(self) -> QHBoxLayout:
         btn_row = QHBoxLayout()

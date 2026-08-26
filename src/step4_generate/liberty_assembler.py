@@ -1,7 +1,8 @@
 """
 liberty_assembler.py
 
-Step2(자동 페어링 + pair별 Voltage Condition(bst/wst/tiv) 선택) + Step3(Constants,
+Step2(liberty 1개당 setting - corner/beol inform/voltage/temperature/condition +
+PDK 파일 + DBS output 파일) + Step3(Constants,
 Voltage Map(BST/WST/TIV x Power Type1..N 값 + Power Type별 voltage name + power type
 개수), DFF Cell Name/LUT Table/Worst case primitive liberty, Pin Settings와 그 연계
 입력들) + Step1(PDK Folder, Port List)을 조합해서, liberty_writter의
@@ -20,7 +21,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from step2_udc.udc_field_defs import VOLTAGE_CONDITION_OPTIONS
+from step2_udc.udc_field_defs import (
+    CONDITION_OPTIONS, ENTRY_CONDITION_KEY, ENTRY_DBS_KEY, ENTRY_PDK_KEY,
+    ENTRY_TEMPERATURE_KEY, ENTRY_VOLTAGE_KEY, parse_temperature_input, parse_voltage_input,
+)
 from step3_settings.constants_field_defs import (
     POWER_TYPE_COUNT_DEFAULT, POWER_TYPE_COUNT_KEY, POWER_TYPE_DEFAULT_VOLTAGE,
     voltage_map_name_key, voltage_map_value_key,
@@ -53,8 +57,7 @@ def build_output_filename(output_prefix: str, cell_name: str, dbs_filename: str)
 
 
 def build_job(
-    pair: dict,
-    voltage_condition_value: str,
+    entry: dict,
     common: dict,
     pdk_folder: str,
     dbs_folder: str,
@@ -67,14 +70,41 @@ def build_job(
     errors: list[str],
 ) -> dict | None:
     """
-    pair(하나의 PDK/DK <-> DBS output 매칭) + 선택된 Voltage Condition + Port List
-    관련 값들로 job dict를 만든다. 실패 시 errors에 메시지를 추가하고 None을 반환한다.
-    """
-    pdk_filename = pair["pdk_file"]
-    dbs_filename = pair["dbs_file"]
+    Step2의 liberty setting 1개(entry)로 job dict를 만든다. 실패 시 errors에 메시지를
+    추가하고 None을 반환한다.
 
-    if voltage_condition_value not in VOLTAGE_CONDITION_OPTIONS:
-        errors.append(f"[{pdk_filename}] Voltage Condition (bst/wst/tiv) is not selected.")
+    nom_voltage / nom_temperature는 **파일명에서 파싱하지 않고 사용자가 Step2에서 직접
+    입력한 값을 그대로 쓴다** (2026-08 2차 재설계 확정) - 파일명과 같은 값이 나오는 게
+    보통이지만, 파일명 규칙에서 벗어난 파일을 고르는 경우까지 고려한 것이다.
+    """
+    pdk_filename = str(entry.get(ENTRY_PDK_KEY, "")).strip()
+    dbs_filename = str(entry.get(ENTRY_DBS_KEY, "")).strip()
+    if not pdk_filename:
+        errors.append("Primitive liberty file (PDK) is not selected for one of the liberty settings.")
+        return None
+    if not dbs_filename:
+        errors.append(f"[{pdk_filename}] DBS output file is not selected.")
+        return None
+
+    condition_value = str(entry.get(ENTRY_CONDITION_KEY, "")).strip()
+    if condition_value not in CONDITION_OPTIONS:
+        errors.append(f"[{pdk_filename}] Condition (bst/wst/tiv) is not selected.")
+        return None
+
+    nom_voltage = parse_voltage_input(entry.get(ENTRY_VOLTAGE_KEY, ""))
+    if nom_voltage is None:
+        errors.append(
+            f"[{pdk_filename}] Voltage (Step 2) is not a valid number: "
+            f"{entry.get(ENTRY_VOLTAGE_KEY, '')!r}"
+        )
+        return None
+
+    nom_temperature = parse_temperature_input(entry.get(ENTRY_TEMPERATURE_KEY, ""))
+    if nom_temperature is None:
+        errors.append(
+            f"[{pdk_filename}] Temperature (Step 2) is not a valid whole number: "
+            f"{entry.get(ENTRY_TEMPERATURE_KEY, '')!r}"
+        )
         return None
 
     cell_name = str(common.get("cell_name", "")).strip()
@@ -120,7 +150,7 @@ def build_job(
         else output_filename
     )
 
-    group_label = voltage_condition_value.upper()  # bst/wst/tiv -> BST/WST/TIV (VOLTAGE_MAP_GROUPS)
+    group_label = condition_value.upper()  # bst/wst/tiv -> BST/WST/TIV (VOLTAGE_MAP_GROUPS)
 
     try:
         power_type_count = int(voltage_map_settings.get(POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_DEFAULT))
@@ -181,8 +211,9 @@ def build_job(
         "dbs_path": dbs_path,
         "output_filename": output_filename,
         "library_name": library_name,
-        "nom_voltage": pair["voltage"],
-        "nom_temperature": pair["temperature"],
+        # Step2에서 사용자가 직접 입력한 값 (파일명 파싱 결과가 아님)
+        "nom_voltage": float(nom_voltage),
+        "nom_temperature": nom_temperature,
         "voltage_types": voltage_types,
         "voltage_name_thresholds": voltage_name_thresholds,
         "cell_name": cell_name,
@@ -218,8 +249,7 @@ def build_job(
 
 
 def build_jobs(
-    pairs: list[dict],
-    pair_settings: dict,
+    entries: list[dict],
     common: dict,
     pdk_folder: str,
     dbs_folder: str,
@@ -231,26 +261,24 @@ def build_jobs(
     port_pins: list[dict],
 ) -> tuple[list[dict], list[str]]:
     """
-    유효한 모든 pair에 대해 job을 만든다.
+    Step2의 liberty setting 하나하나에 대해 job을 만든다.
 
     Returns:
-        (jobs, errors) - errors는 개별 pair 실패 메시지를 전부 모은 것. 실패한 pair는
-        건너뛰고, 성공한 job들만 jobs에 담긴다(부분 실패해도 나머지는 계속 진행됨).
+        (jobs, errors) - errors는 개별 setting 실패 메시지를 전부 모은 것. 실패한
+        setting은 건너뛰고, 성공한 job들만 jobs에 담긴다(부분 실패해도 나머지는 계속
+        진행됨).
     """
     jobs: list[dict] = []
     errors: list[str] = []
 
-    for pair in pairs:
-        pair_errors: list[str] = []
-        # Step2에서 pair별로 고른 bst/wst/tiv 선택값(voltage_map과는 다른 개념 - Step2의
-        # pair_settings 저장 key는 그대로 "voltage_condition" 유지).
-        voltage_condition_value = pair_settings.get(pair["pdk_file"], {}).get("voltage_condition", "")
+    for entry in entries:
+        entry_errors: list[str] = []
         job = build_job(
-            pair, voltage_condition_value, common, pdk_folder, dbs_folder, scalars,
-            voltage_map_settings, port_bit_values, power_ground_pins, pins, port_pins, pair_errors,
+            entry, common, pdk_folder, dbs_folder, scalars, voltage_map_settings,
+            port_bit_values, power_ground_pins, pins, port_pins, entry_errors,
         )
         if job is None:
-            errors.extend(pair_errors)
+            errors.extend(entry_errors)
         else:
             jobs.append(job)
 

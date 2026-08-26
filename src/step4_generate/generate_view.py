@@ -36,18 +36,16 @@ from PyQt5.QtWidgets import (
     QProgressBar, QScrollArea, QStyle, QVBoxLayout, QWidget,
 )
 
-from step1_setup.file_scanner import list_dbs_mt0_files, list_pdk_lib_files
 from step1_setup.port_list_reader import (
     list_port_bit_values, list_port_pins_detailed, list_power_ground_pins,
 )
 from step2_udc import udc_manager
-from step2_udc.udc_field_defs import compute_pairs
 from step3_settings import settings_manager
 from step4_generate import liberty_assembler
 from step4_generate.liberty_writter import write_liberty_file
 from step4_generate.pdk_stream_reader import new_lut_sections, read_lut_table_sections
 from ui.theme import ERROR_COLOR, SUCCESS_COLOR, TEXT_COLOR
-from ui.ui_common import add_shadow
+from ui.ui_common import add_shadow, build_back_button, build_bottom_button_row
 
 _GRID_COLUMNS = 6
 _TICK_INTERVAL_MS = 1000
@@ -96,8 +94,14 @@ class _FileTile(QWidget):
 
 
 class GenerateView(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, on_back=None, parent=None):
+        """
+        Args:
+            on_back: Back 버튼을 눌렀을 때 호출되는 콜백 (Step3으로 이동). 생성이
+                진행 중인 동안에는 버튼이 잠기고, 끝나면 다시 열린다.
+        """
         super().__init__(parent)
+        self.on_back = on_back
         self._jobs: list[dict] = []
         self._prep_errors: list[str] = []
         # Step3에서 고른 worst case PDK에서 실행당 한 번만 읽는 lu_table_template 정보.
@@ -154,10 +158,23 @@ class GenerateView(QWidget):
         self.grid_scroll.setWidget(self.grid_container)
         outer.addWidget(self.grid_scroll, stretch=1)
 
+        self.back_btn = build_back_button(self.on_back)
+        outer.addLayout(build_bottom_button_row(self.back_btn))
+
+    def _set_running(self, running: bool) -> None:
+        """
+        생성이 진행되는 동안에는 Back을 잠근다 - 도중에 화면을 벗어나면 예약된 tick이
+        어중간한 상태에서 파일을 계속 쓰게 되기 때문. 생성이 끝나면 다시 열려서 Step3으로
+        돌아가 값을 고치고 다시 Generate할 수 있다.
+        """
+        self.back_btn.setEnabled(not running)
+        self.back_btn.setToolTip("Generation in progress..." if running else "")
+
     def start(self, output_path: str, pdk_folder: str, dbs_folder: str, port_list_file: str) -> None:
         """
-        생성을 시작. Step2의 pair(자동 페어링 + Voltage Condition 선택)를 다시 계산해서
-        job을 만들고, 1초에 하나씩 실제 liberty 파일을 쓴다.
+        생성을 시작. Step2의 liberty setting 목록을 다시 읽어 job을 만들고, 1초에 하나씩
+        실제 liberty 파일을 쓴다. Step3에서 Back으로 돌아갔다가 다시 Generate를 눌러도
+        이 함수가 처음부터 다시 실행되므로 몇 번이든 재생성할 수 있다.
 
         Args:
             pdk_folder: Step1에서 설정한 PDK Folder 경로
@@ -181,9 +198,6 @@ class GenerateView(QWidget):
         self.progress_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 600;")
 
         udc_state = udc_manager.load_state()
-        pdk_files = list_pdk_lib_files(pdk_folder)
-        dbs_files = list_dbs_mt0_files(dbs_folder)
-        pair_result = compute_pairs(pdk_files, dbs_files)
 
         settings = settings_manager.load_settings()
         port_bit_values = list_port_bit_values(port_list_file)
@@ -191,7 +205,7 @@ class GenerateView(QWidget):
         port_pins = list_port_pins_detailed(port_list_file)
 
         self._jobs, self._prep_errors = liberty_assembler.build_jobs(
-            pair_result["pairs"], udc_state["pair_settings"], udc_state["common"],
+            udc_manager.get_entries(udc_state), udc_state["common"],
             pdk_folder, dbs_folder, settings["scalars"], settings["voltage_map"], port_bit_values,
             power_ground_pins, settings["pins"], port_pins,
         )
@@ -210,6 +224,7 @@ class GenerateView(QWidget):
             if self._prep_errors:
                 message += " " + "; ".join(self._prep_errors)
             self.progress_label.setText(message)
+            self._set_running(False)
             return
 
         if self._prep_errors:
@@ -220,6 +235,7 @@ class GenerateView(QWidget):
         else:
             self.progress_label.setText(f"0 of {self._total} files generated")
 
+        self._set_running(True)
         self._schedule_tick(current_token, 0)
 
     def _load_lut_sections(self, pdk_folder: str, scalars: dict) -> None:
@@ -288,6 +304,7 @@ class GenerateView(QWidget):
             if not self._failed:
                 self.progress_label.setStyleSheet(f"color: {SUCCESS_COLOR}; font-weight: 700;")
                 self.progress_label.setText(f"All {self._total} files generated.")
+            self._set_running(False)
             return
 
         self._schedule_tick(token, _TICK_INTERVAL_MS)

@@ -27,7 +27,10 @@ from step2_udc.udc_view import UDCView
 from step3_settings.settings_view import SettingsView
 from step4_generate.generate_view import GenerateView
 from ui.loading_overlay import LoadingOverlay
-from ui.theme import APP_STYLESHEET
+from ui.theme import (
+    APP_STYLESHEET, WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH,
+    WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
+)
 
 
 class _PointerCursorFilter(QObject):
@@ -49,7 +52,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Liberty Generator")
-        self.resize(1100, 980)
+        # 2026-08 레이아웃 개편: Step3의 입력(특히 'Check DBS Output Pins' 버튼)이
+        # 스크롤 없이 한 화면에 들어오도록 기본 창을 넓혔다.
+        self.setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        self.resize(WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT)
 
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
@@ -63,7 +69,7 @@ class MainWindow(QMainWindow):
             self._get_pdk_folder, self._get_dbs_folder, self._get_port_list_file,
             self._on_generate, self._show_loading, self._hide_loading, self._on_settings_back,
         )
-        self.generate_view = GenerateView()
+        self.generate_view = GenerateView(self._on_generate_back)
 
         self.stack.addWidget(self.setup_view)
         self.stack.addWidget(self.udc_view)
@@ -104,6 +110,15 @@ class MainWindow(QMainWindow):
 
     def _on_settings_back(self) -> None:
         self.stack.setCurrentWidget(self.udc_view)
+
+    def _on_generate_back(self) -> None:
+        """
+        Step4 -> Step3. Step3의 showEvent가 DBS output pin Check 결과를 무효화하므로,
+        돌아오면 Check -> Validate -> Generate 순서를 처음부터 다시 밟게 된다
+        (2026-08 확정). Generate를 다시 누르면 GenerateView.start()가 처음부터 다시
+        실행되어 몇 번이든 재생성할 수 있다.
+        """
+        self.stack.setCurrentWidget(self.settings_view)
 
     def _on_generate(self, output_path: str) -> None:
         """
