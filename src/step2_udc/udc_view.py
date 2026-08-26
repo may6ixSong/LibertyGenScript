@@ -5,8 +5,8 @@ udc_view.py
 
 더 이상 UDC 항목을 하나하나 수동으로 만들지 않는다:
   - 위쪽 "Common Fields" 카드에 이번에 생성할 모든 조합이 공유하는 값을 한 번만 입력.
-  - 아래쪽 "Auto-Paired Files" 카드는 PDK Folder(.lib/.lib_css_tn)와 DBS Simulation
-    Folder(.mt0)에서 파일명이 voltage+temperature 기준으로 자동으로 짝지어진 pair
+  - 아래쪽 "Auto-Paired Files" 카드는 PDK Folder(확장자가 .lib로 시작하는 파일 전체)와
+    DBS Simulation Folder(.mt0)에서 파일명이 voltage+temperature 기준으로 자동으로 짝지어진 pair
     목록(=liberty 1개 생성 대상)을 보여준다. 각 pair마다 Voltage Condition(bst/wst/tiv)
     을 자유롭게 선택한다.
   - 1:1이 안 되는 파일은 별도 warning 배너에 표시되고 생성 대상에서 제외된다.

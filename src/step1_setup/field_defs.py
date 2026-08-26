@@ -17,8 +17,27 @@ INPUT_PATH_FIELDS = [
     ("port_list_file", "Port List (Excel)", "file", [".xls", ".xlsx"]),
 ]
 
-PDK_FILE_EXTENSIONS = [".lib", ".lib_css_tn"]
 DBS_FILE_EXTENSION = ".mt0"
+
+# PDK/DK 파일 인식 규칙 (2026-08 확정): 화이트리스트가 아니라, 확장자가 ".lib"로
+# 시작하는 파일이면 전부 PDK 파일로 인식한다 (.lib, .lib_css_tn, 그 외 어떤 접미사가
+# 붙어도 인식됨).
+PDK_EXTENSION_PREFIX = ".lib"
+
+
+def is_pdk_filename(filename: str) -> bool:
+    dot = filename.rfind(".")
+    if dot == -1:
+        return False
+    return filename[dot:].lower().startswith(PDK_EXTENSION_PREFIX)
+
+
+def strip_pdk_extension(filename: str) -> str | None:
+    dot = filename.rfind(".")
+    if dot == -1 or not filename[dot:].lower().startswith(PDK_EXTENSION_PREFIX):
+        return None
+    return filename[:dot]
+
 
 # ---------------------------------------------------------------------------
 # Port List 시트 검증 규칙

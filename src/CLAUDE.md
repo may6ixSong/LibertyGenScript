@@ -16,15 +16,21 @@ Python 기반 liberty 파일 생성기. 기존 파이프라인의 한계:
 
 ## 입력
 
-1. **PDK Folder**: `.lib` PDK/DK 파일들이 있는 폴더
+1. **PDK Folder**: `.lib` PDK/DK 파일들이 있는 폴더 — **확장자가 `.lib`로 시작하는 파일은
+   전부 PDK 파일로 인식** (`.lib`, `.lib_css_tn`, 그 외 어떤 접미사가 붙어도 인식됨,
+   2026-08 확정. 화이트리스트 방식이 아니므로 새로운 `.lib*` 계열 확장자가 추가돼도 코드
+   변경 불필요)
 2. **DBS Simulation Folder**: `.mt0` DBS output 파일들이 있는 폴더
 3. **Port List (Excel)**: 핀 정보 (`Port` 컬럼이 `PORT`/`PWR`/`GND` 중 하나로 각 행을
    I/O·전원·접지 핀으로 분류)
 
 ## 파일명 규칙 (중요 — Step2 자동 페어링의 기반)
 
-- **PDK/DK**: `{prefix}_{min|max}_0p{voltage3자리}v_{temperature}c.lib`
-  예: `cs17lpv_sc_min_0p920v_m40c.lib`
+- **PDK/DK**: `{prefix}_{min|max}_0p{voltage3자리}v_{temperature}c{추가 접미사?}.lib*`
+  예: `cs17lpv_sc_min_0p920v_m40c.lib`,
+  `cs17lpv_sc_d7p47t_flk_rvt_c90l14_ffpg_nominal_min_0p7500v_75c_lvf_dth.lib` (temperature
+  토큰 뒤에 `_lvf_dth` 같은 추가 토큰이 붙어도 voltage+temperature만 파싱해서 인정,
+  2026-08 확정)
 - **DBS output**: `{prefix}_0p{voltage3자리}v_{temperature}c.mt0`
   예: `cs17lpv_sc_0p920v_m40c.mt0`
 - `0p{XXX}v` → `0.XXX` (`0p920v` → `0.920`)

@@ -186,8 +186,9 @@ class SetupView(QWidget):
         note_layout = QHBoxLayout(note)
         note_layout.setContentsMargins(16, 12, 16, 12)
         note_label = QLabel(
-            "Note: The PDK Folder must contain only .lib or .lib_css_tn files, and the DBS Simulation "
-            "Folder must contain only .mt0 files. Extra files may lead to incorrect results."
+            "Note: The PDK Folder must contain only files whose extension starts with .lib "
+            "(e.g. .lib, .lib_css_tn), and the DBS Simulation Folder must contain only .mt0 "
+            "files. Extra files may lead to incorrect results."
         )
         note_label.setObjectName("noteLabel")
         note_label.setWordWrap(True)
