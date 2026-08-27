@@ -1,15 +1,18 @@
 """
 udc_manager.py
 
-Step 2 상태(공통 필드 + pair별 Voltage Condition 선택값) 저장/로드 (2026-08 전면
-재설계).
+Step 2 상태(공통 필드 + liberty 1개당 setting 목록) 저장/로드
+(2026-08 전면 재설계 -> 2026-08 2차 재설계).
 - 외부 의존성 없음 (표준 라이브러리만 사용)
 - 저장 위치: config/udc_settings.json (config_manager.py 와 같은 config 폴더 사용)
 
-pair 자체(1:1 매칭 결과)는 저장하지 않는다 - PDK/DBS 폴더 내용이 바뀔 수 있으므로
-화면을 열 때마다 udc_field_defs.compute_pairs()로 항상 다시 계산한다. 저장하는 것은
-PDK 파일명을 key로 한 Voltage Condition(bst/wst/tiv) 선택값뿐이며, 폴더 내용이 바뀌어
-해당 파일명이 더 이상 유효한 pair를 이루지 못하게 되어도 안전하게 무시된다.
+1차 재설계에서는 파일명 자동 페어링 결과를 화면을 열 때마다 다시 계산하고 PDK 파일명을
+key로 한 Voltage Condition 선택값만 저장했다. 2차 재설계에서는 사용자가 liberty 1개당
+setting(corner/beol inform/voltage/temperature/condition/PDK file/DBS file)을 직접
+만들기 때문에, 그 목록 자체를 `liberty_settings` 배열로 저장한다.
+
+저장된 PDK/DBS 파일명이 폴더에서 사라졌더라도 로드 자체는 실패하지 않는다 - 파일 존재
+여부는 Step2 Validate에서 검사한다.
 """
 
 from __future__ import annotations
@@ -17,9 +20,13 @@ from __future__ import annotations
 import json
 
 from step1_setup.config_manager import CONFIG_DIR
-from step2_udc.udc_field_defs import all_common_field_keys
+from step2_udc.udc_field_defs import (
+    ENTRY_ID_KEY, all_common_field_keys, new_entry,
+)
 
 UDC_SETTINGS_FILE = CONFIG_DIR / "udc_settings.json"
+
+LIBERTY_SETTINGS_KEY = "liberty_settings"
 
 
 def _default_common() -> dict:
@@ -27,7 +34,20 @@ def _default_common() -> dict:
 
 
 def default_state() -> dict:
-    return {"common": _default_common(), "pair_settings": {}}
+    return {"common": _default_common(), LIBERTY_SETTINGS_KEY: []}
+
+
+def _normalize_entry(raw) -> dict | None:
+    """저장된 entry 하나를 현재 필드 정의에 맞춰 보정. dict가 아니면 버린다."""
+    if not isinstance(raw, dict):
+        return None
+    entry = new_entry()
+    for key in entry:
+        if key in raw and raw[key] is not None:
+            entry[key] = str(raw[key])
+    if not entry.get(ENTRY_ID_KEY):
+        entry[ENTRY_ID_KEY] = new_entry()[ENTRY_ID_KEY]
+    return entry
 
 
 def load_state() -> dict:
@@ -37,10 +57,11 @@ def load_state() -> dict:
             with open(UDC_SETTINGS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             common = {**_default_common(), **data.get("common", {})}
-            pair_settings = data.get("pair_settings", {})
-            if not isinstance(pair_settings, dict):
-                pair_settings = {}
-            return {"common": common, "pair_settings": pair_settings}
+            raw_entries = data.get(LIBERTY_SETTINGS_KEY, [])
+            if not isinstance(raw_entries, list):
+                raw_entries = []
+            entries = [e for e in (_normalize_entry(raw) for raw in raw_entries) if e is not None]
+            return {"common": common, LIBERTY_SETTINGS_KEY: entries}
         except (json.JSONDecodeError, OSError) as e:
             print(f"[Warning] Failed to read UDC settings file, starting with defaults: {e}")
     return default_state()
@@ -52,9 +73,6 @@ def save_state(state: dict) -> None:
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 
-def get_voltage_condition(pair_settings: dict, pdk_file: str) -> str:
-    return pair_settings.get(pdk_file, {}).get("voltage_condition", "")
-
-
-def set_voltage_condition(pair_settings: dict, pdk_file: str, value: str) -> None:
-    pair_settings.setdefault(pdk_file, {})["voltage_condition"] = value
+def get_entries(state: dict) -> list[dict]:
+    entries = state.get(LIBERTY_SETTINGS_KEY, [])
+    return entries if isinstance(entries, list) else []

@@ -10,10 +10,10 @@ from PyQt5.QtCore import Qt, QPropertyAnimation
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView, QComboBox, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
-    QHBoxLayout, QListWidget, QListWidgetItem, QPushButton, QWidget,
+    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QToolTip, QWidget,
 )
 
-from ui.theme import ERROR_COLOR, SUCCESS_COLOR, TEXT_COLOR
+from ui.theme import ERROR_COLOR, MUTED_TEXT_COLOR, SUCCESS_COLOR, TEXT_COLOR
 
 
 def build_back_button(on_back) -> QPushButton:
@@ -41,6 +41,81 @@ def build_bottom_button_row(back_button: QPushButton | None, *right_buttons: QPu
     for btn in right_buttons:
         row.addWidget(btn)
     return row
+
+
+class InfoIcon(QLabel):
+    """
+    작은 원형 "i" 아이콘. 마우스를 올리면 설명이 툴팁으로 뜬다 (2026-08 레이아웃 개편).
+
+    예전에는 화면마다 설명 문단(hint/note)을 그대로 깔아두느라 세로 공간을 크게
+    차지해서, Step3의 "1) Check DBS Output Pins" 버튼처럼 정작 먼저 눌러야 하는 요소가
+    스크롤을 내려야만 보였다. 그래서 설명은 전부 이 아이콘의 툴팁으로 옮기고 화면에는
+    입력 요소만 남긴다.
+    """
+
+    _SIZE = 16
+
+    def __init__(self, text: str, parent=None):
+        super().__init__("i", parent)
+        self.setObjectName("infoIcon")
+        self.setFixedSize(self._SIZE, self._SIZE)
+        self.setAlignment(Qt.AlignCenter)
+        self.setToolTip(text)
+        self.setCursor(Qt.WhatsThisCursor)
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - Qt 오버라이드 시그니처
+        # 툴팁 기본 지연(약 700ms) 없이 hover 즉시 뜨도록 직접 띄운다.
+        QToolTip.showText(self.mapToGlobal(self.rect().bottomLeft()), self.toolTip(), self)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt 오버라이드 시그니처
+        QToolTip.hideText()
+        super().leaveEvent(event)
+
+
+def build_section_header(title: str, info_text: str = "", object_name: str = "sectionLabel") -> QWidget:
+    """
+    섹션 제목 + (설명이 있으면) 오른쪽에 hover 정보 아이콘 하나를 붙인 한 줄.
+    설명 문단을 화면에 깔지 않고 아이콘 툴팁으로 접어두기 위한 공용 헬퍼.
+    """
+    container = QWidget()
+    container.setObjectName("transparentRow")  # 카드 위에서 회색 띠로 보이지 않도록
+    layout = QHBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+
+    label = QLabel(title)
+    label.setObjectName(object_name)
+    layout.addWidget(label)
+    if info_text:
+        layout.addWidget(InfoIcon(info_text))
+    layout.addStretch()
+    return container
+
+
+def build_label_with_info(text: str, info_text: str) -> QWidget:
+    """
+    폼(QFormLayout)의 라벨 자리에 넣는 "라벨 + hover 정보 아이콘" 위젯.
+    필드 하나하나에 붙는 설명을 접어두는 용도.
+    """
+    container = QWidget()
+    container.setObjectName("transparentRow")  # 카드 위에서 회색 띠로 보이지 않도록
+    layout = QHBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+    label = QLabel(text)
+    layout.addWidget(label)
+    layout.addWidget(InfoIcon(info_text))
+    layout.addStretch()
+    return container
+
+
+def build_hint(text: str) -> QLabel:
+    """화면에 그대로 남겨두는 짧은 보조 문구 (긴 설명은 InfoIcon 툴팁으로 옮길 것)."""
+    label = QLabel(text)
+    label.setStyleSheet(f"color: {MUTED_TEXT_COLOR}; font-size: 11px;")
+    label.setWordWrap(True)
+    return label
 
 
 def add_shadow(widget: QWidget) -> None:

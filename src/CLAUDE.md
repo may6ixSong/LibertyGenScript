@@ -24,37 +24,61 @@ Python 기반 liberty 파일 생성기. 기존 파이프라인의 한계:
 3. **Port List (Excel)**: 핀 정보 (`Port` 컬럼이 `PORT`/`PWR`/`GND` 중 하나로 각 행을
    I/O·전원·접지 핀으로 분류)
 
-## 파일명 규칙 (중요 — Step2 자동 페어링의 기반)
+## 파일명 규칙 (중요 — Step2 PDK/DBS 자동 추천의 기반)
 
-- **PDK/DK**: `{prefix}_{min|max}_0p{voltage3자리}v_{temperature}c{추가 접미사?}.lib*`
-  예: `cs17lpv_sc_min_0p920v_m40c.lib`,
-  `cs17lpv_sc_d7p47t_flk_rvt_c90l14_ffpg_nominal_min_0p7500v_75c_lvf_dth.lib` (temperature
-  토큰 뒤에 `_lvf_dth` 같은 추가 토큰이 붙어도 voltage+temperature만 파싱해서 인정,
-  2026-08 확정)
-- **DBS output**: `{prefix}_0p{voltage3자리}v_{temperature}c.mt0`
-  예: `cs17lpv_sc_0p920v_m40c.mt0`
-- `0p{XXX}v` → `0.XXX` (`0p920v` → `0.920`)
-- temperature: `m{n}` → `-n`, `m` 없으면 그대로 양수 (`m40` → `-40`, `25` → `25`)
-- `{prefix}`와 `min`/`max` 토큰은 페어링에 쓰이지 않음 — **voltage+temperature 숫자값만
-  같으면 pair**로 인정 (2026-08 확정)
+- **PDK/DK**:
+  `{공정명}lpv_[{??}_{??}_{??}_{??}_c{??}]_{corner}_{beol}_{min|max}_0p{volt}v_{temp}c_[{??}...].lib*`
+  예: `cs17lpv_sc_d7p47t_flk_rvt_c90l14_ffpg_nominal_min_0p7500v_75c_lvf_dth.lib`
+  - 대괄호 구간은 파일마다 있을 수도 없을 수도 있어 **토큰 개수가 고정되지 않는다**.
+    그래서 위치(index)로 자르지 않고, `min|max` → `0p..v` → `..c` 세 토큰이 연달아
+    오는 덩어리를 먼저 찾은 뒤 그 앞쪽에서 corner/beol을 읽는다.
+  - beol은 여러 토큰일 수 있으므로 "corner 다음 ~ `min|max` 직전" 전체를 beol로 본다.
+- **DBS output**: `{prefix}_0p{volt}v_{temp}c.mt0`
+  예: `ffpg_nominal_0p7500v_75c.mt0`
+- `0p{XXX}v` → `0.XXX` (`0p920v` → `0.920`, `0p7500v` → `0.7500`). 자릿수(3~4)가 달라도
+  같은 값이면 같은 것으로 본다 — 부동소수점 대신 `Decimal`로 정확히 비교.
+- temperature: `m{n}` → `-n`, `m` 없으면 그대로 양수 (`m40` → `-40`, `75` → `75`)
+- **PDK 파일명의 beol 토큰은 사용자가 고른 beol inform과 다를 확률이 매우 크다**
+  (2026-08 2차 재설계에서 확인). 그래서 추천 매칭의 **필수 조건은 corner + voltage +
+  temperature 세 가지**뿐이고, beol 일치는 순위 가산점(`MATCH_EXACT`)으로만 쓴다.
 
 ## Step 1 — Setup & Validate
 
-PDK Folder / DBS Simulation Folder / Port List Excel 3개 경로 입력 및 검증. 변경 없음.
+PDK Folder / DBS Simulation Folder / Port List Excel 3개 경로 입력 및 검증.
+설명 문구(구 노란 Note 배너)는 "Input Paths" 제목 옆 hover 정보 아이콘 툴팁으로 이동
+(2026-08 레이아웃 개편).
 
-## Step 2 — UDC Settings (2026-08 전면 재설계)
+## Step 2 — UDC Settings (2026-08 전면 재설계 → 2026-08 2차 재설계)
 
-**더 이상 사용자가 UDC 항목을 수동으로 하나씩 만들지 않는다.** 대신:
+1차 재설계에서는 파일명 voltage+temperature로 PDK↔DBS를 자동 페어링해서 "짝이 맞는
+파일 개수 = 만들 liberty 개수"로 삼았다. 그러나 실제로는 **PDK 폴더에 훨씬 많은 종류의
+PDK 파일이 있고 DBS 파일은 그보다 적어서**, 자동 페어링만으로는 어떤 조합의 liberty를
+만들지 결정할 수 없다는 것이 확인됐다 (2026-08 2차 재설계). 그래서 예전 UDC setting처럼
+**liberty 파일 하나당 setting 1개를 사용자가 직접 추가**하는 방식으로 되돌아왔다.
 
-1. **공통 필드** (전체 조합에 1번만 입력): `area`, `width`, `height`, `static_current`,
-   `cell_name`, `MC/HDA/OUT Timing State`
-2. **자동 페어링**: PDK Folder의 `.lib` 파일들과 DBS Folder의 `.mt0` 파일들을 파일명에서
-   파싱한 voltage+temperature가 일치하는 것끼리 자동으로 pair 생성. 파싱된 값이 그대로
-   해당 pair의 `nom_voltage`/`nom_temperature`가 됨 (별도 입력 불필요).
-3. **Validate**: PDK/DBS 폴더를 다시 스캔해 pair를 재계산, 몇 개의 1:1 pair가 유효한지
-   표시. 1:1이 안 되는 파일은 에러가 아니라 **warning**으로 표시하고 생성 대상에서 제외.
-4. **Voltage Condition**: 유효한 pair마다 사용자가 `bst`/`wst`/`tiv` 중 하나를 자유롭게
-   선택 (PDK 파일명의 min/max와 무관, 제한 없음).
+1. **공통 필드** (전체 조합에 1번만 입력, 1차 재설계 그대로): `area`, `width`, `height`,
+   `static_current`, `cell_name`, `MC/HDA/OUT Timing State`
+2. **Liberty Settings**: setting 1개 = liberty 파일 1개. 각 setting의 입력 항목은
+   - `corner` — `ffpg`/`fsg`/`sfg`/`sspg`/`tt` 중 선택
+   - `beol_inform` — `nominal`/`sigcmin`/`sigrcmax`/`sigcmax` 중 선택
+   - `voltage` — 숫자 입력 (화면에 `V` 단위 표시)
+   - `temperature` — 숫자 입력 (화면에 `℃` 단위 표시, 파일명 토큰이 정수라 **정수만** 허용)
+   - `condition` — `bst`/`wst`/`tiv` 중 선택
+   - `pdk_file` — **Step1에서 인식된 모든 PDK 파일** 중 선택
+   - `dbs_file` — PDK를 고르면 자동 매핑, 자동으로 못 고르면 직접 선택
+3. **자동 추천**: corner/voltage/temperature를 입력하면 그 조건에 맞는 PDK 파일을 찾아
+   드롭다운 **맨 위로 올리고 ★ + 초록 배경으로 highlight**한다 (beol까지 맞으면 굵게).
+   구분선 아래에는 전체 목록을 그대로 두어, 추천이 틀렸을 때 직접 고를 수 있다.
+   PDK를 고르면 같은 corner/voltage/temperature를 가진 `.mt0`를 자동 선택한다 — 후보가
+   하나로 좁혀지지 않으면 비워 두고 사용자가 직접 고른다
+   (`udc_field_defs.auto_select_dbs_file`).
+4. **Validate**: PDK/DBS 폴더를 다시 스캔해서 ① 공통 필드가 전부 채워졌는지,
+   ② setting이 1개 이상인지, ③ 각 setting의 7개 항목이 전부 빈 값 없이 채워졌는지
+   (voltage/temperature는 숫자로 읽히는지), ④ 고른 PDK/DBS 파일이 **실제로 존재하는지**,
+   ⑤ 같은 PDK/DBS 조합이 중복되지 않는지(같은 출력 파일을 두 번 쓰게 되므로) 검사.
+5. 저장 형식: `config/udc_settings.json`의 `liberty_settings` 배열
+   (`{id, corner, beol_inform, voltage, temperature, condition, pdk_file, dbs_file}`).
+   구 `pair_settings` key는 폐기.
 
 ## Step 3 — Constants & Pin Settings
 
@@ -67,10 +91,11 @@ PDK Folder / DBS Simulation Folder / Port List Excel 3개 경로 입력 및 검�
   호환 때문에 `primitive_cell_name` 그대로). block3의 `lu_table_template`
   index_1/index_2를 PDK/DK 파일에서 찾을 때, `cell (DFF Cell Name)` 선언 다음으로 이
   이름이 처음 등장하는 `cell_rise`/`cell_fall` 블록을 쓴다.
-- **`Worst case primitive liberty`** (신규): 드롭다운. 후보는 **Step2에서 DBS output과
-  1:1 pair가 성립한 PDK 파일들뿐**이다. 위 `lu_table_template`은 **pair마다 각자의
-  PDK에서 찾지 않고, 여기서 고른 PDK 하나에서 실행당 딱 한 번만 읽어 생성하는 모든
-  liberty에 그대로 재사용**한다 (2026-08 확정).
+- **`Worst case primitive liberty`** (신규): 드롭다운. 후보는 **Step2의 liberty
+  setting들이 실제로 고른 PDK 파일들뿐**이다 (2026-08 2차 재설계 — 예전에는 파일명 자동
+  페어링이 성립한 PDK 목록이었다). 위 `lu_table_template`은 **liberty마다 각자의 PDK에서
+  찾지 않고, 여기서 고른 PDK 하나에서 실행당 딱 한 번만 읽어 생성하는 모든 liberty에
+  그대로 재사용**한다 (2026-08 확정).
 - **삭제된 필드**: `DKgen_ver`, `portdesc_make`, `mt_make`, `mt_cnt_ref_output`,
   `mt_cnt_ref_input` (liberty 파일 내용에 안 쓰이는 것으로 확인 완료 — 원본 스크립트에서
   주석/로그 전용이거나 별도 문서 생성/검증 임계값 용도였음)
@@ -122,8 +147,8 @@ block5에서 실제로 `pin()`/`bus()`로 쓰이는 행들과 동일하게 `Port
 
 ### Step 3 Validate 검사 항목
 - Constants: `class` / `process_prefix` / `output_prefix` / `DFF Cell Name` /
-  `LUT Table`이 비어있지 않은지, `Worst case primitive liberty`가 선택돼 있고 **현재
-  1:1 pair가 성립하는 PDK 목록 안에 있는지**, Voltage Map의 BST/WST/TIV x
+  `LUT Table`이 비어있지 않은지, `Worst case primitive liberty`가 선택돼 있고 **Step2의
+  liberty setting들이 고른 PDK 목록 안에 있는지**, Voltage Map의 BST/WST/TIV x
   Power Type1..N(현재 power type 개수만큼만) 값이 전부 채워진 숫자인지, 그 개수만큼의
   voltage name이 전부 채워져 있는지.
 - Pin: 위의 모든 하위 필드가 비어있지 않은지(rise/fall power는 숫자인지), 와일드카드
@@ -145,21 +170,29 @@ liberty 내부의 `library (...)` 이름도 이 파일명에서 `.lib`만 뺀 �
 
 ## Step 4 — Liberty 생성
 
+**Back 버튼 (2026-08 추가)**: Step4에서 Step3으로 돌아갈 수 있다. 생성이 진행되는 동안
+에는 잠기고(예약된 tick이 어중간한 상태에서 계속 파일을 쓰는 것을 막기 위해), 끝나면
+다시 열린다. Step3으로 돌아가면 `SettingsView.showEvent`가 DBS output pin Check 결과를
+무효화하므로 **Check → Validate → Generate 순서를 처음부터 다시 밟아야 하고**, Generate를
+다시 누르면 `GenerateView.start()`가 처음부터 다시 실행되어 몇 번이든 재생성할 수 있다.
+
 ### 처리 순서
 1. **Block 1 (헤더 주석)**: 기존과 동일한 포맷, `GENERATE OPTION` 블록만 완전히 삭제.
 2. **Block 2-(1) (library 선언 + PDK 본문)**: 우리 쪽 `date`/`revision`/`comment`를 먼저
    쓴 뒤, PDK/DK 파일을 줄 단위로 스트리밍하며 `library (...) {` 다음부터 `voltage_map`
    직전까지 그대로 복사. **PDK 자체의 `date`/`revision`/`comment` 줄(줄 첫 토큰 기준)은
    순서/위치에 상관없이 만날 때마다 개별적으로 스킵** (중복 방지, 2026-08 확정).
-3. **Block 2-(2) (voltage_map)** (2026-08 Voltage Map 재설계): Step2에서 이 pair에
-   선택된 bst/wst/tiv 그룹에 따라 Step3 Voltage Map 표의 해당 그룹 Power Type1..N
+3. **Block 2-(2) (voltage_map)** (2026-08 Voltage Map 재설계): Step2에서 이 liberty에
+   선택된 bst/wst/tiv(`condition`) 그룹에 따라 Step3 Voltage Map 표의 해당 그룹 Power Type1..N
    값을 가져와, **power type 개수만큼의 VDD 줄 + VSS 1줄**을 항상 전부 작성한다.
    VDD 줄은 `voltage_map (VDD_{power type voltage name}, {value}) ;` 형태로, 이름은
    Step3에서 그 Power Type에 입력한 voltage name을 그대로 쓴다(값이 아니라 이름만 -
    block4 pg_pin의 `voltage_name`과 정확히 일치해야 하므로). VSS 줄은 기존과 동일
    (`voltage_map (VSS_0.00000, 0.00000) ;`, 하드코딩).
-4. **Block 2-(3) (operating_conditions)**: `nom_temperature`/`nom_voltage`는 Step2에서
-   파일명 파싱으로 얻은 값. 괄호 안 library명은 PDK 파일도 우리 출력 파일도 아닌,
+4. **Block 2-(3) (operating_conditions)**: `nom_temperature`/`nom_voltage`는 **Step2에서
+   사용자가 직접 입력한 voltage/temperature 값**을 그대로 쓴다 (2026-08 2차 재설계 확정 —
+   예전에는 파일명 파싱 결과를 썼다. 보통 같은 값이 나오지만, 파일명 규칙에서 벗어난
+   파일을 고르는 경우까지 고려한 것이다). 괄호 안 library명은 PDK 파일도 우리 출력 파일도 아닌,
    **PDK 파일 내부 자신의 `operating_conditions(library명) { ... }` 선언에서 추출한 값**
    (voltage_map 근처에 위치, 스트리밍 중 계속 찾다가 발견하면 멈춤).
 5. **Block 4 pg_pin의 `voltage_name`** (2026-08 Voltage Map 재설계): 예전에는 항상
@@ -205,6 +238,24 @@ operating_conditions (<NOT_FOUND_IN_PDK>) {
 
 (해결됨) block4 pg_pin의 `switch_function` / `pg_function` 하드코딩 TODO — 2026-08에
 Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
+
+## UI 레이아웃 규칙 (2026-08 레이아웃 개편)
+
+- 창 기본 크기는 `ui/theme.py`의 `WINDOW_DEFAULT_WIDTH/HEIGHT`(1560x1000), 최소 크기는
+  `WINDOW_MIN_WIDTH/HEIGHT`(1180x760).
+- **설명은 화면에 문단으로 깔지 않고 hover 정보 아이콘 툴팁으로 접는다.**
+  `ui/ui_common.py`의 `InfoIcon` / `build_section_header(title, info)` /
+  `build_label_with_info(label, info)`를 쓴다. 예전에는 각 항목마다 hint 문단과 노란
+  배너를 깔아둬서, Step3의 `1) Check DBS Output Pins` 버튼이 한참 스크롤을 내려야
+  보였다.
+- Step3은 좌우 2단(왼쪽 Constants / 오른쪽 Pin Settings)이고, **열마다 따로 스크롤**을
+  준다(전체를 한 스크롤로 감싸면 오른쪽 열의 Check 버튼이 다시 밀려 내려간다). 가로
+  스크롤은 끄고(`ScrollBarAlwaysOff`) 폼은 `WrapLongRows` +
+  `AllNonFixedFieldsGrow`로 열 폭에 맞춰 줄어들게 한다.
+- Step3의 Pin Settings 안에서는 **DBS output pin + Check 블록이 맨 위**다 (Validate보다
+  먼저 눌러야 하는 것이 화면에서도 먼저 보이도록).
+- 카드(흰 배경) 안에 레이아웃용 빈 `QWidget`을 넣을 때는 `setObjectName("transparentRow")`
+  를 붙인다 — 전역 `QWidget` 배경색(회색)이 그대로 칠해져 회색 띠처럼 보이는 것을 막는다.
 
 ## 실행 환경
 - PyQt5는 Anaconda Python 3.7.6 (`/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7`)에서만

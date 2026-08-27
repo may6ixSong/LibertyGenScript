@@ -1,18 +1,24 @@
 """
 settings_view.py
 
-'Constants & Pin Settings' 화면 (Step 3, 2026-08 재설계): 상수 값(class/process_prefix/
-output_prefix/DFF Cell Name/LUT Table/Worst case primitive liberty)과 Voltage Map
-(BST/WST/TIV x Power Type1..N, power type 개수 조절 + Power Type별 voltage name),
-Pin 설정을 입력받는다.
+'Constants & Pin Settings' 화면 (Step 3, 2026-08 재설계 -> 2026-08 레이아웃 개편):
+상수 값(class/process_prefix/output_prefix/DFF Cell Name/LUT Table/Worst case primitive
+liberty)과 Voltage Map(BST/WST/TIV x Power Type1..N, power type 개수 조절 + Power Type별
+voltage name), Pin 설정을 입력받는다.
 
-2026-08 Voltage Map 재설계: 예전에는 BST/WST/TIV x High/Mid/Low 9칸을 가로 한 줄
-테이블로 입력받았으나, "High/Mid/Low"가 정확한 용어가 아니라는 피드백에 따라
-Power Type1/2/3으로 이름을 바꾸고, BST/WST/TIV 세 그룹을 세로로 나열해 그룹마다
-Power Type별 전압 값을 입력받는 형태로 바꿨다. Power Type 개수는 과제에 따라 2개
-(High/Low만 있는 경우)일 수도 있어 화면에서 2~3 사이로 조절 가능하다(스핀박스).
-Power Type마다 리버티에 쓸 voltage name도 별도로 입력받는다(BST/WST/TIV 공통,
-Power Type당 하나).
+2026-08 레이아웃 개편 - "Check가 안 보인다" 문제 해결:
+  이전에는 Constants 카드와 Pin Settings 카드를 세로로 이어 붙이고 각 항목마다 설명
+  문단(hint)을 그대로 깔아둬서, 정작 Validate보다 먼저 눌러야 하는
+  "1) Check DBS Output Pins" 버튼이 한참 스크롤을 내려야 보였다. 그래서:
+    - 화면을 좌우 2단(왼쪽 Constants / 오른쪽 Pin Settings)으로 나눴고,
+    - Pin Settings 안에서도 DBS output pin + Check 블록을 **맨 위**로 올렸으며,
+    - 모든 설명 문단은 제목/라벨 옆 hover 정보 아이콘(InfoIcon)의 툴팁으로 옮겼다.
+  창 기본 너비도 함께 넓혔다 (ui/theme.py의 WINDOW_DEFAULT_WIDTH).
+
+2026-08 Voltage Map 재설계: BST/WST/TIV 세 그룹 각각에 Power Type1..N 전압 값을
+입력받는다. Power Type 개수는 과제에 따라 2개일 수도 있어 화면에서 2~3 사이로 조절
+가능하다(스핀박스). Power Type마다 리버티에 쓸 voltage name도 별도로 입력받는다
+(BST/WST/TIV 공통, Power Type당 하나).
 
 2026-08 추가 - 연계 입력(linked group):
   Virtual Power / Power down control signal / DBS output pin 세 개는 각각 "그 pin을
@@ -25,10 +31,7 @@ Power Type당 하나).
   "1) Check DBS Output Pins" 버튼을 눌러 현재 Port List 기준으로 pin을 다시 펼친 뒤에야
   각 pin의 related pin을 입력할 수 있고, 그 다음에야 "2) Validate" 버튼이 열린다.
   DBS output pin 입력을 고치거나 화면을 다시 열면 Check 결과는 무효가 되고 Validate가
-  다시 잠긴다.
-
-기존의 기술(technology)별 다중 행 Voltage Condition 테이블과 PDK 폴더 파일명으로부터의
-공정 자동 감지/하이라이트는 폐기되었다.
+  다시 잠긴다. Step4에서 Back으로 돌아온 경우도 마찬가지다(showEvent).
 """
 
 from __future__ import annotations
@@ -37,14 +40,14 @@ from typing import Callable
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QAbstractItemView, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QFileDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from step1_setup.file_scanner import list_dbs_mt0_files, list_pdk_lib_files
 from step1_setup.port_list_reader import list_pins_by_port_type
-from step2_udc.udc_field_defs import compute_pairs
+from step2_udc import udc_manager
+from step2_udc.udc_validator import selected_pdk_files
 from step3_settings import settings_manager
 from step3_settings.constants_field_defs import (
     POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_MAX, POWER_TYPE_COUNT_MIN, SCALAR_CONSTANT_DEFS,
@@ -62,10 +65,87 @@ from ui.theme import (
     ERROR_COLOR, MUTED_TEXT_COLOR, PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR,
     WARNING_BG, WARNING_BORDER, WARNING_TEXT,
 )
-from ui.ui_common import NoWheelComboBox, add_shadow, build_back_button, build_bottom_button_row
+from ui.ui_common import (
+    NoWheelComboBox, add_shadow, build_back_button, build_bottom_button_row,
+    build_label_with_info, build_section_header,
+)
 
 _HINT_STYLE = f"color: {MUTED_TEXT_COLOR}; font-size: 11px;"
-_RELATED_PIN_TABLE_MAX_HEIGHT = 240
+_RELATED_PIN_TABLE_MAX_HEIGHT = 200
+
+# ---------------------------------------------------------------------------
+# 설명 문구 - 화면에 문단으로 깔지 않고 hover 정보 아이콘 툴팁으로만 보여준다
+# (2026-08 레이아웃 개편).
+# ---------------------------------------------------------------------------
+_CONSTANTS_INFO = (
+    "class, process_prefix, output_prefix, DFF Cell Name, LUT Table and Worst case "
+    "primitive liberty are all required.\n\n"
+    "process_prefix / class are used in block4's cell attributes "
+    "(e.g. {process_prefix}_class).\n"
+    "output_prefix is used in the output filename: "
+    "{output_prefix}lpv_{cell_name}_{dbs stem}.lib"
+)
+
+_SCALAR_FIELD_INFO = {
+    "dff_cell_name": (
+        "Used with LUT Table to locate the lu_table_template index_1/index_2 lines in the "
+        "PDK/DK file: the first 'cell (DFF Cell Name)' declaration is found, then the first "
+        "line after it containing the LUT Table name (its cell_rise/cell_fall block) "
+        "supplies the index_1/index_2 values."
+    ),
+    "primitive_cell_name": (
+        "The cell_rise/cell_fall block name searched for after the DFF Cell Name "
+        "declaration; its index_1/index_2 lines become block3's lu_table_template."
+    ),
+    "worst_case_pdk": (
+        "The lu_table_template is read from THIS PDK file only, once per run, and the same "
+        "table is reused for every generated liberty - the other PDK files are never "
+        "searched for it.\n\n"
+        "Candidates are the PDK files selected by the Step 2 liberty settings."
+    ),
+}
+
+_VOLTAGE_MAP_INFO = (
+    "Enter numeric values only (no unit suffix).\n\n"
+    "Each liberty setting in Step 2 selects BST / WST / TIV, and its voltage_map values "
+    "are taken from that group's Power Type1..N values here.\n\n"
+    "Power Type Count can be lowered to 2 when a project has only two power types; the "
+    "Power Type3 row is then hidden and excluded from validation, but any value already "
+    "entered there is kept."
+)
+
+_VOLTAGE_NAME_INFO = (
+    "One voltage name per Power Type, shared by BST / WST / TIV.\n\n"
+    "It is written as voltage_map (VDD_{name}, {value}) in block2 and must match block4's "
+    "pg_pin voltage_name exactly."
+)
+
+_DBS_CHECK_INFO = (
+    "Run this check BEFORE Validate. The pins recognized by the wildcard change whenever "
+    "the Port List file changes, so the Related Pin list must be rebuilt from the current "
+    "Port List first. Validate stays locked until then.\n\n"
+    "Each Related Pin must be a pin that exists in the Port List AND must match that DBS "
+    "output pin's 'Related Pin' column value exactly. It is written into block5's timing() "
+    "related_bus_pins."
+)
+
+_DBS_TIMING_INFO = (
+    "timing_sense / timing_type are shared by every recognized DBS output pin and are "
+    "written into block5's timing() block. The values shown are the previous hard-coded "
+    "defaults (non_unate / combinational)."
+)
+
+_VIRTUAL_POWER_INFO = (
+    "Switch Function / PG Function do not allow wildcards (*). They are written as-is into "
+    "block4's pg_pin switch_function / pg_function for the Virtual Power pin.\n\n"
+    "Enable Signal keeps its wildcard behaviour."
+)
+
+_POWER_DOWN_INFO = (
+    "Written into block5's {process_prefix}_acore_internal_power block of every pin "
+    "matching the Power down control signal (_acore_rise_power / _acore_fall_power / "
+    "_acore_when). The values shown are the previous hard-coded defaults."
+)
 
 
 class SettingsView(QWidget):
@@ -82,11 +162,10 @@ class SettingsView(QWidget):
     ):
         """
         Args:
-            get_pdk_folder: 최신 PDK Folder 경로를 즉시 조회하는 콜백 (Step 1 값 재사용,
-                             'Worst case primitive liberty' 드롭다운 후보를 채우는 데 사용)
-            get_dbs_folder: 최신 DBS Simulation Folder 경로를 즉시 조회하는 콜백
-                             (PDK와 1:1 pair가 성립하는 파일만 위 드롭다운 후보가 됨)
-            get_port_list_file: 최신 Port List 파일 경로를 즉시 조회하는 콜백 (Step 1 값 재사용)
+            get_pdk_folder / get_dbs_folder: 최신 폴더 경로를 즉시 조회하는 콜백
+                (Step 1 값 재사용). 'Worst case primitive liberty' 후보 자체는 Step2에서
+                고른 PDK 파일 목록에서 오지만, 앞으로의 확장을 위해 그대로 받아둔다.
+            get_port_list_file: 최신 Port List 파일 경로를 즉시 조회하는 콜백
             on_generate: Generate 버튼을 눌렀을 때 호출되는 콜백(output_path: str)
             show_loading / hide_loading: Validate처럼 시간이 걸릴 수 있는 작업 전후에
                                           전역 로딩 오버레이를 보여주고 숨기는 콜백
@@ -116,33 +195,51 @@ class SettingsView(QWidget):
         self._build_layout()
 
     # ------------------------------------------------------------------
-    # 레이아웃
+    # 레이아웃 (좌: Constants / 우: Pin Settings)
     # ------------------------------------------------------------------
     def _build_layout(self) -> None:
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(24, 24, 24, 24)
-        outer.setSpacing(16)
+        outer.setContentsMargins(28, 24, 28, 20)
+        outer.setSpacing(14)
 
         title = QLabel("Constants & Pin Settings")
         title.setObjectName("titleLabel")
-        subtitle = QLabel("Configure constants and pin settings, then validate before generating.")
+        subtitle = QLabel(
+            "Configure constants and pin settings. Check the DBS output pins first, then "
+            "validate before generating."
+        )
         subtitle.setObjectName("subtitleLabel")
         outer.addWidget(title)
         outer.addWidget(subtitle)
 
+        columns = QHBoxLayout()
+        columns.setSpacing(16)
+        columns.addWidget(self._wrap_in_scroll(self._build_constants_card()), stretch=1)
+        columns.addWidget(self._wrap_in_scroll(self._build_pins_card()), stretch=1)
+        outer.addLayout(columns, stretch=1)
+
+        outer.addLayout(self._build_bottom_bar())
+
+    def _wrap_in_scroll(self, widget: QWidget) -> QScrollArea:
+        """
+        2단 중 한쪽이 길어져도 다른 쪽은 그대로 보이도록, 열마다 따로 스크롤을 준다.
+        (전체를 하나의 스크롤로 감싸면 오른쪽 열의 Check 버튼이 다시 밀려 내려간다)
+        """
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setSpacing(16)
-        content_layout.addWidget(self._build_constants_card())
-        content_layout.addWidget(self._build_pins_card())
-        content_layout.addStretch()
-        scroll.setWidget(content)
-        outer.addWidget(scroll, stretch=1)
-
-        outer.addLayout(self._build_bottom_bar())
+        # 가로 스크롤은 끈다 - 열 폭에 맞춰 내용이 줄어들어야지, 가로로 넘쳐서
+        # 입력칸 오른쪽이 잘리면 안 된다.
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        container = QWidget()
+        container.setObjectName("transparentRow")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(12)
+        layout.addWidget(widget)
+        layout.addStretch()
+        scroll.setWidget(container)
+        return scroll
 
     # ------------------------------------------------------------------
     # Constants
@@ -152,73 +249,53 @@ class SettingsView(QWidget):
         card.setObjectName("card")
         add_shadow(card)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(14)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(12)
 
-        title = QLabel("Constants")
-        title.setObjectName("sectionLabel")
-        layout.addWidget(title)
+        layout.addWidget(build_section_header("Constants", _CONSTANTS_INFO))
 
         scalar_form = QFormLayout()
         scalar_form.setSpacing(8)
+        # 라벨이 길어도(예: "Worst case primitive liberty") 입력칸이 오른쪽으로 밀려
+        # 열 밖으로 넘치지 않도록, 폭이 모자라면 라벨 아래로 접히게 한다.
+        scalar_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        scalar_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         for key, label, kind, default in SCALAR_CONSTANT_DEFS:
             saved = self.settings["scalars"].get(key, default)
             if kind == "pdk_dropdown":
-                combo = NoWheelComboBox()
-                self.scalar_widgets[key] = combo
-                scalar_form.addRow(label, combo)
+                widget: QWidget = NoWheelComboBox()
             else:
-                edit = QLineEdit(str(saved))
-                self.scalar_widgets[key] = edit
-                scalar_form.addRow(label, edit)
+                widget = QLineEdit(str(saved))
+            widget.setMinimumWidth(120)
+            self.scalar_widgets[key] = widget
+
+            info = _SCALAR_FIELD_INFO.get(key)
+            scalar_form.addRow(build_label_with_info(label, info) if info else label, widget)
         layout.addLayout(scalar_form)
         self._populate_worst_case_pdk_combo()
 
-        layout.addWidget(self._hint(
-            "Note: class, process_prefix, output_prefix, DFF Cell Name, LUT Table and "
-            "Worst case primitive liberty are all required. process_prefix / class are "
-            "used in block4's cell attributes (e.g. {process_prefix}_class)."
-        ))
-        layout.addWidget(self._hint(
-            "DFF Cell Name / LUT Table: used to locate the lu_table_template "
-            "index_1/index_2 lines in the PDK/DK file - the first 'cell (DFF Cell Name)' "
-            "declaration is found, then the first line after it containing the LUT Table "
-            "name (its cell_rise/cell_fall block) supplies the index_1/index_2 values."
-        ))
-        layout.addWidget(self._hint(
-            "Worst case primitive liberty: the lu_table_template above is read from THIS "
-            "PDK file only, and the same table is reused for every generated liberty - "
-            "the other paired PDK files are never searched for it. Only PDK files that "
-            "currently form a 1:1 pair with a DBS output file (Step 2) are listed."
-        ))
-
-        table_title = QLabel("Voltage Map")
-        table_title.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 600;")
-        layout.addWidget(table_title)
-
+        layout.addWidget(build_section_header("Voltage Map", _VOLTAGE_MAP_INFO, "sectionLabel"))
         layout.addWidget(self._build_voltage_map_section())
-
-        layout.addWidget(self._hint(
-            "Enter numeric values only (no unit suffix). Each pair in Step 2 selects "
-            "BST / WST / TIV, and its voltage_map values are taken from that group's "
-            "Power Type1..N values here."
-        ))
 
         return card
 
     def _build_voltage_map_section(self) -> QWidget:
         """
-        Voltage Map: power type 개수 조절(2~3) + BST/WST/TIV 세로 그룹(그룹마다 Power
+        Voltage Map: power type 개수 조절(2~3) + BST/WST/TIV 그룹(그룹마다 Power
         Type1..N 값) + Power Type별 voltage name(그룹 공통, 하나씩).
+
+        2026-08 레이아웃 개편: BST/WST/TIV 세 그룹을 세로로 쌓지 않고 가로 3열로 나란히
+        놓아 세로 공간을 줄였다.
         """
         self.voltage_value_edits = {}
         self.voltage_name_edits = {}
         self._power_type3_rows = []
 
         container = QWidget()
+        container.setObjectName("transparentRow")
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         voltage_map = self.settings["voltage_map"]
         saved_count = voltage_map.get(POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_MAX)
@@ -235,58 +312,70 @@ class SettingsView(QWidget):
         count_row.addStretch()
         layout.addLayout(count_row)
 
+        groups_row = QHBoxLayout()
+        groups_row.setSpacing(10)
         for group in VOLTAGE_MAP_GROUPS:
-            group_frame = QFrame()
-            group_frame.setObjectName("card")
-            group_layout = QVBoxLayout(group_frame)
-            group_layout.setContentsMargins(12, 10, 12, 10)
-            group_layout.setSpacing(4)
+            groups_row.addWidget(self._build_voltage_group_frame(group, saved_values), stretch=1)
+        layout.addLayout(groups_row)
 
-            group_title = QLabel(group)
-            group_title.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 600;")
-            group_layout.addWidget(group_title)
+        layout.addWidget(self._build_voltage_name_frame(saved_names))
 
-            group_form = QFormLayout()
-            group_form.setSpacing(6)
-            for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
-                key = voltage_map_value_key(group, type_index)
-                edit = QLineEdit(str(saved_values.get(key, "")))
-                self.voltage_value_edits[key] = edit
-                row_label = QLabel(power_type_label(type_index))
-                group_form.addRow(row_label, edit)
-                if type_index == POWER_TYPE_COUNT_MAX:
-                    self._power_type3_rows.append((row_label, edit))
-            group_layout.addLayout(group_form)
+        self._apply_power_type_count_visibility(saved_count)
+        return container
 
-            layout.addWidget(group_frame)
+    def _build_voltage_group_frame(self, group: str, saved_values: dict) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("card")
+        group_layout = QVBoxLayout(frame)
+        group_layout.setContentsMargins(12, 10, 12, 10)
+        group_layout.setSpacing(4)
 
-        name_frame = QFrame()
-        name_frame.setObjectName("card")
-        name_layout = QVBoxLayout(name_frame)
-        name_layout.setContentsMargins(12, 10, 12, 10)
-        name_layout.setSpacing(4)
+        group_title = QLabel(group)
+        group_title.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 600;")
+        group_layout.addWidget(group_title)
 
-        name_title = QLabel("Voltage Name")
-        name_title.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 600;")
-        name_layout.addWidget(name_title)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(6)
+        for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
+            key = voltage_map_value_key(group, type_index)
+            edit = QLineEdit(str(saved_values.get(key, "")))
+            # 세 그룹을 가로로 나란히 놓으므로, 열 폭이 좁아지면 입력칸도 같이
+            # 줄어들 수 있어야 한다 (QLineEdit 기본 최소 폭은 이보다 훨씬 넓다).
+            edit.setMinimumWidth(48)
+            self.voltage_value_edits[key] = edit
+            row_label = QLabel(f"Type{type_index}")
+            row_label.setStyleSheet(_HINT_STYLE)
+            row_label.setToolTip(power_type_label(type_index))
+            grid.addWidget(row_label, type_index - 1, 0)
+            grid.addWidget(edit, type_index - 1, 1)
+            if type_index == POWER_TYPE_COUNT_MAX:
+                self._power_type3_rows.append((row_label, edit))
+        grid.setColumnStretch(1, 1)
+        group_layout.addLayout(grid)
+        return frame
 
-        name_form = QFormLayout()
-        name_form.setSpacing(6)
+    def _build_voltage_name_frame(self, saved_names: dict) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("card")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
+        layout.addWidget(build_section_header("Voltage Name", _VOLTAGE_NAME_INFO))
+
+        form = QFormLayout()
+        form.setSpacing(6)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
             key = voltage_map_name_key(type_index)
             edit = QLineEdit(str(saved_names.get(key, "")))
             self.voltage_name_edits[key] = edit
             row_label = QLabel(power_type_label(type_index))
-            name_form.addRow(row_label, edit)
+            form.addRow(row_label, edit)
             if type_index == POWER_TYPE_COUNT_MAX:
                 self._power_type3_rows.append((row_label, edit))
-        name_layout.addLayout(name_form)
-
-        layout.addWidget(name_frame)
-
-        self._apply_power_type_count_visibility(saved_count)
-
-        return container
+        layout.addLayout(form)
+        return frame
 
     def _on_power_type_count_changed(self, value: int) -> None:
         self._apply_power_type_count_visibility(value)
@@ -300,9 +389,9 @@ class SettingsView(QWidget):
 
     def _populate_worst_case_pdk_combo(self) -> None:
         """
-        'Worst case primitive liberty' 드롭다운을 현재 PDK/DBS 폴더 기준으로 다시 채운다.
-        후보는 Step2와 동일한 규칙(compute_pairs)으로 DBS output과 1:1 pair가 성립한
-        PDK 파일들뿐이다.
+        'Worst case primitive liberty' 드롭다운을 다시 채운다. 후보는 Step2의 liberty
+        setting들이 실제로 고른 PDK 파일들뿐이다 (2026-08 2차 재설계 - 예전에는 파일명
+        자동 페어링이 성립한 PDK 목록이었다).
         """
         combo = self.scalar_widgets.get("worst_case_pdk")
         if combo is None:
@@ -320,152 +409,139 @@ class SettingsView(QWidget):
         combo.blockSignals(False)
 
     def paired_pdk_files(self) -> list[str]:
-        """Step2에서 DBS output과 1:1 pair가 성립한 PDK 파일명 목록 (항상 새로 계산)."""
-        pdk_files = list_pdk_lib_files(self.get_pdk_folder())
-        dbs_files = list_dbs_mt0_files(self.get_dbs_folder())
-        pair_result = compute_pairs(pdk_files, dbs_files)
-        return [pair["pdk_file"] for pair in pair_result["pairs"]]
+        """Step2의 liberty setting들이 고른 PDK 파일명 목록 (항상 새로 읽음)."""
+        return selected_pdk_files(udc_manager.load_state())
 
     # ------------------------------------------------------------------
     # Pin Settings
+    #   2026-08 레이아웃 개편: DBS output pin + Check 블록을 맨 위로 올려서, 화면에
+    #   들어오자마자 "1) Check DBS Output Pins" 버튼이 스크롤 없이 보이도록 한다.
     # ------------------------------------------------------------------
     def _build_pins_card(self) -> QFrame:
         card = QFrame()
         card.setObjectName("card")
         add_shadow(card)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(4)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(6)
 
-        title = QLabel("Pin Settings")
-        title.setObjectName("sectionLabel")
-        layout.addWidget(title)
+        layout.addWidget(build_section_header("Pin Settings"))
 
+        self._build_dbs_output_section(layout)
+        self._build_virtual_power_section(layout)
+        self._build_power_down_section(layout)
+
+        return card
+
+    def _build_dbs_output_section(self, layout: QVBoxLayout) -> None:
         pins = self.settings["pins"]
 
-        # ---- 1) Virtual Power (power gate) + 연계 입력 3개 ----
-        top_form = QFormLayout()
-        top_form.setSpacing(10)
-        self.virtual_power_combo = NoWheelComboBox()
-        self._populate_virtual_power_combo()
-        top_form.addRow("Virtual Power (power gate)", self.virtual_power_combo)
-        layout.addLayout(top_form)
-
-        vp_group = self._build_linked_group(
-            layout, "These are required because a Virtual Power (power gate) pin is used."
-        )
-        vp_form = self._add_form(vp_group)
-        self.enable_signal_edit, self.enable_signal_badge = self._build_wildcard_field(
-            vp_form, "Enable Signal for power gate", pins.get(ENABLE_SIGNAL_KEY, ""),
-        )
-        self.switch_function_edit, self.switch_function_badge = self._build_plain_pin_field(
-            vp_form, "Virtual Power Switch Function",
-            pins.get(VIRTUAL_POWER_SWITCH_FUNCTION_KEY, ""),
-        )
-        self.pg_function_edit, self.pg_function_badge = self._build_plain_pin_field(
-            vp_form, "Virtual Power PG Function",
-            pins.get(VIRTUAL_POWER_PG_FUNCTION_KEY, ""),
-        )
-        vp_group.addWidget(self._hint(
-            "Switch Function / PG Function do not allow wildcards (*). They are written "
-            "as-is into block4's pg_pin switch_function / pg_function for the Virtual "
-            "Power pin. Enable Signal keeps its existing wildcard behaviour."
-        ))
-
-        # ---- 2) Power down control signal + 연계 입력 3개 ----
-        pd_form = QFormLayout()
-        pd_form.setSpacing(10)
-        self.power_down_edit, self.power_down_badge = self._build_wildcard_field(
-            pd_form, "Power down control signal", pins.get(POWER_DOWN_KEY, ""),
-        )
-        layout.addLayout(pd_form)
-
-        pd_group = self._build_linked_group(
-            layout, "These are required because a Power down control signal is used."
-        )
-        pd_inner_form = self._add_form(pd_group)
-        self.power_down_rise_edit = QLineEdit(str(pins.get(POWER_DOWN_RISE_POWER_KEY, "")))
-        self.power_down_fall_edit = QLineEdit(str(pins.get(POWER_DOWN_FALL_POWER_KEY, "")))
-        self.power_down_when_edit = QLineEdit(str(pins.get(POWER_DOWN_WHEN_KEY, "")))
-        pd_inner_form.addRow("rise power", self.power_down_rise_edit)
-        pd_inner_form.addRow("fall power", self.power_down_fall_edit)
-        pd_inner_form.addRow("when", self.power_down_when_edit)
-        pd_group.addWidget(self._hint(
-            "Written into block5's {process_prefix}_acore_internal_power block of every "
-            "pin matching the Power down control signal ({prefix}_acore_rise_power / "
-            "_acore_fall_power / _acore_when). The values shown are the previous "
-            "hard-coded defaults."
-        ))
-
-        # ---- 3) DBS output pin + Check + 연계 입력 ----
         dbs_form = QFormLayout()
         dbs_form.setSpacing(10)
+        dbs_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        dbs_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.dbs_output_edit, self.dbs_output_badge = self._build_wildcard_field(
             dbs_form, "DBS output pin", pins.get(DBS_OUTPUT_KEY, ""),
         )
         self.dbs_output_edit.textChanged.connect(lambda _text: self._invalidate_dbs_check())
         layout.addLayout(dbs_form)
 
-        dbs_group_layout = self._build_linked_group(
+        group = self._build_linked_group(
             layout, "These are required because a DBS output pin is used."
         )
-
-        # (1) 먼저 Check - 이게 Validate보다 앞서야 한다는 걸 배치 순서로도 드러낸다
-        dbs_group_layout.addWidget(self._build_dbs_check_banner())
 
         check_row = QHBoxLayout()
         self.dbs_check_btn = QPushButton("1) Check DBS Output Pins")
         self.dbs_check_btn.setObjectName("primaryButton")
         self.dbs_check_btn.clicked.connect(self._on_check_dbs_pins)
         check_row.addWidget(self.dbs_check_btn)
+        check_row.addWidget(self._build_dbs_check_badge())
         self.dbs_check_status = QLabel("")
         self.dbs_check_status.setWordWrap(True)
         check_row.addWidget(self.dbs_check_status, stretch=1)
-        dbs_group_layout.addLayout(check_row)
+        group.addLayout(check_row)
 
         self.dbs_related_table = QTableWidget(0, 2)
-        self.dbs_related_table.setHorizontalHeaderLabels(["DBS Output Pin (from Port List)", "Related Pin"])
+        self.dbs_related_table.setHorizontalHeaderLabels(
+            ["DBS Output Pin (from Port List)", "Related Pin"]
+        )
         self.dbs_related_table.verticalHeader().setVisible(False)
         self.dbs_related_table.verticalHeader().setDefaultSectionSize(26)
         self.dbs_related_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.dbs_related_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.dbs_related_table.setMaximumHeight(_RELATED_PIN_TABLE_MAX_HEIGHT)
         self.dbs_related_table.setVisible(False)
-        dbs_group_layout.addWidget(self.dbs_related_table)
+        group.addWidget(self.dbs_related_table)
 
-        self.dbs_related_hint = self._hint(
-            "Each Related Pin must be a pin that exists in the Port List AND must match "
-            "that DBS output pin's 'Related Pin' column value exactly. It is written into "
-            "block5's timing() related_bus_pins."
-        )
-        dbs_group_layout.addWidget(self.dbs_related_hint)
-
-        # (2) 그 다음 timing_sense / timing_type (인식된 pin 전체 공통 1쌍)
-        dbs_inner_form = self._add_form(dbs_group_layout)
+        inner_form = self._add_form(group)
         self.dbs_timing_sense_edit = QLineEdit(str(pins.get(DBS_TIMING_SENSE_KEY, "")))
         self.dbs_timing_type_edit = QLineEdit(str(pins.get(DBS_TIMING_TYPE_KEY, "")))
-        dbs_inner_form.addRow("timing_sense", self.dbs_timing_sense_edit)
-        dbs_inner_form.addRow("timing_type", self.dbs_timing_type_edit)
-        dbs_group_layout.addWidget(self._hint(
-            "timing_sense / timing_type are shared by every recognized DBS output pin and "
-            "are written into block5's timing() block. The values shown are the previous "
-            "hard-coded defaults."
-        ))
+        inner_form.addRow(build_label_with_info("timing_sense", _DBS_TIMING_INFO), self.dbs_timing_sense_edit)
+        inner_form.addRow(build_label_with_info("timing_type", _DBS_TIMING_INFO), self.dbs_timing_type_edit)
 
-        return card
+    def _build_virtual_power_section(self, layout: QVBoxLayout) -> None:
+        pins = self.settings["pins"]
 
-    def _build_dbs_check_banner(self) -> QLabel:
-        banner = QLabel(
-            "⚠  Run this check BEFORE Validate. The pins recognized by the wildcard "
-            "change whenever the Port List file changes, so the Related Pin list below must "
-            "be rebuilt from the current Port List first. Validate stays locked until then."
+        top_form = QFormLayout()
+        top_form.setSpacing(10)
+        top_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        top_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self.virtual_power_combo = NoWheelComboBox()
+        self._populate_virtual_power_combo()
+        top_form.addRow("Virtual Power (power gate)", self.virtual_power_combo)
+        layout.addLayout(top_form)
+
+        group = self._build_linked_group(
+            layout, "These are required because a Virtual Power (power gate) pin is used."
         )
-        banner.setWordWrap(True)
-        banner.setStyleSheet(
+        form = self._add_form(group)
+        self.enable_signal_edit, self.enable_signal_badge = self._build_wildcard_field(
+            form, "Enable Signal for power gate", pins.get(ENABLE_SIGNAL_KEY, ""),
+        )
+        self.switch_function_edit, self.switch_function_badge = self._build_plain_pin_field(
+            form, "Virtual Power Switch Function",
+            pins.get(VIRTUAL_POWER_SWITCH_FUNCTION_KEY, ""), _VIRTUAL_POWER_INFO,
+        )
+        self.pg_function_edit, self.pg_function_badge = self._build_plain_pin_field(
+            form, "Virtual Power PG Function",
+            pins.get(VIRTUAL_POWER_PG_FUNCTION_KEY, ""), _VIRTUAL_POWER_INFO,
+        )
+
+    def _build_power_down_section(self, layout: QVBoxLayout) -> None:
+        pins = self.settings["pins"]
+
+        pd_form = QFormLayout()
+        pd_form.setSpacing(10)
+        pd_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        pd_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self.power_down_edit, self.power_down_badge = self._build_wildcard_field(
+            pd_form, "Power down control signal", pins.get(POWER_DOWN_KEY, ""),
+        )
+        layout.addLayout(pd_form)
+
+        group = self._build_linked_group(
+            layout, "These are required because a Power down control signal is used."
+        )
+        form = self._add_form(group)
+        self.power_down_rise_edit = QLineEdit(str(pins.get(POWER_DOWN_RISE_POWER_KEY, "")))
+        self.power_down_fall_edit = QLineEdit(str(pins.get(POWER_DOWN_FALL_POWER_KEY, "")))
+        self.power_down_when_edit = QLineEdit(str(pins.get(POWER_DOWN_WHEN_KEY, "")))
+        form.addRow(build_label_with_info("rise power", _POWER_DOWN_INFO), self.power_down_rise_edit)
+        form.addRow(build_label_with_info("fall power", _POWER_DOWN_INFO), self.power_down_fall_edit)
+        form.addRow(build_label_with_info("when", _POWER_DOWN_INFO), self.power_down_when_edit)
+
+    def _build_dbs_check_badge(self) -> QLabel:
+        """
+        "Validate보다 먼저"라는 경고를 문단 대신 한 칸짜리 배지 + 툴팁으로 보여준다
+        (2026-08 레이아웃 개편 - 예전엔 세 줄짜리 배너였다).
+        """
+        badge = QLabel("⚠ required first")
+        badge.setToolTip(_DBS_CHECK_INFO)
+        badge.setStyleSheet(
             f"background-color: {WARNING_BG}; border: 1px solid {WARNING_BORDER}; "
-            f"color: {WARNING_TEXT}; border-radius: 6px; padding: 8px; font-size: 11px;"
+            f"color: {WARNING_TEXT}; border-radius: 6px; padding: 4px 8px; font-size: 11px;"
         )
-        return banner
+        return badge
 
     def _build_linked_group(self, parent_layout: QVBoxLayout, caption: str) -> QVBoxLayout:
         """
@@ -501,30 +577,33 @@ class SettingsView(QWidget):
         """지금 위치에 QFormLayout을 하나 만들어 붙이고 돌려준다(배치 순서 제어용)."""
         form = QFormLayout()
         form.setSpacing(8)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         layout.addLayout(form)
         return form
 
-    def _hint(self, text: str) -> QLabel:
-        label = QLabel(text)
-        label.setStyleSheet(_HINT_STYLE)
-        label.setWordWrap(True)
-        return label
-
-    def _build_wildcard_field(self, form: QFormLayout, label: str, initial: str) -> tuple[QLineEdit, QLabel]:
-        edit, badge = self._build_field_with_badge(form, label, initial)
+    def _build_wildcard_field(
+        self, form: QFormLayout, label: str, initial: str, info: str = "",
+    ) -> tuple[QLineEdit, QLabel]:
+        edit, badge = self._build_field_with_badge(form, label, initial, info)
         edit.textChanged.connect(lambda: self._update_wildcard_badge(edit, badge))
         self._update_wildcard_badge(edit, badge)
         return edit, badge
 
-    def _build_plain_pin_field(self, form: QFormLayout, label: str, initial: str) -> tuple[QLineEdit, QLabel]:
+    def _build_plain_pin_field(
+        self, form: QFormLayout, label: str, initial: str, info: str = "",
+    ) -> tuple[QLineEdit, QLabel]:
         """와일드카드를 허용하지 않는 pin 입력 (입력에 '*'가 있으면 즉시 빨간 안내)."""
-        edit, badge = self._build_field_with_badge(form, label, initial)
+        edit, badge = self._build_field_with_badge(form, label, initial, info)
         edit.textChanged.connect(lambda: self._update_no_wildcard_badge(edit, badge))
         self._update_no_wildcard_badge(edit, badge)
         return edit, badge
 
-    def _build_field_with_badge(self, form: QFormLayout, label: str, initial: str) -> tuple[QLineEdit, QLabel]:
+    def _build_field_with_badge(
+        self, form: QFormLayout, label: str, initial: str, info: str = "",
+    ) -> tuple[QLineEdit, QLabel]:
         container = QWidget()
+        container.setObjectName("transparentRow")
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(2)
@@ -535,7 +614,7 @@ class SettingsView(QWidget):
         container_layout.addWidget(edit)
         container_layout.addWidget(badge)
 
-        form.addRow(label, container)
+        form.addRow(build_label_with_info(label, info) if info else label, container)
         return edit, badge
 
     def _update_wildcard_badge(self, edit: QLineEdit, badge: QLabel) -> None:
@@ -558,15 +637,7 @@ class SettingsView(QWidget):
 
     def _build_bottom_bar(self) -> QVBoxLayout:
         layout = QVBoxLayout()
-        layout.setSpacing(10)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        self.validate_btn = QPushButton("2) Validate")
-        self.validate_btn.setObjectName("primaryButton")
-        self.validate_btn.clicked.connect(self._on_validate)
-        btn_row.addWidget(self.validate_btn)
-        layout.addLayout(btn_row)
+        layout.setSpacing(8)
 
         self.result_label = QLabel("")
         self.result_label.setWordWrap(True)
@@ -584,13 +655,19 @@ class SettingsView(QWidget):
         output_row.addWidget(self.output_browse_btn)
         layout.addLayout(output_row)
 
+        self.validate_btn = QPushButton("2) Validate")
+        self.validate_btn.setObjectName("primaryButton")
+        self.validate_btn.clicked.connect(self._on_validate)
+
         self.generate_btn = QPushButton("Generate")
         self.generate_btn.setObjectName("primaryButton")
         self.generate_btn.setEnabled(False)
         self.generate_btn.clicked.connect(self._on_generate_clicked)
 
         self.back_btn = build_back_button(self.on_back)
-        layout.addLayout(build_bottom_button_row(self.back_btn, self.generate_btn))
+        layout.addLayout(
+            build_bottom_button_row(self.back_btn, self.validate_btn, self.generate_btn)
+        )
 
         self._invalidate_dbs_check()
         return layout
@@ -619,7 +696,8 @@ class SettingsView(QWidget):
     def _invalidate_dbs_check(self) -> None:
         """
         Check 결과를 무효화하고 Validate를 다시 잠근다. DBS output pin 입력이 바뀌거나
-        화면을 다시 열었을 때(= Port List가 바뀌었을 수 있을 때) 호출된다.
+        화면을 다시 열었을 때(= Port List가 바뀌었을 수 있을 때, Step4에서 Back으로
+        돌아온 경우 포함) 호출된다.
         """
         self._dbs_check_done = False
         if hasattr(self, "dbs_related_table"):
@@ -807,12 +885,13 @@ class SettingsView(QWidget):
             self.on_generate(output_path)
 
     # ------------------------------------------------------------------
-    # 화면이 다시 보일 때마다 (Step 1에서 돌아왔을 때 등) 최신 pin/PDK 정보 반영
+    # 화면이 다시 보일 때마다 (Step 2에서 왔을 때 / Step4에서 Back으로 돌아왔을 때)
+    # 최신 pin/PDK 정보 반영 + Check 결과 무효화
     # ------------------------------------------------------------------
     def showEvent(self, event) -> None:  # noqa: N802 - Qt 오버라이드 시그니처
         super().showEvent(event)
         self._populate_virtual_power_combo()
         self._populate_worst_case_pdk_combo()
-        # Step1에서 Port List 파일이 바뀌었을 수 있으므로, 화면에 다시 들어올 때마다
-        # DBS output pin Check 결과는 무효로 보고 다시 Check하게 한다.
+        # Step1에서 Port List 파일이 바뀌었을 수 있고, Step4에서 Back으로 돌아온 경우도
+        # 처음부터 다시 밟아야 하므로, 화면에 들어올 때마다 Check 결과는 무효로 본다.
         self._invalidate_dbs_check()

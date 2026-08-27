@@ -14,7 +14,7 @@ timing·internal_power)를 만들 수 없으므로 이제 Validate 단계에서 
   - DFF Cell Name / LUT Table (block3의 lu_table_template index_1/index_2를
     PDK/DK 파일에서 찾아오는 데 쓰임)
   - Worst case primitive liberty (그 lu_table_template을 어느 PDK에서 가져올지 -
-    Step2에서 pair가 성립한 PDK 파일 중 하나여야 함)
+    Step2의 liberty setting들이 고른 PDK 파일 중 하나여야 함)
   - class / process_prefix (block4의 cell 속성에 쓰임 - {process_prefix}_class 등)
   - Pin 설정의 모든 하위 필드 (switch_function/pg_function, rise·fall power/when,
     timing_sense/timing_type, 인식된 DBS output pin마다의 related pin)
@@ -88,8 +88,8 @@ def validate_constants(
     있는지 검사.
 
     Args:
-        paired_pdk_files: Step2에서 DBS output과 1:1 pair가 성립한 PDK 파일명 목록.
-            None이면 "pair 목록과 대조"는 건너뛰고 비어있는지만 검사한다.
+        paired_pdk_files: Step2의 liberty setting들이 고른 PDK 파일명 목록.
+            None이면 "Step2 목록과 대조"는 건너뛰고 비어있는지만 검사한다.
     """
     errors: list[str] = []
 
@@ -103,8 +103,8 @@ def validate_constants(
         errors.append(f"{_WORST_CASE_PDK_LABEL} is not selected.")
     elif paired_pdk_files is not None and worst_case_pdk not in paired_pdk_files:
         errors.append(
-            f"{_WORST_CASE_PDK_LABEL} '{worst_case_pdk}' is not one of the PDK files that "
-            "currently form a 1:1 pair in Step 2. Select it again."
+            f"{_WORST_CASE_PDK_LABEL} '{worst_case_pdk}' is not one of the PDK files "
+            "selected by the Step 2 liberty settings. Select it again."
         )
 
     try:

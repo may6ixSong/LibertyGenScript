@@ -24,6 +24,17 @@ WARNING_BG = "#FEF9E7"
 WARNING_BORDER = "#F5D06B"
 WARNING_TEXT = "#8A6D1D"
 
+# 추천(자동 매칭된) PDK/DBS 파일을 드롭다운/행에서 강조할 때 쓰는 색
+RECOMMEND_BG = "#ECFDF5"
+RECOMMEND_BORDER = "#6EE7B7"
+RECOMMEND_TEXT = "#047857"
+
+# 창 기본 크기 (2026-08 레이아웃 개편: Step3의 입력이 스크롤 없이 보이도록 넓혔다)
+WINDOW_DEFAULT_WIDTH = 1560
+WINDOW_DEFAULT_HEIGHT = 1000
+WINDOW_MIN_WIDTH = 1180
+WINDOW_MIN_HEIGHT = 760
+
 APP_STYLESHEET = f"""
 QWidget {{
     background-color: {BACKGROUND_COLOR};
@@ -40,6 +51,17 @@ QFrame#card {{
     background-color: {CARD_COLOR};
     border: 1px solid {BORDER_COLOR};
     border-radius: 12px;
+}}
+
+/* 카드(흰 배경) 안에 놓인 라벨/레이아웃용 빈 위젯이 전역 QWidget 배경색(회색)을
+   그대로 칠해서 회색 띠처럼 보이는 것을 막는다. 배경이 필요한 라벨은 자기 자신의
+   objectName 규칙이나 인라인 스타일로 덮어쓰므로 영향받지 않는다. */
+QLabel {{
+    background: transparent;
+}}
+
+QWidget#transparentRow {{
+    background: transparent;
 }}
 
 QLabel#titleLabel {{
@@ -149,5 +171,59 @@ QListWidget#resultsList::item {{
 
 QListWidget#resultsList::item:selected {{
     background-color: transparent;
+}}
+
+QLabel#infoIcon {{
+    background-color: {PRIMARY_TINT};
+    color: {PRIMARY_COLOR};
+    border: 1px solid {PRIMARY_COLOR_DISABLED};
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 700;
+    font-style: italic;
+}}
+
+QToolTip {{
+    background-color: {TEXT_COLOR};
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 12px;
+}}
+
+QFrame#entryCard {{
+    background-color: {CARD_COLOR};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 10px;
+}}
+
+QFrame#entryCard:hover {{
+    border: 1px solid {PRIMARY_COLOR_DISABLED};
+}}
+
+QComboBox {{
+    background-color: #FAFBFF;
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 8px;
+    padding: 5px 8px;
+}}
+
+QComboBox:focus {{
+    border: 1px solid {PRIMARY_COLOR};
+}}
+
+QSpinBox {{
+    background-color: #FAFBFF;
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 8px;
+    padding: 4px 6px;
+}}
+
+QTableWidget {{
+    background-color: {CARD_COLOR};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 8px;
+    gridline-color: {BORDER_COLOR};
 }}
 """
