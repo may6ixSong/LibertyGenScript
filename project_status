@@ -16,8 +16,8 @@
 - **PyQt5 특이사항**: 이 환경의 Qt는 `QFontMetrics.horizontalAdvance()`(Qt 5.11+) 없음 →
   `fm.width()`로 폴백해야 함. QSS의 `cursor` 속성도 미지원("Unknown property cursor") →
   커서는 전역 이벤트 필터(`_PointerCursorFilter`)로 구현함
-- **배포**: `run_generator.sh`(소스 실행), `build_exe.sh`(PyInstaller 단일 실행파일 빌드, 결과물
-  `dist/liberty_generator`) 둘 다 있음. 둘 다 Anaconda python 사용
+- **배포**: `run_generator.sh`(소스 실행), `build_exe.sh`(PyInstaller `--onedir` 빌드, 결과물
+  `dist/liberty_generator/` 폴더를 통째로 복사해서 배포) 둘 다 있음. 둘 다 Anaconda python 사용
 
 ## 폴더 구조
 
