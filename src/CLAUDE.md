@@ -179,6 +179,15 @@ output pin 입력을 고치거나 화면을 다시 열면(Step1에서 Port List�
 Check 결과는 무효가 되고 Validate가 다시 잠긴다. 와일드카드가 인식하는 대상은
 block5에서 실제로 `pin()`/`bus()`로 쓰이는 행들과 동일하게 `Port == "PORT"`인 행뿐이다.
 
+**Related Pin 자동 채움 (2026-08 변경)**: `1) Check DBS Output Pins`를 누르면 인식된
+DBS output pin마다 Related Pin 칸이 **Port List의 'Related Pin' 컬럼 값으로 자동
+채워진다**(`SettingsView._fill_related_pin_table`, `port_list_reader.list_port_pins_detailed`
+로 pin 이름 → Related Pin 매핑을 가져옴). 예전에는 이 칸이 빈 채로 시작해서 사용자가
+Port List를 보고 직접 옮겨 적어야 했다. 표에서 바로 값을 고칠 수 있고(Port List와
+다른 pin을 쓰고 싶은 경우), 이미 그 pin에 대해 저장해 둔 값(직접 고쳤던 값 포함)이
+있으면 자동 채움 대신 그 값을 그대로 유지한다 - Check를 다시 눌러도 이미 입력해 둔
+값이 날아가지 않는다.
+
 **Output Path Browse 클릭 시 안내창 (2026-08 추가)**: 예전에는 `1) Check` +
 `2) Validate`를 통과하기 전엔 Output Path의 Browse 버튼 자체가 disabled라서, 사용자가
 왜 그 버튼이 안 눌리는지 몰랐다는 피드백이 있었다. 그래서 이제 Browse 버튼은 항상
@@ -198,9 +207,12 @@ Validate를 통과해야만 편집 가능해진다.
   pin과 매치되는지.
 - DBS output pin의 related pin: **① Check로 인식해 둔 pin 집합이 지금 Port List로 다시
   펼친 결과와 같은지** (다르면 "다시 Check" 에러), ② 각 related pin이 비어있지 않은지,
-  ③ Port List에 실제 존재하는 Pin name인지, ④ **그 DBS output pin이 있는 Port List 행의
-  `Related Pin` 컬럼 값과 정확히 일치하는지** (예: 입력이 `A`인데 Port List 값이 `AA`면
-  에러, `A`라는 pin이 Port List에 아예 없어도 에러).
+  ③ Port List에 실제 존재하는 Pin name인지. (변경 이력 - 2026-08: 예전에는 여기에
+  "그 DBS output pin이 있는 Port List 행의 `Related Pin` 컬럼 값과 정확히 일치해야
+  한다"는 ④번 규칙이 있었다. Check 시점에 이미 그 컬럼 값으로 자동 채워지고 사용자가
+  의도적으로 다른 pin으로 고칠 수도 있는 것이 정상 동작이 되면서, 그 자동 채움 값을
+  다시 강제하던 이 규칙은 삭제했다 - 이제는 Port List에 실제 존재하는 pin이기만 하면
+  자동 채움값이든 사용자가 고친 값이든 통과한다.)
 
 ## 출력 파일명
 

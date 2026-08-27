@@ -44,7 +44,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from step1_setup.port_list_reader import list_pins_by_port_type
+from step1_setup.port_list_reader import list_pins_by_port_type, list_port_pins_detailed
 from step2_udc import udc_manager
 from step2_udc.udc_validator import selected_pdk_files
 from step3_settings import settings_manager
@@ -119,9 +119,10 @@ _DBS_CHECK_INFO = (
     "Run this check BEFORE Validate. The pins recognized by the wildcard change whenever "
     "the Port List file changes, so the Related Pin list must be rebuilt from the current "
     "Port List first. Validate stays locked until then.\n\n"
-    "Each Related Pin must be a pin that exists in the Port List AND must match that DBS "
-    "output pin's 'Related Pin' column value exactly. It is written into block5's timing() "
-    "related_bus_pins."
+    "Related Pin is auto-filled from the Port List's 'Related Pin' column for each "
+    "recognized DBS output pin - edit any row if you want to use a different pin. Every "
+    "Related Pin must still be a pin that exists in the Port List. It is written into "
+    "block5's timing() related_bus_pins as entered here."
 )
 
 _DBS_TIMING_INFO = (
@@ -641,26 +642,35 @@ class SettingsView(QWidget):
         self._dbs_check_done = True
         self.dbs_check_status.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 11px;")
         self.dbs_check_status.setText(
-            f"✓ {len(recognized)} DBS output pin(s) recognized. "
-            "Fill in every Related Pin, then Validate."
+            f"✓ {len(recognized)} DBS output pin(s) recognized. Related Pin was auto-filled "
+            "from the Port List - review and edit any row if you need a different pin, "
+            "then Validate."
         )
         self.validate_btn.setEnabled(True)
         self.validate_btn.setToolTip("")
 
     def _fill_related_pin_table(self, recognized: list[str]) -> None:
         """
-        인식된 pin마다 한 행씩. Related Pin 칸은 이전에 저장해 둔 값이 있으면 그대로
-        되살리고, 없으면 빈 칸으로 둔다(사용자가 직접 확인해서 입력해야 하는 값이므로
-        Port List 값을 미리 채워넣지 않는다).
+        인식된 pin마다 한 행씩. Related Pin 칸은 **Port List의 'Related Pin' 컬럼
+        값으로 자동 채워진다**(2026-08 변경 - 예전엔 빈 칸으로 두고 사용자가 직접
+        Port List를 보고 옮겨 적어야 했다). 이미 이 pin에 대해 저장해 둔 값(직접
+        수정했던 값 포함)이 있으면 그걸 그대로 우선하고, 처음 보는 pin만 Port List
+        값으로 채운다. 어느 쪽이든 표에서 바로 수정할 수 있다 - Port List와 다른
+        pin을 쓰고 싶을 수도 있으므로 자동 채움은 기본값일 뿐 강제가 아니다.
         """
         saved = self.settings["pins"].get(DBS_RELATED_PINS_KEY) or {}
+        port_list_related = {
+            pin["pin_name"]: (pin.get("related_pin") or "").strip()
+            for pin in list_port_pins_detailed(self.get_port_list_file())
+        }
         table = self.dbs_related_table
         table.setRowCount(len(recognized))
         for row, pin_name in enumerate(recognized):
             name_item = QTableWidgetItem(pin_name)
             name_item.setFlags(Qt.ItemIsEnabled)  # 읽기 전용
             table.setItem(row, 0, name_item)
-            table.setItem(row, 1, QTableWidgetItem(str(saved.get(pin_name, ""))))
+            default_value = saved[pin_name] if pin_name in saved else port_list_related.get(pin_name, "")
+            table.setItem(row, 1, QTableWidgetItem(str(default_value)))
         table.setVisible(True)
         table.setEditTriggers(QAbstractItemView.AllEditTriggers)
 
