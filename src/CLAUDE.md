@@ -418,6 +418,39 @@ Step1의 Port List 파싱, Step3의 Output Path 파일 대화상자(네트워크
    옮길 수 없다(위 "근본 원인" 절 참고). 두 경우 모두 Ctrl+C 강제 종료(위 절)가
    여전히 안전장치로 남아 있다.
 
+## 앱 실행 직후 창이 늦게 뜨는 문제 (2026-08 해결)
+
+`run_generator.sh`로 실행했을 때 **창 자체가 화면에 나타나기까지** 시간이 걸린다는
+사용자 피드백 원인: 예전에는 `gui_app.MainWindow.__init__`이 앱을 시작하는 시점에
+Step1(SetupView)뿐 아니라 **Step2(UDCView)/Step3(SettingsView)까지 전부 미리 만들어
+뒀다** - `launch_gui()`가 `window.show()`를 부르기 전에 이 생성자들이 전부 끝나야
+했다. 그런데:
+- `UDCView.__init__`은 곧바로 `_rescan_files()`로 PDK Folder/DBS Simulation Folder를
+  스캔한다 (`file_scanner.list_pdk_lib_files`/`list_dbs_mt0_files`).
+- `SettingsView.__init__`은 Virtual Power 콤보를 채우려고 저장된 Port List Excel
+  파일을 곧바로 연다(`_populate_virtual_power_combo` → `list_pins_by_port_type`).
+
+두 폴더/파일 모두 사내망 네트워크 마운트일 수 있어("근본 원인" 절 참고) 이 스캔/파싱
+자체가 느릴 수 있는데, 이게 **창이 뜨기도 전에** 동기로 끝나야 했으므로 실행하자마자
+한참 동안 아무 창도 안 뜨는 것처럼 보였다.
+
+**해결**: Step2/Step3 화면을 지연 생성(lazy construction)으로 바꿨다
+(`gui_app.MainWindow._get_or_create_udc_view`/`_get_or_create_settings_view`). 앱을
+시작할 때는 가벼운 SetupView 하나만 만들어서 창을 즉시 띄우고, UDCView/SettingsView는
+사용자가 **처음** 그 Step으로 실제로 이동하는 순간(`_on_next`/`_on_udc_next`)에만
+만든다 - 그 순간에는 로딩 오버레이를 먼저 띄운 뒤 만들어서(`_on_next`도 `_on_udc_next`
+처럼 `show_loading`/`hide_loading`으로 감쌈) 화면이 멈춘 것처럼 보이지 않게 한다. 한
+번 만들어진 뒤에는 Step을 오가도 다시 만들지 않고 그대로 재사용한다. Config Import
+(위 "Config export/import" 절)로 config 3종이 통째로 바뀌면 이미 만들어진
+UDCView/SettingsView는 예전 config를 들고 있는 채로 버려지고(`_on_config_imported`가
+`QStackedWidget`에서 제거 + `None`으로 되돌림), 다음에 그 Step으로 이동할 때 최신
+config로 다시 만들어진다.
+
+느린 스캔/파싱 자체가 없어지는 것은 아니다 - Step2/3를 열려면 언젠가는 필요한
+작업이므로, 그 비용은 "실행 직후"에서 "그 Step으로 처음 넘어가는 순간"으로 옮겨질
+뿐이다. 다만 그 시점은 이미 창이 떠서 사용자가 Step1을 채우고 있는 동안이라 체감
+대기가 훨씬 짧고, 로딩 오버레이도 뜬다.
+
 ## Step 이동 규칙 (2026-08 확정)
 
 **어느 Step이든 Back으로 돌아오면 그 Step은 반드시 다시 Validate해야 한다.** 각 화면의
