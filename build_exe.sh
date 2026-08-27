@@ -179,15 +179,41 @@ if [ $status -ne 0 ]; then
     exit $status
 fi
 
+# PyInstaller가 결과물을 제대로 모았는지 확인. build/ 쪽에는 부트로더 실행파일만
+# 있고 libpython/Qt 라이브러리가 없어서, 거기 걸 실행하면
+# "Error loading Python lib ... libpython3.7m.so.1.0" 로 죽는다.
+if [ ! -x "$DIST_APP_DIR/liberty_generator" ]; then
+    echo "[오류] $DIST_APP_DIR/liberty_generator 가 없습니다. 빌드 로그를 확인해주세요."
+    exit 1
+fi
+if ! ls "$DIST_APP_DIR"/libpython*.so* >/dev/null 2>&1; then
+    echo "[경고] $DIST_APP_DIR 안에 libpython*.so 가 보이지 않습니다."
+    echo "       실행 시 'Error loading Python lib' 가 뜬다면 빌드 로그를 확인해주세요."
+fi
+
 echo ""
-echo "빌드 완료: $DIST_APP_DIR/"
+echo "=============================================================="
+echo " 빌드 완료"
+echo "=============================================================="
 echo ""
-echo "이 폴더 '전체'를 복사해서 배포하면 됩니다. 받는 쪽은 python/PyQt5 없이"
-echo "폴더 안의 liberty_generator 를 실행하기만 하면 됩니다:"
-echo "    ./liberty_generator"
+echo "  실행/배포할 폴더 : $DIST_APP_DIR/"
 echo ""
-echo "실행하면 그 폴더 안에 config/, output/ 이 자동으로 생성됩니다."
-echo "폴더 안의 다른 파일들은 실행에 필요한 라이브러리이니 지우거나 옮기지 마세요."
+echo "  주의: $SCRIPT_DIR/build/liberty_generator/ 에도 같은 이름의 파일이"
+echo "        있지만 그건 빌드 중간 산출물(캐시)입니다. 라이브러리가 들어있지"
+echo "        않아서 실행하면 'Error loading Python lib ...' 에러가 납니다."
+echo "        반드시 위의 dist/ 쪽을 쓰세요."
 echo ""
-echo "묶어서 전달하려면:"
-echo "    tar czf liberty_generator.tar.gz -C \"$SCRIPT_DIR/dist\" liberty_generator"
+echo "  실행:"
+echo "      cd $DIST_APP_DIR"
+echo "      ./liberty_generator"
+echo ""
+echo "  배포: 위 폴더 '전체'를 복사해주면, 받는 쪽은 python/PyQt5 없이"
+echo "        폴더 안의 liberty_generator 를 실행하기만 하면 됩니다."
+echo "        폴더 안의 나머지 파일은 실행에 필요한 라이브러리이니"
+echo "        지우거나 밖으로 옮기지 마세요."
+echo ""
+echo "        실행하면 그 폴더 안에 config/, output/ 이 자동 생성됩니다."
+echo ""
+echo "  묶어서 전달하려면:"
+echo "      tar czf liberty_generator.tar.gz -C \"$SCRIPT_DIR/dist\" liberty_generator"
+echo ""

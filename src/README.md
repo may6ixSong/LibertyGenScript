@@ -57,6 +57,13 @@ PyQt5가 설치된 Anaconda Python(`/appl/CAEutil/LINUX/local/Anaconda/Anaconda3
 ```
 빌드가 끝나면 `dist/liberty_generator/` 폴더가 생깁니다. 이 폴더 안에 실행파일과
 필요한 라이브러리가 전부 들어있으니, **폴더 전체를** 다른 사람에게 복사해주면 됩니다.
+
+> ⚠️ **`build/liberty_generator/` 는 실행하면 안 됩니다.**
+> PyInstaller가 `build/` 아래에도 같은 이름의 실행파일을 만들지만, 그건 빌드
+> 중간 산출물이라 라이브러리가 들어있지 않습니다. 그걸 실행하면
+> `Error loading Python lib ... libpython3.7m.so.1.0` 에러가 납니다.
+> 실행/배포는 항상 **`dist/liberty_generator/`** 쪽입니다.
+> (`build/`는 재빌드를 빠르게 하는 캐시입니다. 지워도 되지만 다음 빌드가 느려집니다.)
 받는 사람은 python도 PyQt5도 몰라도 폴더 안의 실행파일만 실행하면 됩니다:
 ```bash
 cd liberty_generator
