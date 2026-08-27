@@ -1,8 +1,8 @@
 """
 setup_view.py
 
-'Setup & Validate' 화면: PDK/DBS 폴더 + Port List 엑셀 파일 입력을 받고,
-Validate 버튼으로 3단계(PDK -> DBS -> Port List)를 순서대로 검사한다.
+'Setup & Validate' 화면: PDK 폴더 + Port List 엑셀 파일 + DBS 폴더 입력을 받고,
+Validate 버튼으로 3단계(PDK -> Port List -> DBS)를 순서대로 검사한다.
 각 단계는 상단 가로 스텝 인디케이터에 진행 상태(pending/running/success/error)로
 표시되고, 세부 메시지는 하단 Details 패널(읽기 전용, 선택 불가)에 나열된다.
 모든 단계가 통과하면 Next 버튼이 활성화된다.
@@ -18,7 +18,9 @@ from PyQt5.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget,
 )
 
-from step1_setup.field_defs import INPUT_PATH_FIELDS
+from step1_setup.field_defs import (
+    INPUT_PATH_FIELDS, PORT_LIST_FILE_EXTENSIONS, is_port_list_filename,
+)
 from step1_setup.file_scanner import list_dbs_mt0_files, list_pdk_lib_files
 from step1_setup.port_list_reader import read_port_list
 from ui.theme import (
@@ -27,10 +29,12 @@ from ui.theme import (
 )
 from ui.ui_common import DetailsList, add_shadow, build_section_header
 
+# 2026-08 순서 변경: 화면의 입력 순서(PDK Folder -> Port List -> DBS Simulation)와
+# Validate 단계 순서를 동일하게 맞춘다 (field_defs.INPUT_PATH_FIELDS 참고).
 STEP_DEFS = [
     ("pdk", "PDK Folder"),
-    ("dbs", "DBS Simulation"),
     ("port_list", "Port List"),
+    ("dbs", "DBS Simulation"),
 ]
 
 _STEP_DELAY_MS = 350
@@ -41,7 +45,9 @@ _INPUT_PATHS_INFO = (
     "The PDK Folder must contain only files whose extension starts with .lib "
     "(e.g. .lib, .lib_css_tn), and the DBS Simulation Folder must contain only .mt0 files.\n\n"
     "Extra files may lead to incorrect results.\n\n"
-    "The Port List must be an .xls / .xlsx file."
+    "The Port List must be an "
+    + " / ".join(PORT_LIST_FILE_EXTENSIONS)
+    + " file."
 )
 
 
@@ -248,7 +254,7 @@ class SetupView(QWidget):
     def _update_validate_button_state(self) -> None:
         values = self._current_values()
         port_list_file = values.get("port_list_file", "")
-        valid_extension = port_list_file.lower().endswith((".xls", ".xlsx"))
+        valid_extension = is_port_list_filename(port_list_file)
         all_filled = all(values.values())
         self.validate_btn.setEnabled(all_filled and valid_extension)
         self.next_btn.setEnabled(False)
@@ -382,6 +388,7 @@ class SetupView(QWidget):
 
     def _finish_validation(self) -> None:
         self.next_btn.setEnabled(self._all_passed)
+        self.next_btn.setToolTip("" if self._all_passed else "Run Validate first.")
         self._animate_details_in()
 
     # ------------------------------------------------------------------
@@ -390,3 +397,23 @@ class SetupView(QWidget):
     def _on_next_clicked(self) -> None:
         if self.on_next:
             self.on_next()
+
+    # ------------------------------------------------------------------
+    # 화면이 다시 보일 때마다 (Step2에서 Back으로 돌아왔을 때) 검사 결과를 무효화
+    # 한다 - 경로를 고쳤을 수 있으므로 Next는 다시 Validate를 통과해야만 열린다
+    # (2026-08 확정: 모든 Step에서 Back으로 돌아오면 반드시 다시 Validate).
+    # ------------------------------------------------------------------
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 오버라이드 시그니처
+        super().showEvent(event)
+        self._invalidate_validation()
+
+    def _invalidate_validation(self) -> None:
+        self._all_passed = False
+        self.next_btn.setEnabled(False)
+        self.next_btn.setToolTip("Run Validate first.")
+        for chip in self.step_chips.values():
+            chip.set_state("pending")
+        for line in self.step_lines:
+            line.set_status("pending")
+        self._clear_details()
+        self._update_validate_button_state()

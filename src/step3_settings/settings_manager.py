@@ -1,10 +1,22 @@
 """
 settings_manager.py
 
-Step 3 Constants + Pin 설정 저장/로드 (2026-08 재설계: Constants 스칼라 + Voltage Map
-(BST/WST/TIV x Power Type1..N 값 + Power Type별 voltage name + power type 개수) + Pin
-설정과 그에 연계된 하위 필드들).
+Step 3 Constants + Pin 설정 저장/로드 + Voltage Map 저장/로드.
 - 저장 위치: config/step3_settings.json (step1_setup.config_manager 와 같은 config 폴더)
+
+2026-08: Voltage Map 화면은 Step 2(왼쪽 열)로 옮겨졌지만, **저장 위치는 그대로**
+step3_settings.json의 `voltage_map` key다 - 기존에 저장해 둔 config를 그대로 이어서
+쓸 수 있게 하기 위해서다. Step 2 화면은 load_voltage_map()/save_voltage_map()으로
+이 부분만 읽고 쓴다(다른 Step3 값은 건드리지 않는다).
+
+Voltage Map 구조 (2026-08 사용자 정의 condition 재설계):
+    {"power_type_count": 3,
+     "conditions": [{"id": ..., "name": "BST", "values": {"type1": "0.8", ...}}, ...],
+     "names": {"power_type1_name": ..., ...}}
+
+예전 config는 conditions 대신 `values: {"bst_type1": ..., "tiv_type3": ...}` 형태로
+BST/WST/TIV 세 그룹이 고정되어 있었다. 그런 config를 읽으면 그 값 그대로 BST/WST/TIV
+세 condition을 만들어 준다(_migrate_legacy_conditions).
 """
 
 from __future__ import annotations
@@ -13,9 +25,11 @@ import json
 
 from step1_setup.config_manager import CONFIG_DIR
 from step3_settings.constants_field_defs import (
-    POWER_TYPE_COUNT_DEFAULT, POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_MAX, POWER_TYPE_COUNT_MIN,
-    POWER_TYPE_DEFAULT_VOLTAGE, SCALAR_CONSTANT_DEFS, VOLTAGE_MAP_GROUPS, voltage_map_name_key,
-    voltage_map_value_key,
+    CONDITION_ID_KEY, CONDITION_NAME_KEY, CONDITION_VALUES_KEY, LEGACY_VOLTAGE_MAP_GROUPS,
+    LEGACY_VOLTAGE_MAP_VALUES_KEY, POWER_TYPE_COUNT_DEFAULT, POWER_TYPE_COUNT_KEY,
+    POWER_TYPE_COUNT_MAX, POWER_TYPE_COUNT_MIN, POWER_TYPE_DEFAULT_VOLTAGE,
+    SCALAR_CONSTANT_DEFS, VOLTAGE_CONDITIONS_KEY, condition_value_key, default_conditions,
+    legacy_voltage_map_value_key, new_condition, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
     DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_DEFAULT, DBS_TIMING_SENSE_KEY,
@@ -35,22 +49,55 @@ def _default_scalars() -> dict:
 
 def _default_voltage_map() -> dict:
     """
-    2026-08 확정: BST/WST/TIV x Power Type1..3의 전압 값은 Power Type별 대표값
-    (0.8V/2.2V/1.8V)으로 미리 채워 둔다(과거 "전부 빈 값으로 시작" 방침에서 변경).
-    voltage name은 기본값이 없으므로 빈 문자열로 시작.
+    config가 아예 없을 때의 Voltage Map: 기본 condition 3개(BST/WST/TIV) x Power Type
+    대표값(0.8V/2.2V/1.8V). voltage name은 기본값이 없으므로 빈 문자열로 시작.
     """
-    values = {
-        voltage_map_value_key(group, i): str(POWER_TYPE_DEFAULT_VOLTAGE[i])
-        for group in VOLTAGE_MAP_GROUPS
-        for i in POWER_TYPE_DEFAULT_VOLTAGE
-    }
     names = {voltage_map_name_key(i): "" for i in POWER_TYPE_DEFAULT_VOLTAGE}
-    return {POWER_TYPE_COUNT_KEY: POWER_TYPE_COUNT_DEFAULT, "values": values, "names": names}
+    return {
+        POWER_TYPE_COUNT_KEY: POWER_TYPE_COUNT_DEFAULT,
+        VOLTAGE_CONDITIONS_KEY: default_conditions(),
+        "names": names,
+    }
+
+
+def _normalize_condition(raw, fallback_name: str = "") -> dict | None:
+    """저장된 condition 하나를 현재 구조에 맞춰 보정. dict가 아니면 버린다."""
+    if not isinstance(raw, dict):
+        return None
+    raw_values = raw.get(CONDITION_VALUES_KEY)
+    values = raw_values if isinstance(raw_values, dict) else {}
+    condition = new_condition(
+        str(raw.get(CONDITION_NAME_KEY, fallback_name) or fallback_name), values,
+    )
+    saved_id = str(raw.get(CONDITION_ID_KEY, "") or "").strip()
+    if saved_id:
+        condition[CONDITION_ID_KEY] = saved_id
+    return condition
+
+
+def _migrate_legacy_conditions(saved: dict) -> list[dict]:
+    """
+    2026-08 이전 config(`values: {"bst_type1": ...}`)를 condition 목록으로 옮긴다.
+    값이 하나도 없으면 빈 목록을 반환해서 호출자가 기본값을 쓰게 한다.
+    """
+    legacy_values = saved.get(LEGACY_VOLTAGE_MAP_VALUES_KEY)
+    if not isinstance(legacy_values, dict) or not legacy_values:
+        return []
+
+    conditions = []
+    for group in LEGACY_VOLTAGE_MAP_GROUPS:
+        values = {}
+        for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
+            value = legacy_values.get(legacy_voltage_map_value_key(group, type_index))
+            if value is not None and str(value).strip():
+                values[condition_value_key(type_index)] = str(value).strip()
+        conditions.append(new_condition(group, values))
+    return conditions
 
 
 def _merge_voltage_map(saved: dict | None) -> dict:
     defaults = _default_voltage_map()
-    saved = saved or {}
+    saved = saved if isinstance(saved, dict) else {}
 
     try:
         count = int(saved.get(POWER_TYPE_COUNT_KEY, defaults[POWER_TYPE_COUNT_KEY]))
@@ -58,12 +105,23 @@ def _merge_voltage_map(saved: dict | None) -> dict:
         count = defaults[POWER_TYPE_COUNT_KEY]
     count = max(POWER_TYPE_COUNT_MIN, min(POWER_TYPE_COUNT_MAX, count))
 
-    saved_values = saved.get("values")
+    raw_conditions = saved.get(VOLTAGE_CONDITIONS_KEY)
+    conditions: list[dict] = []
+    if isinstance(raw_conditions, list):
+        conditions = [c for c in (_normalize_condition(raw) for raw in raw_conditions) if c]
+    if not conditions:
+        conditions = _migrate_legacy_conditions(saved)
+    if not conditions:
+        conditions = defaults[VOLTAGE_CONDITIONS_KEY]
+
     saved_names = saved.get("names")
-    values = {**defaults["values"], **(saved_values if isinstance(saved_values, dict) else {})}
     names = {**defaults["names"], **(saved_names if isinstance(saved_names, dict) else {})}
 
-    return {POWER_TYPE_COUNT_KEY: count, "values": values, "names": names}
+    return {
+        POWER_TYPE_COUNT_KEY: count,
+        VOLTAGE_CONDITIONS_KEY: conditions,
+        "names": names,
+    }
 
 
 def _default_pins() -> dict:
@@ -130,3 +188,21 @@ def save_settings(data: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Voltage Map 전용 접근자 (화면은 Step 2에 있지만 저장 위치는 여기 그대로)
+# ---------------------------------------------------------------------------
+def load_voltage_map() -> dict:
+    return load_settings()["voltage_map"]
+
+
+def save_voltage_map(voltage_map: dict) -> None:
+    """
+    저장 파일의 voltage_map 부분만 갈아끼운다. Step 2에서 Voltage Map을 고쳐도
+    Step 3에서 입력한 다른 값(scalars/pins/output_path)이 날아가지 않도록, 항상
+    파일을 먼저 읽어서 병합한 뒤 저장한다.
+    """
+    settings = load_settings()
+    settings["voltage_map"] = _merge_voltage_map(voltage_map)
+    save_settings(settings)

@@ -24,7 +24,7 @@ pin() 몸체 내용은 pin name이 아래 중 어디에 매치되는지에 따�
 2026-08 확정 - 여러 개 동시에 매치될 수 있어 순서를 정했다. 실제로는 서로 겹치지
 않는 이름을 쓰는 게 일반적이라 우선순위가 문제될 일은 거의 없을 것):
   1. Step3 Enable Signal for power gate(와일드카드) - always_on/switch_pin 포맷
-  2. Step3 DBS output signal(와일드카드) - #max_capacitance 주석 + timing{} 블록
+  2. Step3 DBS output signal(와일드카드) - max_capacitance + timing{} 블록
      (cell_fall/cell_rise/rise_transition/fall_transition, 이 job의 DBS output
      (.mt0) 파일에서 tplh/tphl/tr/tf 값을 읽어와 채움)
   3. Step3 Power down control signal(와일드카드) - {prefix}_acore_internal_power 추가
@@ -60,6 +60,7 @@ from step4_generate.missing_data import (
     INDENT_2, INDENT_3, INDENT_4, PORT_LIST_NOT_FOUND_TOKEN, write_missing_comment,
 )
 from step4_generate.mt0_reader import build_timing_table, derive_table_shape
+from step4_generate.pdk_stream_reader import parse_index_last_value
 
 # cell_fall/cell_rise/rise_transition/fall_transition 순서와, 각각이 .mt0 파일의
 # 어느 컬럼에서 오는지 매핑 (2026-08 확정: tplh->cell_rise, tphl->cell_fall,
@@ -173,7 +174,31 @@ def _write_timing_block(f_out, pin: dict, job: dict, indent_decl: str) -> None:
     f_out.write(f"{indent_decl}}}\n")
 
 
-def _write_pin_body(f_out, pin: dict, job: dict, body_indent: str, pin_type_value: str) -> None:
+def _max_capacitance_value(lut_sections: dict) -> str | None:
+    """
+    max_capacitance 값 = worst case PDK에서 읽어 온 lu_table_template index_2의
+    **맨 끝 값** (2026-08 확정). index_2를 못 찾았으면 None.
+    """
+    return parse_index_last_value((lut_sections or {}).get("index_2_line"))
+
+
+def _write_max_capacitance(f_out, job: dict, lut_sections: dict, body_indent: str) -> None:
+    value = _max_capacitance_value(lut_sections)
+    if value is None:
+        # index_2를 못 찾은 경우에만 예전처럼 주석으로 남긴다 - 값을 지어내지 않는다.
+        write_missing_comment(
+            f_out,
+            "index_2 (max_capacitance source) of the lu_table_template",
+            job.get("worst_case_pdk_filename", job["pdk_filename"]),
+        )
+        f_out.write(f"{body_indent}#max_capacitance : No Answer;\n")
+        return
+    f_out.write(f"{body_indent}max_capacitance : {value} ;\n")
+
+
+def _write_pin_body(
+    f_out, pin: dict, job: dict, lut_sections: dict, body_indent: str, pin_type_value: str,
+) -> None:
     pdk_filename = job["pdk_filename"]
     process_prefix = job["process_prefix"]
     pin_name = pin["pin_name"]
@@ -209,9 +234,9 @@ def _write_pin_body(f_out, pin: dict, job: dict, body_indent: str, pin_type_valu
 
     if is_dbs_output:
         f_out.write(f"{body_indent}capacitance : {cap_text} ;\n")
-        # TODO(질문): max_capacitance에 실제로 어떤 값을 써야 하는지 아직 알 수 없어서
-        # 사용자 요청에 따라 우선 "No Answer"로 표시했다.
-        f_out.write(f"{body_indent}#max_capacitance : No Answer;\n")
+        # 2026-08 확정: max_capacitance는 worst case PDK의 lu_table_template index_2
+        # 마지막 값을 그대로 쓴다 (예전엔 값을 몰라 "No Answer" 주석이었다).
+        _write_max_capacitance(f_out, job, lut_sections, body_indent)
         f_out.write(f"{body_indent}related_power_pin : {related_power} ;\n")
         f_out.write(f"{body_indent}related_ground_pin : {related_ground} ;\n")
         f_out.write(f"{body_indent}{process_prefix}_input_signal_level : {volts_text} ;\n")
@@ -234,10 +259,11 @@ def _write_pin_body(f_out, pin: dict, job: dict, body_indent: str, pin_type_valu
 
 
 def _write_pin_block(
-    f_out, pin: dict, job: dict, decl_indent: str, body_indent: str, pin_type_value: str,
+    f_out, pin: dict, job: dict, lut_sections: dict, decl_indent: str, body_indent: str,
+    pin_type_value: str,
 ) -> None:
     f_out.write(f"{decl_indent}pin({pin['pin_name']}) {{\n")
-    _write_pin_body(f_out, pin, job, body_indent, pin_type_value)
+    _write_pin_body(f_out, pin, job, lut_sections, body_indent, pin_type_value)
     f_out.write(f"{decl_indent}}}\n")
 
 
@@ -261,7 +287,7 @@ def _write_pdt_pin_block(f_out, pin: dict, pin_type: str, process_prefix: str) -
     f_out.write(f"{INDENT_2}}}\n")
 
 
-def write_block5(f_out, job: dict) -> None:
+def write_block5(f_out, job: dict, lut_sections: dict) -> None:
     """
     Args:
         job: liberty_assembler.build_job()의 결과 (cell_name, process_prefix,
@@ -269,6 +295,9 @@ def write_block5(f_out, job: dict) -> None:
              power_down_pattern, power_down_rise_power/fall_power/when,
              dbs_output_pattern, dbs_related_pins, dbs_timing_sense/timing_type,
              dbs_path 포함).
+        lut_sections: pdk_stream_reader.read_lut_table_sections()의 결과(worst case
+             PDK에서 실행당 한 번 읽음). DBS output pin의 max_capacitance 값을 여기
+             index_2의 마지막 값에서 가져온다.
     """
     cell_name = job["cell_name"]
     process_prefix = job["process_prefix"]
@@ -279,14 +308,14 @@ def write_block5(f_out, job: dict) -> None:
     for pin in job["port_pins"]:
         bits = pin["bits"]
         if bits == 1:
-            _write_pin_block(f_out, pin, job, INDENT_2, INDENT_3, "data")
+            _write_pin_block(f_out, pin, job, lut_sections, INDENT_2, INDENT_3, "data")
             continue
 
         base_name = _strip_bit_range_suffix(pin["pin_name"])
         bus_type = f"bus_0_{bits - 1}_{bits}_{cell_name}"
         f_out.write(f"{INDENT_2}bus({base_name}) {{\n")
         f_out.write(f"{INDENT_3}bus_type : {bus_type} ;\n")
-        _write_pin_block(f_out, pin, job, INDENT_3, INDENT_4, "data_bus")
+        _write_pin_block(f_out, pin, job, lut_sections, INDENT_3, INDENT_4, "data_bus")
         f_out.write(f"{INDENT_2}}}\n")
 
     for pin in job["pwr_pins"]:

@@ -9,6 +9,11 @@ Step 4: Step2에서 유효하게 매칭된 pair 개수만큼 1초에 하나씩 �
 
 liberty_writter.write_liberty_file()가 block1~5를 실제 파일에 쓴다.
 
+2026-08 추가: 생성이 끝난 파일 아이콘을 클릭하면 그 파일이 **새 창**에서 vi/vim처럼
+(어두운 배경 + 줄번호 + 상태줄, 읽기 전용) 열린다 (ui/file_viewer.py). 실제 vi/vim
+프로세스를 띄우려면 터미널 에뮬레이터가 필요해 VWP 환경에서 보장할 수 없기 때문에,
+앱 안에 같은 느낌의 뷰어 창을 직접 구현했다.
+
 여러 liberty를 동시에 생성하지 않는다 - 1초 간격으로 pair를 하나씩 순차 처리하며,
 각 tick에서 PDK 파일 하나만 열어서 순차로 읽는다.
 
@@ -44,21 +49,39 @@ from step3_settings import settings_manager
 from step4_generate import liberty_assembler
 from step4_generate.liberty_writter import write_liberty_file
 from step4_generate.pdk_stream_reader import new_lut_sections, read_lut_table_sections
-from ui.theme import ERROR_COLOR, SUCCESS_COLOR, TEXT_COLOR
+from ui.file_viewer import open_file_viewer
+from ui.theme import ERROR_COLOR, PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR
 from ui.ui_common import add_shadow, build_back_button, build_bottom_button_row
 
-_GRID_COLUMNS = 6
+# 2026-08: 파일명이 길어 타일 안에서 잘리지 않도록 타일을 넓히고 열 수를 줄였다.
+_GRID_COLUMNS = 5
+_TILE_WIDTH = 130
 _TICK_INTERVAL_MS = 1000
 
 
 class _FileTile(QWidget):
-    """파일 탐색기 아이콘 뷰 느낌의 타일 하나 (아이콘 + 파일명, 실패 시 다른 색/아이콘)."""
+    """
+    파일 탐색기 아이콘 뷰 느낌의 타일 하나 (아이콘 + 파일명, 실패 시 다른 색/아이콘).
 
-    def __init__(self, filename: str, success: bool, error_message: str = "", parent=None):
+    2026-08 추가: 생성에 성공한 타일을 클릭하면 그 파일을 vi/vim 스타일의 읽기 전용
+    뷰어 창으로 연다 (on_open 콜백 -> GenerateView._open_file).
+    """
+
+    def __init__(
+        self, filename: str, success: bool, error_message: str = "", file_path: str = "",
+        on_open=None, parent=None,
+    ):
         super().__init__(parent)
-        self.setFixedWidth(96)
+        self.setFixedWidth(_TILE_WIDTH)
+        self.file_path = file_path
+        self._on_open = on_open if success and file_path else None
         if error_message:
-            self.setToolTip(error_message)
+            self.setToolTip(f"{filename}\n{error_message}")
+        elif self._on_open:
+            self.setToolTip(f"{filename}\nClick to open in a new window (read-only)")
+            self.setCursor(Qt.PointingHandCursor)
+        else:
+            self.setToolTip(filename)
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignHCenter)
@@ -72,10 +95,18 @@ class _FileTile(QWidget):
         icon_label.setAlignment(Qt.AlignHCenter)
         layout.addWidget(icon_label)
 
-        name_label = QLabel(filename)
+        # 파일명에는 공백이 없어서 QLabel의 word wrap이 먹지 않는다(밑줄은 줄바꿈
+        # 지점이 아니라 한 줄에 다 못 들어가면 잘려 보인다). 밑줄 뒤에 zero-width
+        # space를 넣어 줄바꿈이 가능하게 한다 - 표시만 바뀌고 파일명 자체는 그대로다.
+        name_label = QLabel(filename.replace("_", "_\u200b"))
         name_label.setAlignment(Qt.AlignHCenter)
         name_label.setWordWrap(True)
-        color = TEXT_COLOR if success else ERROR_COLOR
+        if not success:
+            color = ERROR_COLOR
+        elif self._on_open:
+            color = PRIMARY_COLOR  # 클릭할 수 있다는 걸 알 수 있게 링크처럼 보이게
+        else:
+            color = TEXT_COLOR
         name_label.setStyleSheet(f"font-size: 11px; color: {color};")
         layout.addWidget(name_label)
 
@@ -83,6 +114,11 @@ class _FileTile(QWidget):
         self.setGraphicsEffect(self._opacity)
         self._opacity.setOpacity(0.0)
         self._anim = None
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt 오버라이드 시그니처
+        if self._on_open and event.button() == Qt.LeftButton:
+            self._on_open(self.file_path)
+        super().mouseReleaseEvent(event)
 
     def animate_in(self) -> None:
         anim = QPropertyAnimation(self._opacity, b"opacity", self)
@@ -112,6 +148,8 @@ class GenerateView(QWidget):
         self._done = 0
         self._failed = 0
         self._run_token = 0  # start()가 다시 호출돼도 이전 예약된 tick이 실행되지 않도록
+        # 열려 있는 파일 뷰어 창들 (참조를 들고 있지 않으면 GC로 바로 닫힌다)
+        self._viewers: list = []
 
         self._build_layout()
 
@@ -282,7 +320,9 @@ class GenerateView(QWidget):
             self._failed += 1
 
         row, col = divmod(self._done - 1, _GRID_COLUMNS)
-        tile = _FileTile(output_file.name, success, error_message or "")
+        tile = _FileTile(
+            output_file.name, success, error_message or "", str(output_file), self._open_file,
+        )
         self.grid_layout.addWidget(tile, row, col)
         tile.animate_in()
 
@@ -308,6 +348,31 @@ class GenerateView(QWidget):
             return
 
         self._schedule_tick(token, _TICK_INTERVAL_MS)
+
+    def _open_file(self, file_path: str) -> None:
+        """
+        타일을 클릭했을 때 그 liberty 파일을 새 창(읽기 전용 vim 스타일 뷰어)으로 연다.
+        같은 파일을 여러 번 클릭하면 이미 열려 있는 창을 앞으로 가져온다.
+        """
+        for viewer in list(self._viewers):
+            try:
+                already_open = viewer.file_path == file_path and viewer.isVisible()
+            except RuntimeError:  # 이미 닫혀서 C++ 객체가 사라진 경우
+                self._viewers.remove(viewer)
+                continue
+            if already_open:
+                viewer.raise_()
+                viewer.activateWindow()
+                return
+
+        viewer = open_file_viewer(file_path, self.window())
+        if viewer is not None:
+            self._viewers.append(viewer)
+            viewer.destroyed.connect(lambda _obj=None, v=viewer: self._forget_viewer(v))
+
+    def _forget_viewer(self, viewer) -> None:
+        if viewer in self._viewers:
+            self._viewers.remove(viewer)
 
     def _generate_one(self, job: dict, output_file: Path) -> tuple[bool, str | None]:
         """job 하나를 실제 liberty 파일로 생성. (성공 여부, 에러 메시지)를 반환."""

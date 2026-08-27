@@ -1,16 +1,15 @@
 """
 settings_validator.py
 
-Step 3 Constants(output_prefix / Voltage Map / DFF Cell Name / LUT Table /
-Worst case primitive liberty) + Pin 설정(및 각 pin에 연계된 하위 필드)에 대한 유효성
-검사. GUI에 의존하지 않는 순수 함수로 작성.
+Step 3 Constants(output_prefix / DFF Cell Name / LUT Table / Worst case primitive
+liberty) + Pin 설정(및 각 pin에 연계된 하위 필드)에 대한 유효성 검사와, Step 2로 옮겨진
+Voltage Map(사용자 정의 voltage condition x Power Type)에 대한 유효성 검사
+(validate_voltage_map - Step 2 Validate에서 호출). GUI에 의존하지 않는 순수 함수로 작성.
 
 2026-08 수정: 이전에는 Pin 설정만 검사 대상이었으나, 다음 값들이 비어 있으면 이후
 단계(liberty 파일명/voltage_map/block3 lu_table_template/block4 cell·pg_pin/block5
 timing·internal_power)를 만들 수 없으므로 이제 Validate 단계에서 함께 걸러낸다:
   - output_prefix (출력 파일명에 쓰임)
-  - Voltage Map (BST/WST/TIV x Power Type1..N 값 + Power Type별 voltage name,
-    voltage_map에 쓰임 - power type 개수만큼만 검사)
   - DFF Cell Name / LUT Table (block3의 lu_table_template index_1/index_2를
     PDK/DK 파일에서 찾아오는 데 쓰임)
   - Worst case primitive liberty (그 lu_table_template을 어느 PDK에서 가져올지 -
@@ -36,8 +35,8 @@ from step1_setup.port_list_reader import (
     list_all_pin_names, list_pins_by_port_type, list_port_pins_detailed,
 )
 from step3_settings.constants_field_defs import (
-    POWER_TYPE_COUNT_DEFAULT, POWER_TYPE_COUNT_KEY, VOLTAGE_MAP_GROUPS, power_type_label,
-    voltage_map_name_key, voltage_map_value_key,
+    CONDITION_NAME_KEY, CONDITION_VALUES_KEY, VOLTAGE_CONDITIONS_KEY, condition_value_key,
+    power_type_count_of, power_type_label, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
     DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
@@ -77,15 +76,14 @@ _REQUIRED_PIN_NUMBER_FIELDS = [
 ]
 
 
-def validate_constants(
-    scalars: dict, voltage_map: dict, paired_pdk_files: list[str] | None = None,
-) -> list[str]:
+def validate_constants(scalars: dict, paired_pdk_files: list[str] | None = None) -> list[str]:
     """
-    output_prefix / DFF Cell Name / LUT Table(비어있으면 출력 파일명 또는 block3를
-    만들 수 없음), Worst case primitive liberty(lu_table_template을 가져올 PDK),
-    Voltage Map(BST/WST/TIV x Power Type1..N 값 + Power Type별 voltage name, 현재
-    power type 개수만큼만 - 비어있으면 voltage_map 값을 채울 수 없음)이 전부 채워져
-    있는지 검사.
+    class / process_prefix / output_prefix / DFF Cell Name / LUT Table(비어있으면 출력
+    파일명 또는 block3를 만들 수 없음)과 Worst case primitive liberty(lu_table_template과
+    block5 max_capacitance를 가져올 PDK)가 채워져 있는지 검사.
+
+    Voltage Map은 화면이 Step 2로 옮겨졌으므로 여기서 검사하지 않는다
+    (validate_voltage_map 참고).
 
     Args:
         paired_pdk_files: Step2의 liberty setting들이 고른 PDK 파일명 목록.
@@ -107,32 +105,64 @@ def validate_constants(
             "selected by the Step 2 liberty settings. Select it again."
         )
 
-    try:
-        power_type_count = int(voltage_map.get(POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_DEFAULT))
-    except (TypeError, ValueError):
-        power_type_count = POWER_TYPE_COUNT_DEFAULT
-    values = voltage_map.get("values", {}) or {}
-    names = voltage_map.get("names", {}) or {}
+    return errors
 
-    for group in VOLTAGE_MAP_GROUPS:
+
+def validate_voltage_map(voltage_map: dict) -> list[str]:
+    """
+    Voltage Map 검사 (2026-08: 화면이 Step 2 왼쪽 열로 옮겨져 Step 2 Validate에서 호출됨).
+
+      - voltage condition이 최소 1개는 있어야 하고,
+      - condition 이름이 비어 있으면 안 되며 서로 중복되어도 안 된다
+        (Step 2의 liberty setting이 이름으로 condition을 고르기 때문. 대소문자만 다른
+        이름도 같은 이름으로 본다),
+      - 각 condition의 Power Type1..N(현재 Power Type 개수만큼) 값이 전부 채워진
+        숫자여야 하고,
+      - 그 개수만큼의 Power Type voltage name이 전부 채워져 있어야 한다.
+    """
+    errors: list[str] = []
+
+    power_type_count = power_type_count_of(voltage_map)
+    conditions = voltage_map.get(VOLTAGE_CONDITIONS_KEY) or []
+    if not conditions:
+        errors.append(
+            "No voltage condition has been added to the Voltage Map. Add at least one "
+            "(each liberty setting selects one of them)."
+        )
+        return errors
+
+    seen_names: dict[str, int] = {}
+    for index, condition in enumerate(conditions):
+        name = str(condition.get(CONDITION_NAME_KEY, "")).strip()
+        label = f"Voltage condition #{index + 1}"
+        if not name:
+            errors.append(f"{label} has no name.")
+        else:
+            label = f"Voltage condition '{name}'"
+            first_index = seen_names.setdefault(name.lower(), index)
+            if first_index != index:
+                errors.append(
+                    f"{label} has the same name as voltage condition #{first_index + 1}. "
+                    "Voltage condition names must be unique."
+                )
+
+        values = condition.get(CONDITION_VALUES_KEY) or {}
         for type_index in range(1, power_type_count + 1):
-            key = voltage_map_value_key(group, type_index)
-            label = f"Voltage Map {group} {power_type_label(type_index)}"
-            value = str(values.get(key, "")).strip()
+            value = str(values.get(condition_value_key(type_index), "")).strip()
+            value_label = f"{label} {power_type_label(type_index)}"
             if not value:
-                errors.append(f"{label} is empty.")
+                errors.append(f"{value_label} is empty.")
                 continue
             try:
                 float(value)
             except ValueError:
-                errors.append(f"{label} is not a valid number: {value!r}")
+                errors.append(f"{value_label} is not a valid number: {value!r}")
 
+    names = voltage_map.get("names", {}) or {}
     for type_index in range(1, power_type_count + 1):
-        key = voltage_map_name_key(type_index)
-        label = f"Voltage Map {power_type_label(type_index)} voltage name"
-        value = str(names.get(key, "")).strip()
+        value = str(names.get(voltage_map_name_key(type_index), "")).strip()
         if not value:
-            errors.append(f"{label} is empty.")
+            errors.append(f"Voltage Map {power_type_label(type_index)} voltage name is empty.")
 
     return errors
 

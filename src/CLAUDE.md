@@ -44,7 +44,13 @@ Python 기반 liberty 파일 생성기. 기존 파이프라인의 한계:
 
 ## Step 1 — Setup & Validate
 
-PDK Folder / DBS Simulation Folder / Port List Excel 3개 경로 입력 및 검증.
+**PDK Folder → Port List (Excel) → DBS Simulation Folder** 순으로 3개 경로 입력 및 검증
+(2026-08 순서 변경 — 화면 입력 순서와 Validate 단계 순서가 같다). 저장 파일
+(`config/user_config.json`)은 key 기준 dict이므로 **순서를 바꿔도 기존 config를 그대로
+쓴다**. Port List는 `.xls` / `.xlsx` 둘 다 허용하며, 허용 확장자 목록은
+`field_defs.PORT_LIST_FILE_EXTENSIONS` 한 곳에서만 관리한다(파일 대화상자 필터, 화면
+확장자 검사, `port_list_reader`의 읽기 분기가 전부 이 목록을 본다). `.xlsx`는 openpyxl,
+`.xls`는 xlrd로 읽고, xlrd가 없으면 "무엇을 설치하면 되는지"가 그대로 Details에 뜬다.
 설명 문구(구 노란 Note 배너)는 "Input Paths" 제목 옆 hover 정보 아이콘 툴팁으로 이동
 (2026-08 레이아웃 개편).
 
@@ -56,14 +62,18 @@ PDK 파일이 있고 DBS 파일은 그보다 적어서**, 자동 페어링만으
 만들지 결정할 수 없다는 것이 확인됐다 (2026-08 2차 재설계). 그래서 예전 UDC setting처럼
 **liberty 파일 하나당 setting 1개를 사용자가 직접 추가**하는 방식으로 되돌아왔다.
 
+**화면 레이아웃 (2026-08 개편)**: Step3처럼 좌우 2단. **왼쪽 = Common Fields + Voltage
+Map**(Step3에서 이리로 옮겨옴), **오른쪽 = Liberty Settings**.
+
 1. **공통 필드** (전체 조합에 1번만 입력, 1차 재설계 그대로): `area`, `width`, `height`,
    `static_current`, `cell_name`, `MC/HDA/OUT Timing State`
 2. **Liberty Settings**: setting 1개 = liberty 파일 1개. 각 setting의 입력 항목은
    - `corner` — `ffpg`/`fsg`/`sfg`/`sspg`/`tt` 중 선택
-   - `beol_inform` — `nominal`/`sigcmin`/`sigrcmax`/`sigcmax` 중 선택
+   - `beol_inform` — `nominal`/`sigcmin`/`sigrcmin`/`sigrcmax`/`sigcmax` 중 선택
    - `voltage` — 숫자 입력 (화면에 `V` 단위 표시)
    - `temperature` — 숫자 입력 (화면에 `℃` 단위 표시, 파일명 토큰이 정수라 **정수만** 허용)
-   - `condition` — `bst`/`wst`/`tiv` 중 선택
+   - `condition` — **Voltage Map(같은 화면 왼쪽 열)에 정의된 voltage condition 이름**
+     중 선택 (코드에 고정된 목록이 아님, 2026-08 사용자 정의 condition 재설계)
    - `pdk_file` — **Step1에서 인식된 모든 PDK 파일** 중 선택
    - `dbs_file` — PDK를 고르면 자동 매핑, 자동으로 못 고르면 직접 선택
 3. **자동 추천**: corner/voltage/temperature를 입력하면 그 조건에 맞는 PDK 파일을 찾아
@@ -78,7 +88,27 @@ PDK 파일이 있고 DBS 파일은 그보다 적어서**, 자동 페어링만으
    ⑤ 같은 PDK/DBS 조합이 중복되지 않는지(같은 출력 파일을 두 번 쓰게 되므로) 검사.
 5. 저장 형식: `config/udc_settings.json`의 `liberty_settings` 배열
    (`{id, corner, beol_inform, voltage, temperature, condition, pdk_file, dbs_file}`).
-   구 `pair_settings` key는 폐기.
+   구 `pair_settings` key는 폐기. `condition` 값은 이제 voltage condition **이름**이며,
+   예전 config의 `"bst"`는 기본 이름 `"BST"`와 대소문자만 다르므로 그대로 이어서 쓴다
+   (드롭다운을 채울 때/생성할 때 모두 대소문자 무시로 매칭).
+
+### Voltage Map (2026-08 Step3 → Step2 이동 + 사용자 정의 condition)
+- **사용자가 voltage condition을 원하는 만큼 추가/삭제하고 이름도 직접 정한다.** config에
+  아무것도 없을 때만 기본으로 `BST`/`WST`/`TIV` 세 개가 만들어진다(예전에는 이 셋으로
+  고정이었다). condition 개수가 많아질 수 있어 카드마다 **접기/펴기**가 있고, 접으면
+  헤더 오른쪽에 값 요약(`0.9 / 2.2 / 1.8`)이 보인다. "Collapse all"로 한 번에 접는다.
+- condition 하나 = `{"id", "name", "values": {"type1": 값, "type2": ..., "type3": ...}}`.
+- **Power Type 정책은 기존 그대로**: 개수는 2~3 조절(기본 3), 대표 전압
+  (0.8V/2.2V/1.8V)은 block4에서 Port List Volts를 Power Type에 매칭시키는 고정 임계값,
+  Power Type별 voltage name은 condition 구분 없이 Power Type당 하나.
+- **저장 위치는 예전 그대로** `config/step3_settings.json`의 `voltage_map` key다(화면만
+  옮겨졌다). 구조: `{power_type_count, conditions: [...], names: {power_type1_name, ...}}`.
+  예전 config의 `values: {"bst_type1": ...}` 형태는 로드 시 BST/WST/TIV 세 condition으로
+  자동 변환된다(`settings_manager._migrate_legacy_conditions`). Step2가 이 부분만
+  갈아끼우므로(`save_voltage_map`) Step3에서 입력한 다른 값은 그대로 남는다.
+- Step2 Validate가 Voltage Map도 함께 검사한다: condition 1개 이상, 이름이 비어있지
+  않고 서로 중복되지 않을 것(대소문자 무시), 현재 Power Type 개수만큼의 값이 전부 숫자,
+  그 개수만큼의 voltage name이 전부 채워져 있을 것.
 
 ## Step 3 — Constants & Pin Settings
 
@@ -99,27 +129,18 @@ PDK 파일이 있고 DBS 파일은 그보다 적어서**, 자동 페어링만으
 - **삭제된 필드**: `DKgen_ver`, `portdesc_make`, `mt_make`, `mt_cnt_ref_output`,
   `mt_cnt_ref_input` (liberty 파일 내용에 안 쓰이는 것으로 확인 완료 — 원본 스크립트에서
   주석/로그 전용이거나 별도 문서 생성/검증 임계값 용도였음)
-- **Voltage Map** (2026-08 재설계, 구 "Voltage Condition"): `BST`/`WST`/`TIV` 세 그룹
-  각각에 대해 `Power Type1`~`PowerType{N}` 전압 값을 세로로 입력받는다 (숫자만, 단위
-  없음). `N`(Power Type 개수)은 화면의 스핀박스로 **2~3 사이 조절 가능**(기본 3) —
-  과제에 따라 Power Type이 2개(예전 표현으로 "High/Low"만)뿐일 수 있기 때문. 예전
-  "High/Mid/Low"는 정확한 용어가 아니라서 폐기했고, 각 Power Type 라벨에는 그 type의
-  TIV 대표 전압을 괄호로 표시한다(`Power Type1 (0.8V)` / `Power Type2 (2.2V)` /
-  `Power Type3 (1.8V)`) — 실제 BST/WST/TIV 값은 사용자가 자유롭게 조정 가능하고, 이
-  대표값은 이름을 정하기 위해 고른 값일 뿐이다. 값 입력 필드는 이 대표값으로 미리
-  채워진 채 시작한다(과거 "전부 빈 값" 방침에서 변경). 저장 key: `voltage_map` =
-  `{power_type_count, values: {bst_type1, ..., tiv_type3}, names: {power_type1_name,
-  ...}}` (`step3_settings/constants_field_defs.py`).
-- Power Type마다 **voltage name**도 하나씩 입력받는다 (BST/WST/TIV 공통 - group별로
-  따로 있지 않음). 이 이름은 block2의 `voltage_map` 이름과 block4 pg_pin의
-  `voltage_name`을 매칭시키는 데 쓰인다 (아래 Step4 참고).
-- Port List의 Volts 컬럼과 매칭하는 로직(구 `build_pg_pin_rows`)은 **폐기**. block2의
-  voltage_map 값은 이제 Step2에서 선택한 bst/wst/tiv 그룹에 따라 이 Voltage Map
-  표에서 직접 조회.
+- **Voltage Map은 Step 2로 이동**했다 (2026-08). 화면/데이터 구조 설명은 위 "Step 2 —
+  Voltage Map" 절 참고. 저장 위치만 여전히 `config/step3_settings.json`의 `voltage_map`
+  key이며, 이 화면은 설정을 저장할 때 그 부분을 **덮어쓰지 않고 파일에서 다시 읽어 그대로
+  둔다**(`settings_view._collect_all`).
 
 ### Pin Settings (2026-08 연계 입력 추가)
 상위 pin 입력 3개는 각각 "그 pin을 입력했기 때문에 같이 입력해야 하는" 하위 필드를
 갖는다. 화면에서도 상위 pin 바로 아래에 세로선 + 들여쓰기로 묶어서 보여준다.
+**상위 pin 라벨(DBS output pin / Virtual Power / Power down control signal)은 하위
+필드보다 크고 굵게**(15px/700) 써서 상위단임이 바로 보이게 하고, 반대로 연계 그룹의
+보라색 시스템 안내 문구("These are required because ...")는 `QGraphicsOpacityEffect`로
+투명도를 낮춰(0.55) 입력값보다 덜 튀게 한다 (2026-08).
 
 1. **Virtual Power (power gate)** (Port List의 PWR pin 드롭다운)
    - `Enable Signal for power gate` — 와일드카드 허용 (기존과 동일하게 사용)
@@ -148,9 +169,8 @@ block5에서 실제로 `pin()`/`bus()`로 쓰이는 행들과 동일하게 `Port
 ### Step 3 Validate 검사 항목
 - Constants: `class` / `process_prefix` / `output_prefix` / `DFF Cell Name` /
   `LUT Table`이 비어있지 않은지, `Worst case primitive liberty`가 선택돼 있고 **Step2의
-  liberty setting들이 고른 PDK 목록 안에 있는지**, Voltage Map의 BST/WST/TIV x
-  Power Type1..N(현재 power type 개수만큼만) 값이 전부 채워진 숫자인지, 그 개수만큼의
-  voltage name이 전부 채워져 있는지.
+  liberty setting들이 고른 PDK 목록 안에 있는지**. (Voltage Map 검사는 Step2로 이동 —
+  `settings_validator.validate_voltage_map`)
 - Pin: 위의 모든 하위 필드가 비어있지 않은지(rise/fall power는 숫자인지), 와일드카드
   불가 필드에 `*`가 없는지, Virtual Power가 PWR pin인지, Enable/Power down 패턴이 실제
   pin과 매치되는지.
@@ -170,6 +190,13 @@ liberty 내부의 `library (...)` 이름도 이 파일명에서 `.lib`만 뺀 �
 
 ## Step 4 — Liberty 생성
 
+**생성된 파일 열기 (2026-08 추가)**: 파일 아이콘을 클릭하면 그 liberty 파일이 **새 창**에
+읽기 전용으로 열린다 — 어두운 배경 + 고정폭 글꼴 + 줄번호 + vim 상태줄이고, j/k/h/l,
+g/G, Ctrl+D/U로 이동하고 q 또는 Esc로 닫는다 (`ui/file_viewer.py`). 실제 `vi`/`vim`
+프로세스를 띄우려면 터미널 에뮬레이터가 필요해 X11 forwarding 환경에서 보장할 수 없어서,
+**앱 안에 같은 느낌의 뷰어 창을 직접 구현**했다(편집/저장은 지원하지 않음). 아주 큰
+파일은 앞부분 20만 줄까지만 읽고 상태줄에 잘렸다고 표시한다.
+
 **Back 버튼 (2026-08 추가)**: Step4에서 Step3으로 돌아갈 수 있다. 생성이 진행되는 동안
 에는 잠기고(예약된 tick이 어중간한 상태에서 계속 파일을 쓰는 것을 막기 위해), 끝나면
 다시 열린다. Step3으로 돌아가면 `SettingsView.showEvent`가 DBS output pin Check 결과를
@@ -183,10 +210,10 @@ liberty 내부의 `library (...)` 이름도 이 파일명에서 `.lib`만 뺀 �
    직전까지 그대로 복사. **PDK 자체의 `date`/`revision`/`comment` 줄(줄 첫 토큰 기준)은
    순서/위치에 상관없이 만날 때마다 개별적으로 스킵** (중복 방지, 2026-08 확정).
 3. **Block 2-(2) (voltage_map)** (2026-08 Voltage Map 재설계): Step2에서 이 liberty에
-   선택된 bst/wst/tiv(`condition`) 그룹에 따라 Step3 Voltage Map 표의 해당 그룹 Power Type1..N
-   값을 가져와, **power type 개수만큼의 VDD 줄 + VSS 1줄**을 항상 전부 작성한다.
+   선택된 voltage condition 이름으로 Voltage Map에서 그 condition을 찾아(대소문자 무시)
+   Power Type1..N 값을 가져와, **power type 개수만큼의 VDD 줄 + VSS 1줄**을 항상 전부 작성한다.
    VDD 줄은 `voltage_map (VDD_{power type voltage name}, {value}) ;` 형태로, 이름은
-   Step3에서 그 Power Type에 입력한 voltage name을 그대로 쓴다(값이 아니라 이름만 -
+   그 Power Type에 입력한 voltage name을 그대로 쓴다(값이 아니라 이름만 -
    block4 pg_pin의 `voltage_name`과 정확히 일치해야 하므로). VSS 줄은 기존과 동일
    (`voltage_map (VSS_0.00000, 0.00000) ;`, 하드코딩).
 4. **Block 2-(3) (operating_conditions)**: `nom_temperature`/`nom_voltage`는 **Step2에서
@@ -233,11 +260,24 @@ operating_conditions (<NOT_FOUND_IN_PDK>) {
 
 ## 아직 안 한 것 (TODO)
 - Config export/import 기능, 프로그램 시작 시 초기화 — 코드에 TODO만 남김, 미구현.
-- block5의 `#max_capacitance : No Answer;` — 실제로 어떤 값을 써야 하는지 아직 확인
-  안 됨 (코드에 TODO 주석으로 남아 있음).
+
+(해결됨) block5의 `max_capacitance` — 2026-08 확정: **worst case primitive liberty에서
+읽은 `lu_table_template`의 `index_2` 마지막 값**을 그대로 쓴다
+(`pdk_stream_reader.parse_index_last_value`). index_2를 못 찾은 경우에만 예전처럼
+결측 주석 + `#max_capacitance : No Answer;`로 남긴다.
 
 (해결됨) block4 pg_pin의 `switch_function` / `pg_function` 하드코딩 TODO — 2026-08에
 Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
+
+## Step 이동 규칙 (2026-08 확정)
+
+**어느 Step이든 Back으로 돌아오면 그 Step은 반드시 다시 Validate해야 한다.** 각 화면의
+`showEvent`가 검사 결과를 무효화한다:
+- Step1: 스텝 인디케이터/Details 초기화 + Next 잠금 (`SetupView._invalidate_validation`)
+- Step2: Next 잠금 (`UDCView._lock_next`) + PDK/DBS 재스캔
+- Step3: DBS output pin Check 결과 무효화 → Validate/Output Path/Generate 잠금
+Next(또는 Generate)는 그 Step의 Validate를 통과하기 전까지 항상 disabled이고, 잠긴
+버튼에는 "Run Validate first." 툴팁이 붙는다.
 
 ## UI 레이아웃 규칙 (2026-08 레이아웃 개편)
 
@@ -248,7 +288,8 @@ Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
   `build_label_with_info(label, info)`를 쓴다. 예전에는 각 항목마다 hint 문단과 노란
   배너를 깔아둬서, Step3의 `1) Check DBS Output Pins` 버튼이 한참 스크롤을 내려야
   보였다.
-- Step3은 좌우 2단(왼쪽 Constants / 오른쪽 Pin Settings)이고, **열마다 따로 스크롤**을
+- Step2는 좌우 2단(왼쪽 Common Fields + Voltage Map / 오른쪽 Liberty Settings),
+  Step3도 좌우 2단(왼쪽 Constants / 오른쪽 Pin Settings)이고, **열마다 따로 스크롤**을
   준다(전체를 한 스크롤로 감싸면 오른쪽 열의 Check 버튼이 다시 밀려 내려간다). 가로
   스크롤은 끄고(`ScrollBarAlwaysOff`) 폼은 `WrapLongRows` +
   `AllNonFixedFieldsGrow`로 열 폭에 맞춰 줄어들게 한다.

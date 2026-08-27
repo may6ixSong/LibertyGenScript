@@ -8,7 +8,10 @@ GUI에 의존하지 않는 순수 함수로 작성.
 - .xlsx 는 openpyxl 로 읽음
 - .xls (구 포맷) 는 openpyxl이 지원하지 않아 xlrd 로 읽음
   (둘 다 없다면 이 파일 최초 import 시가 아니라, 실제 해당 확장자 파일을
-   읽으려는 시점에 ImportError가 발생함 - 그때 필요한 것만 설치하면 됨)
+   읽으려는 시점에 ImportError가 발생함 - 그때 필요한 것만 설치하면 됨.
+   xlrd가 없을 때는 "무엇을 설치하면 되는지"가 그대로 Step1 Details에 뜨도록
+   _import_xlrd()에서 메시지를 바꿔 올린다)
+- 허용 확장자 목록은 field_defs.PORT_LIST_FILE_EXTENSIONS 하나로 관리한다.
 """
 
 from __future__ import annotations
@@ -17,8 +20,8 @@ import re
 from pathlib import Path
 
 from step1_setup.field_defs import (
-    PORT_LIST_OPTIONAL_COLUMNS, PORT_LIST_REQUIRED_COLUMNS, PORT_TYPE_GND,
-    PORT_TYPE_IO, PORT_TYPE_PWR,
+    PORT_LIST_FILE_EXTENSIONS, PORT_LIST_OPTIONAL_COLUMNS, PORT_LIST_REQUIRED_COLUMNS,
+    PORT_TYPE_GND, PORT_TYPE_IO, PORT_TYPE_PWR,
 )
 
 # read_port_list_rows()가 각 행마다 담아주는 컬럼 전체 (필수 + 선택).
@@ -110,26 +113,49 @@ def parse_volts_value(value) -> float | None:
         return None
 
 
-def _list_sheet_names(file_path: str) -> list[str]:
+def _import_xlrd():
+    """
+    .xls(구 엑셀 포맷)를 읽는 데 필요한 xlrd를 import한다. 없으면 무슨 패키지가
+    필요한지 바로 알 수 있는 메시지로 바꿔서 올린다 (Step1 Validate 화면의 Details에
+    그대로 표시된다).
+    """
+    try:
+        import xlrd  # noqa: PLC0415 - 확장자가 .xls일 때만 필요한 선택적 의존성
+    except ImportError as e:
+        raise ImportError(
+            "Reading an .xls (old Excel format) file requires the 'xlrd' package. "
+            "Install it (pip install xlrd) or save the Port List as .xlsx."
+        ) from e
+    return xlrd
+
+
+def _suffix_of(file_path: str) -> str:
     suffix = Path(file_path).suffix.lower()
-    if suffix == ".xlsx":
+    if suffix not in PORT_LIST_FILE_EXTENSIONS:
+        raise ValueError(
+            "Unsupported Port List file extension: %s (expected %s)"
+            % (suffix or "(none)", " / ".join(PORT_LIST_FILE_EXTENSIONS))
+        )
+    return suffix
+
+
+def _list_sheet_names(file_path: str) -> list[str]:
+    if _suffix_of(file_path) == ".xlsx":
         from openpyxl import load_workbook
         wb = load_workbook(file_path, read_only=True)
         try:
             return list(wb.sheetnames)
         finally:
             wb.close()
-    if suffix == ".xls":
-        import xlrd
-        wb = xlrd.open_workbook(file_path, on_demand=True)
-        return list(wb.sheet_names())
-    raise ValueError(f"Unsupported file extension: {suffix}")
+
+    xlrd = _import_xlrd()
+    wb = xlrd.open_workbook(file_path, on_demand=True)
+    return list(wb.sheet_names())
 
 
 def _load_sheet_rows(file_path: str, sheet_name: str) -> list[list]:
     """지정된 시트의 전체 셀 값을 2차원 리스트(행 우선, 1행부터 순서대로)로 반환."""
-    suffix = Path(file_path).suffix.lower()
-    if suffix == ".xlsx":
+    if _suffix_of(file_path) == ".xlsx":
         from openpyxl import load_workbook
         wb = load_workbook(file_path, read_only=True, data_only=True)
         try:
@@ -137,15 +163,14 @@ def _load_sheet_rows(file_path: str, sheet_name: str) -> list[list]:
             return [[cell.value for cell in row] for row in sheet.iter_rows()]
         finally:
             wb.close()
-    if suffix == ".xls":
-        import xlrd
-        wb = xlrd.open_workbook(file_path)
-        sheet = wb.sheet_by_name(sheet_name)
-        return [
-            [sheet.cell_value(r, c) for c in range(sheet.ncols)]
-            for r in range(sheet.nrows)
-        ]
-    raise ValueError(f"Unsupported file extension: {suffix}")
+
+    xlrd = _import_xlrd()
+    wb = xlrd.open_workbook(file_path)
+    sheet = wb.sheet_by_name(sheet_name)
+    return [
+        [sheet.cell_value(r, c) for c in range(sheet.ncols)]
+        for r in range(sheet.nrows)
+    ]
 
 
 def find_port_list_sheet_name(file_path: str) -> str | None:

@@ -6,15 +6,28 @@ field_defs.py
 
 from __future__ import annotations
 
+# Port List로 받아들이는 엑셀 확장자 (.xls = 구 포맷 / .xlsx = 신 포맷, 둘 다 지원).
+# 파일 선택 대화상자 필터, 화면의 확장자 검사, port_list_reader의 읽기 분기가 전부
+# 이 목록 하나를 기준으로 동작한다.
+PORT_LIST_FILE_EXTENSIONS = [".xls", ".xlsx"]
+
+
+def is_port_list_filename(filename: str) -> bool:
+    return str(filename).lower().endswith(tuple(PORT_LIST_FILE_EXTENSIONS))
+
+
 # ---------------------------------------------------------------------------
 # 입력 경로: (key, 라벨, 종류, 허용 확장자 목록)
 #   종류: "dir" = 폴더 선택, "file" = 파일 선택
 #   허용 확장자는 "file" 종류에만 적용 (dir은 None)
 # ---------------------------------------------------------------------------
+# 2026-08 순서 변경: PDK Folder -> Port List -> DBS Simulation Folder.
+# 저장 파일(config/user_config.json)은 key 기준 dict이므로, 이 목록의 순서를 바꿔도
+# 기존에 저장해 둔 값은 그대로 로드된다 (config_manager._default_config 참고).
 INPUT_PATH_FIELDS = [
     ("pdk_folder", "PDK Folder", "dir", None),
+    ("port_list_file", "Port List (Excel)", "file", PORT_LIST_FILE_EXTENSIONS),
     ("dbs_folder", "DBS Simulation Folder", "dir", None),
-    ("port_list_file", "Port List (Excel)", "file", [".xls", ".xlsx"]),
 ]
 
 DBS_FILE_EXTENSION = ".mt0"

@@ -59,6 +59,8 @@ def write_liberty_file(job: dict, output_path: str, lut_sections: dict) -> None:
         sections.clear()
         write_block3(f_out, job, lut_sections)
         write_block4(f_out, job)  # cell{}을 연 채로 끝남 (pg_pin까지)
-        write_block5(f_out, job)  # 같은 cell{} 안에 pin()/bus() 이어서 작성
+        # block5도 lut_sections를 쓴다 - DBS output pin의 max_capacitance가 worst case
+        # PDK index_2의 마지막 값이기 때문 (2026-08).
+        write_block5(f_out, job, lut_sections)  # 같은 cell{} 안에 pin()/bus() 이어서 작성
         f_out.write(f"{INDENT_1}}}\n")  # cell{} 닫기
         f_out.write("}\n")  # library{} 닫기

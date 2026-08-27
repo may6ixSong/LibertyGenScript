@@ -3,8 +3,12 @@ settings_view.py
 
 'Constants & Pin Settings' 화면 (Step 3, 2026-08 재설계 -> 2026-08 레이아웃 개편):
 상수 값(class/process_prefix/output_prefix/DFF Cell Name/LUT Table/Worst case primitive
-liberty)과 Voltage Map(BST/WST/TIV x Power Type1..N, power type 개수 조절 + Power Type별
-voltage name), Pin 설정을 입력받는다.
+liberty)과 Pin 설정을 입력받는다.
+
+2026-08 Voltage Map 이동: Voltage Map은 **Step 2 왼쪽 열**로 옮겨졌다(사용자가 voltage
+condition을 직접 추가/삭제하고 이름도 정하는 형태로 바뀜, step2_udc/voltage_map_view.py).
+저장 위치는 예전 그대로 step3_settings.json의 voltage_map key이므로, 이 화면이 설정을
+저장할 때는 그 부분을 화면 값으로 덮어쓰지 않고 파일에서 다시 읽어 그대로 둔다.
 
 2026-08 레이아웃 개편 - "Check가 안 보인다" 문제 해결:
   이전에는 Constants 카드와 Pin Settings 카드를 세로로 이어 붙이고 각 항목마다 설명
@@ -14,11 +18,6 @@ voltage name), Pin 설정을 입력받는다.
     - Pin Settings 안에서도 DBS output pin + Check 블록을 **맨 위**로 올렸으며,
     - 모든 설명 문단은 제목/라벨 옆 hover 정보 아이콘(InfoIcon)의 툴팁으로 옮겼다.
   창 기본 너비도 함께 넓혔다 (ui/theme.py의 WINDOW_DEFAULT_WIDTH).
-
-2026-08 Voltage Map 재설계: BST/WST/TIV 세 그룹 각각에 Power Type1..N 전압 값을
-입력받는다. Power Type 개수는 과제에 따라 2개일 수도 있어 화면에서 2~3 사이로 조절
-가능하다(스핀박스). Power Type마다 리버티에 쓸 voltage name도 별도로 입력받는다
-(BST/WST/TIV 공통, Power Type당 하나).
 
 2026-08 추가 - 연계 입력(linked group):
   Virtual Power / Power down control signal / DBS output pin 세 개는 각각 "그 pin을
@@ -40,19 +39,16 @@ from typing import Callable
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QAbstractItemView, QFileDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from step1_setup.port_list_reader import list_pins_by_port_type
 from step2_udc import udc_manager
 from step2_udc.udc_validator import selected_pdk_files
 from step3_settings import settings_manager
-from step3_settings.constants_field_defs import (
-    POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_MAX, POWER_TYPE_COUNT_MIN, SCALAR_CONSTANT_DEFS,
-    VOLTAGE_MAP_GROUPS, power_type_label, voltage_map_name_key, voltage_map_value_key,
-)
+from step3_settings.constants_field_defs import SCALAR_CONSTANT_DEFS
 from step3_settings.pin_field_defs import (
     DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
     ENABLE_SIGNAL_KEY, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY,
@@ -72,6 +68,20 @@ from ui.ui_common import (
 
 _HINT_STYLE = f"color: {MUTED_TEXT_COLOR}; font-size: 11px;"
 _RELATED_PIN_TABLE_MAX_HEIGHT = 200
+
+# 2026-08: Pin Settings의 상위 pin 3개(DBS output pin / Virtual Power / Power down
+# control signal)는 "여기가 상위단"이라는 게 한눈에 보이도록 아래 연계 필드보다 크고
+# 굵게 쓴다. 반대로 연계 그룹의 보라색 안내 문구("These are required because ...")는
+# 입력값보다 덜 튀도록 투명도를 낮춘다.
+_TOP_PIN_LABEL_STYLE = f"color: {TEXT_COLOR}; font-size: 15px; font-weight: 700;"
+_LINKED_CAPTION_OPACITY = 0.55
+
+
+def _build_top_pin_label(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setStyleSheet(_TOP_PIN_LABEL_STYLE)
+    return label
+
 
 # ---------------------------------------------------------------------------
 # 설명 문구 - 화면에 문단으로 깔지 않고 hover 정보 아이콘 툴팁으로만 보여준다
@@ -104,21 +114,6 @@ _SCALAR_FIELD_INFO = {
         "Candidates are the PDK files selected by the Step 2 liberty settings."
     ),
 }
-
-_VOLTAGE_MAP_INFO = (
-    "Enter numeric values only (no unit suffix).\n\n"
-    "Each liberty setting in Step 2 selects BST / WST / TIV, and its voltage_map values "
-    "are taken from that group's Power Type1..N values here.\n\n"
-    "Power Type Count can be lowered to 2 when a project has only two power types; the "
-    "Power Type3 row is then hidden and excluded from validation, but any value already "
-    "entered there is kept."
-)
-
-_VOLTAGE_NAME_INFO = (
-    "One voltage name per Power Type, shared by BST / WST / TIV.\n\n"
-    "It is written as voltage_map (VDD_{name}, {value}) in block2 and must match block4's "
-    "pg_pin voltage_name exactly."
-)
 
 _DBS_CHECK_INFO = (
     "Run this check BEFORE Validate. The pins recognized by the wildcard change whenever "
@@ -182,12 +177,6 @@ class SettingsView(QWidget):
         self.settings: dict = settings_manager.load_settings()
 
         self.scalar_widgets: dict[str, QWidget] = {}
-        self.power_type_count_spin: QSpinBox | None = None
-        self.voltage_value_edits: dict[str, QLineEdit] = {}
-        self.voltage_name_edits: dict[str, QLineEdit] = {}
-        # Power Type3 행(값/이름 둘 다) - power type 개수가 2일 때 숨길 대상.
-        # (라벨 위젯, 입력 위젯) 쌍의 목록.
-        self._power_type3_rows: list[tuple[QLabel, QLineEdit]] = []
         # "Check DBS Output Pins"를 눌러 현재 Port List로 pin을 펼친 상태인지 여부.
         # False인 동안에는 Validate 버튼이 잠겨 있다.
         self._dbs_check_done = False
@@ -274,118 +263,7 @@ class SettingsView(QWidget):
         layout.addLayout(scalar_form)
         self._populate_worst_case_pdk_combo()
 
-        layout.addWidget(build_section_header("Voltage Map", _VOLTAGE_MAP_INFO, "sectionLabel"))
-        layout.addWidget(self._build_voltage_map_section())
-
         return card
-
-    def _build_voltage_map_section(self) -> QWidget:
-        """
-        Voltage Map: power type 개수 조절(2~3) + BST/WST/TIV 그룹(그룹마다 Power
-        Type1..N 값) + Power Type별 voltage name(그룹 공통, 하나씩).
-
-        2026-08 레이아웃 개편: BST/WST/TIV 세 그룹을 세로로 쌓지 않고 가로 3열로 나란히
-        놓아 세로 공간을 줄였다.
-        """
-        self.voltage_value_edits = {}
-        self.voltage_name_edits = {}
-        self._power_type3_rows = []
-
-        container = QWidget()
-        container.setObjectName("transparentRow")
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-
-        voltage_map = self.settings["voltage_map"]
-        saved_count = voltage_map.get(POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_MAX)
-        saved_values = voltage_map.get("values", {})
-        saved_names = voltage_map.get("names", {})
-
-        count_row = QHBoxLayout()
-        count_row.addWidget(QLabel("Power Type Count"))
-        self.power_type_count_spin = QSpinBox()
-        self.power_type_count_spin.setRange(POWER_TYPE_COUNT_MIN, POWER_TYPE_COUNT_MAX)
-        self.power_type_count_spin.setValue(saved_count)
-        self.power_type_count_spin.valueChanged.connect(self._on_power_type_count_changed)
-        count_row.addWidget(self.power_type_count_spin)
-        count_row.addStretch()
-        layout.addLayout(count_row)
-
-        groups_row = QHBoxLayout()
-        groups_row.setSpacing(10)
-        for group in VOLTAGE_MAP_GROUPS:
-            groups_row.addWidget(self._build_voltage_group_frame(group, saved_values), stretch=1)
-        layout.addLayout(groups_row)
-
-        layout.addWidget(self._build_voltage_name_frame(saved_names))
-
-        self._apply_power_type_count_visibility(saved_count)
-        return container
-
-    def _build_voltage_group_frame(self, group: str, saved_values: dict) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("card")
-        group_layout = QVBoxLayout(frame)
-        group_layout.setContentsMargins(12, 10, 12, 10)
-        group_layout.setSpacing(4)
-
-        group_title = QLabel(group)
-        group_title.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 600;")
-        group_layout.addWidget(group_title)
-
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(6)
-        grid.setVerticalSpacing(6)
-        for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
-            key = voltage_map_value_key(group, type_index)
-            edit = QLineEdit(str(saved_values.get(key, "")))
-            # 세 그룹을 가로로 나란히 놓으므로, 열 폭이 좁아지면 입력칸도 같이
-            # 줄어들 수 있어야 한다 (QLineEdit 기본 최소 폭은 이보다 훨씬 넓다).
-            edit.setMinimumWidth(48)
-            self.voltage_value_edits[key] = edit
-            row_label = QLabel(f"Type{type_index}")
-            row_label.setStyleSheet(_HINT_STYLE)
-            row_label.setToolTip(power_type_label(type_index))
-            grid.addWidget(row_label, type_index - 1, 0)
-            grid.addWidget(edit, type_index - 1, 1)
-            if type_index == POWER_TYPE_COUNT_MAX:
-                self._power_type3_rows.append((row_label, edit))
-        grid.setColumnStretch(1, 1)
-        group_layout.addLayout(grid)
-        return frame
-
-    def _build_voltage_name_frame(self, saved_names: dict) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("card")
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(4)
-        layout.addWidget(build_section_header("Voltage Name", _VOLTAGE_NAME_INFO))
-
-        form = QFormLayout()
-        form.setSpacing(6)
-        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
-            key = voltage_map_name_key(type_index)
-            edit = QLineEdit(str(saved_names.get(key, "")))
-            self.voltage_name_edits[key] = edit
-            row_label = QLabel(power_type_label(type_index))
-            form.addRow(row_label, edit)
-            if type_index == POWER_TYPE_COUNT_MAX:
-                self._power_type3_rows.append((row_label, edit))
-        layout.addLayout(form)
-        return frame
-
-    def _on_power_type_count_changed(self, value: int) -> None:
-        self._apply_power_type_count_visibility(value)
-
-    def _apply_power_type_count_visibility(self, count: int) -> None:
-        """Power Type3 행(BST/WST/TIV 값 + voltage name)을 count에 따라 보이거나 숨긴다."""
-        visible = count >= POWER_TYPE_COUNT_MAX
-        for row_label, edit in self._power_type3_rows:
-            row_label.setVisible(visible)
-            edit.setVisible(visible)
 
     def _populate_worst_case_pdk_combo(self) -> None:
         """
@@ -441,7 +319,7 @@ class SettingsView(QWidget):
         dbs_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         dbs_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.dbs_output_edit, self.dbs_output_badge = self._build_wildcard_field(
-            dbs_form, "DBS output pin", pins.get(DBS_OUTPUT_KEY, ""),
+            dbs_form, _build_top_pin_label("DBS output pin"), pins.get(DBS_OUTPUT_KEY, ""),
         )
         self.dbs_output_edit.textChanged.connect(lambda _text: self._invalidate_dbs_check())
         layout.addLayout(dbs_form)
@@ -488,7 +366,7 @@ class SettingsView(QWidget):
         top_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.virtual_power_combo = NoWheelComboBox()
         self._populate_virtual_power_combo()
-        top_form.addRow("Virtual Power (power gate)", self.virtual_power_combo)
+        top_form.addRow(_build_top_pin_label("Virtual Power (power gate)"), self.virtual_power_combo)
         layout.addLayout(top_form)
 
         group = self._build_linked_group(
@@ -515,7 +393,8 @@ class SettingsView(QWidget):
         pd_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         pd_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.power_down_edit, self.power_down_badge = self._build_wildcard_field(
-            pd_form, "Power down control signal", pins.get(POWER_DOWN_KEY, ""),
+            pd_form, _build_top_pin_label("Power down control signal"),
+            pins.get(POWER_DOWN_KEY, ""),
         )
         layout.addLayout(pd_form)
 
@@ -564,6 +443,10 @@ class SettingsView(QWidget):
         caption_label = QLabel(f"↳  {caption}")
         caption_label.setWordWrap(True)
         caption_label.setStyleSheet(f"color: {PRIMARY_COLOR}; font-size: 11px; font-weight: 600;")
+        # 시스템 안내 문구는 입력값보다 덜 튀어야 하므로 투명도를 낮춘다 (2026-08).
+        caption_opacity = QGraphicsOpacityEffect(caption_label)
+        caption_opacity.setOpacity(_LINKED_CAPTION_OPACITY)
+        caption_label.setGraphicsEffect(caption_opacity)
         frame_layout.addWidget(caption_label)
 
         row = QHBoxLayout()
@@ -583,7 +466,7 @@ class SettingsView(QWidget):
         return form
 
     def _build_wildcard_field(
-        self, form: QFormLayout, label: str, initial: str, info: str = "",
+        self, form: QFormLayout, label, initial: str, info: str = "",
     ) -> tuple[QLineEdit, QLabel]:
         edit, badge = self._build_field_with_badge(form, label, initial, info)
         edit.textChanged.connect(lambda: self._update_wildcard_badge(edit, badge))
@@ -591,7 +474,7 @@ class SettingsView(QWidget):
         return edit, badge
 
     def _build_plain_pin_field(
-        self, form: QFormLayout, label: str, initial: str, info: str = "",
+        self, form: QFormLayout, label, initial: str, info: str = "",
     ) -> tuple[QLineEdit, QLabel]:
         """와일드카드를 허용하지 않는 pin 입력 (입력에 '*'가 있으면 즉시 빨간 안내)."""
         edit, badge = self._build_field_with_badge(form, label, initial, info)
@@ -600,8 +483,9 @@ class SettingsView(QWidget):
         return edit, badge
 
     def _build_field_with_badge(
-        self, form: QFormLayout, label: str, initial: str, info: str = "",
+        self, form: QFormLayout, label, initial: str, info: str = "",
     ) -> tuple[QLineEdit, QLabel]:
+        """label은 문자열 또는 위젯(예: 상위 pin용 굵은 라벨) 둘 다 가능하다."""
         container = QWidget()
         container.setObjectName("transparentRow")
         container_layout = QVBoxLayout(container)
@@ -795,13 +679,7 @@ class SettingsView(QWidget):
             else:
                 scalars[key] = widget.text().strip()
 
-        voltage_map = {
-            POWER_TYPE_COUNT_KEY: self.power_type_count_spin.value(),
-            "values": {key: edit.text().strip() for key, edit in self.voltage_value_edits.items()},
-            "names": {key: edit.text().strip() for key, edit in self.voltage_name_edits.items()},
-        }
-
-        return {"scalars": scalars, "voltage_map": voltage_map}
+        return {"scalars": scalars}
 
     def _collect_pins(self) -> dict:
         return {
@@ -823,7 +701,9 @@ class SettingsView(QWidget):
         constants = self._collect_constants()
         return {
             "scalars": constants["scalars"],
-            "voltage_map": constants["voltage_map"],
+            # Voltage Map은 Step 2에서 편집한다(화면만 옮겨졌고 저장 위치는 여기 그대로).
+            # 이 화면이 들고 있던 옛 값으로 덮어쓰지 않도록 항상 파일에서 다시 읽는다.
+            "voltage_map": settings_manager.load_voltage_map(),
             "pins": self._collect_pins(),
             "output_path": self.output_path_edit.text().strip(),
         }
@@ -846,9 +726,7 @@ class SettingsView(QWidget):
             self.show_loading("Validating settings...")
 
         self._persist()
-        errors = validate_constants(
-            self.settings["scalars"], self.settings["voltage_map"], self.paired_pdk_files(),
-        )
+        errors = validate_constants(self.settings["scalars"], self.paired_pdk_files())
         errors += validate_pin_settings(self.settings["pins"], self.get_port_list_file())
 
         if self.hide_loading:
