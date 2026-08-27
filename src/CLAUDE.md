@@ -260,9 +260,9 @@ operating_conditions (<NOT_FOUND_IN_PDK>) {
 
 ## 아직 안 한 것 (TODO)
 - Config export/import 기능, 프로그램 시작 시 초기화 — 코드에 TODO만 남김, 미구현.
-- Port List 파싱 캐싱/조기 종료/백그라운드 스레드 이관 — Step1 Validate와 Step3
-  Output Path 대화상자가 느린 근본 원인(위 "Ctrl+C 강제 종료" 절 참고)의 실제 해결책.
-  지금은 Ctrl+C 강제 종료로 안전장치만 마련한 상태.
+
+(해결됨) Port List 파싱 캐싱/조기 종료/백그라운드 스레드 이관 — 아래 "Port List 파싱
+성능 최적화" 절 참고.
 
 (해결됨) block5의 `max_capacitance` — 2026-08 확정: **worst case primitive liberty에서
 읽은 `lu_table_template`의 `index_2` 마지막 값**을 그대로 쓴다
@@ -307,30 +307,71 @@ Step1의 Port List 파싱, Step3의 Output Path 파일 대화상자(네트워크
 
 ### 근본 원인 (Step1 Port List / Step3 Output Path가 느린 이유)
 
-- **Port List 파싱**: `port_list_reader._load_sheet_rows()`가 openpyxl
+- **Port List 파싱**: 예전 `port_list_reader._load_sheet_rows()`가 openpyxl
   `read_only` 모드로 `[[cell.value for cell in row] for row in sheet.iter_rows()]`를
-  실행해 시트 전체를 한 번에 파이썬 리스트로 통째로 올린다. 실제 엔지니어링 Excel은
+  실행해 시트 전체를 한 번에 파이썬 리스트로 통째로 올렸다. 실제 엔지니어링 Excel은
   서식(테두리/색 등)이 열/행 전체에 걸쳐 적용된 경우가 흔해서, `dimensions`
   (사용 범위)가 실제 데이터보다 훨씬 크게 잡히는 일이 매우 흔하다 - 실측으로 헤더
   2줄만 있고 60만 번째 행 한 칸에만 값이 있는 파일을 만들었더니 `ws.dimensions`가
-  `A1:DP600000`(약 7천만 셀)이 되고, 파싱에 수 초가 걸렸다. 게다가 **캐시가 전혀
-  없어서** `read_port_list`/`read_port_list_rows`/`list_pins_by_port_type`/
+  `A1:DP600000`(약 7천만 셀)이 되고, 파싱에 수 초가 걸렸다. 게다가 캐시가 전혀
+  없어서 `read_port_list`/`read_port_list_rows`/`list_pins_by_port_type`/
   `list_port_bit_values`/`list_power_ground_pins`/`list_port_pins_detailed`/
-  `list_all_pin_names`가 각각 파일을 처음부터 다시 열고 다시 파싱한다 - Step1
+  `list_all_pin_names`가 각각 파일을 처음부터 다시 열고 다시 파싱했다 - Step1
   Validate 한 번뿐 아니라 Step2(Virtual Power 콤보)/Step3(Check/Validate/Virtual
-  Power 콤보)/Step4(Generate)에서도 매번 똑같은 비용을 반복해서 치른다. 이 모든
-  파싱이 GUI 메인 스레드에서 동기로 실행되므로, 그동안 창이 완전히 응답하지 않는다.
+  Power 콤보)/Step4(Generate)에서도 매번 똑같은 비용을 반복해서 치렀다. **2026-08에
+  해결됨** - 아래 "Port List 파싱 성능 최적화" 절 참고.
 - **Output Path 대화상자**: `QFileDialog.getExistingDirectory(self, "Select Output
   Path")`가 시작 폴더 힌트 없이 호출되어, OS 고유(대개 GTK) 대화상자가 마지막 사용
   폴더/즐겨찾기/마운트된 네트워크 공유까지 미리 훑는다. 이 프로젝트가 돌아가는
   "사내 HPC망 VWP" 환경처럼 네트워크 마운트 스토리지가 느리면 이 훑기 자체가 오래
-  걸리고, 완전히 별개의 네이티브 툴킷 루프라 우리 앱 코드로는 제어할 수 없었다
-  (2026-08부터 `DontUseNativeDialog`로 Qt 자체 대화상자를 쓰도록 바꿔서 최소한 Ctrl+C
-  이벤트 필터가 열려 있는 동안에도 도달하게는 했다).
-- **완전한 해결책은 아직 미구현**: 무거운 파싱을 캐싱하고(같은 파일이면 재사용),
-  진짜 데이터 이후의 완전 공백 구간에서 조기 종료하고, 백그라운드 스레드로 옮겨
-  진행률/취소 UI를 붙이는 것 - 코드에 TODO만 남겨두고 아직 하지 않음(아래 "아직 안 한
-  것" 참고).
+  걸리고, 완전히 별개의 네이티브 툴킷 루프라 우리 앱 코드로는 제어할 수 없었다.
+  **2026-08에 완화됨**: `DontUseNativeDialog`로 Qt 자체 대화상자(내부적으로
+  `QFileSystemModel`이 디렉터리를 백그라운드 스레드에서 비동기로 채움)를 쓰도록
+  바꿔서 Ctrl+C 이벤트 필터도 도달하고, 시작 폴더도 이미 접근 가능하다고 확인된
+  경로(Output Path는 Step1의 PDK Folder, Step1의 각 필드는 서로의 값)를 힌트로 줘서
+  대화상자를 여는 순간 자체가 느려지는 것도 줄였다(`SetupView._browse_start_dir`,
+  `SettingsView._on_browse_output`). 다만 `getExistingDirectory`는 Qt API 특성상
+  모달 호출이라 백그라운드 스레드로 옮길 수는 없다 - 사용자가 그 안에서 실제로
+  느린 네트워크 폴더로 직접 들어가면 그 탐색 자체는 여전히 느릴 수 있다.
+
+### Port List 파싱 성능 최적화 (2026-08, TODO 해결)
+
+`port_list_reader.py`를 다음 두 가지로 재설계해서 위 근본 원인을 해결했다:
+
+1. **캐싱**: 파일 하나당 `(mtime, size)`를 key로 파싱 결과(`_PARSE_CACHE`)를 캐시한다
+   (`_parse_port_list_cached`). 이 프로세스가 살아있는 동안 같은 파일이 안 바뀌었으면
+   이후의 모든 호출(Step2 Virtual Power 콤보, Step3 Check/Validate/콤보, Step4
+   Generate)은 디스크를 다시 읽지 않고 캐시를 재사용한다 - 파일이 수정/교체되면
+   `(mtime, size)`가 달라지므로 자동으로 다시 읽는다. `read_port_list`/
+   `read_port_list_rows`/`list_pins_by_port_type`/`list_all_pin_names`를 포함해
+   이 모듈의 모든 공개 함수가 이 캐시 하나를 공유한다.
+2. **조기 종료(더 빡센 파일 규칙, 사용자 승인 하에 도입)**: 헤더 다음부터 데이터를
+   읽되, **완전히 빈 행이 500개 연속으로 나오면 그 지점을 데이터의 끝으로 간주하고
+   더 이상 읽지 않는다**(`_MAX_TRAILING_BLANK_ROWS`,
+   `_load_bounded_data_rows`) - 즉 Port List의 실제 데이터 구간에 500행을 넘는 완전
+   공백 gap이 있으면 안 된다는 규칙을 강제한다. 또한 읽는 열도 헤더에서 실제로
+   인식된 컬럼까지만으로 제한한다(서식이 걸린 먼 오른쪽 열은 아예 안 읽음). 실측:
+   헤더 2줄 + 서식만으로 `A1:DP600000`(60만 행)까지 사용 범위가 잡힌 파일이
+   0.087초 만에 파싱됨(예전 방식이면 사용 범위 전체를 스캔). 실제 데이터 중간에
+   있는 합리적인 공백(10행 정도)은 정상적으로 건너뛰고 그 뒤 데이터를 계속
+   인식하며, 500행을 넘는 gap 뒤의 데이터만 잘려나간다(의도된 트레이드오프).
+3. **Step1 Validate의 port_list 단계를 백그라운드 스레드로 이관**
+   (`ui/background_task.py`의 `run_task`, `SetupView._execute_step`) - PDK/DBS
+   단계는 폴더 목록만 나열하는 가벼운 작업이라 그대로 동기 처리하지만, port_list
+   단계(실제 파일을 여는 지점, 캐시가 비어 있는 최초 1회 + 파일이 정말 큰 경우)만
+   `QThread`로 옮겨서 그 동안에도 창이 계속 응답하고 Ctrl+C 이벤트 필터도 즉시
+   먹힌다. `_validate_run_token`으로 재진입(백그라운드 실행 도중 Validate를 다시
+   누르거나 Back으로 나갔다 온 경우)을 감지해 오래된 실행의 결과가 새 실행의 화면
+   상태를 덮어쓰지 않게 막는다(`GenerateView._run_token`과 같은 패턴). Step1에서
+   한 번 파싱해 두면 캐시가 채워지므로, Step2~4에서 같은 파일을 건드릴 때는 이미
+   거의 즉시 끝난다(Step1 Validate를 통과해야 Step2로 넘어갈 수 있으므로 항상 이
+   순서로 캐시가 미리 채워져 있음).
+4. **한계**: 여전히 남는 경우는 (a) Port List가 서식 없이 실제로 매우 많은 실데이터
+   행(수만 개 이상)을 담고 있는 경우 - 이때는 백그라운드 스레드 덕분에 창은 계속
+   응답하지만 파싱 자체는 그만큼 걸린다, (b) Output Path 대화상자에서 사용자가 직접
+   느린 네트워크 폴더로 들어가는 경우 - Qt API 특성상 모달이라 완전히 배경으로
+   옮길 수 없다(위 "근본 원인" 절 참고). 두 경우 모두 Ctrl+C 강제 종료(위 절)가
+   여전히 안전장치로 남아 있다.
 
 ## Step 이동 규칙 (2026-08 확정)
 

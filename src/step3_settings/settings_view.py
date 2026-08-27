@@ -754,8 +754,14 @@ class SettingsView(QWidget):
         # 느릴 수 있고, 이 앱의 Ctrl+C 강제 종료 단축키(ui/force_quit.py)가 닿지 않는
         # 별도 창이라 열려 있는 동안은 먹히지 않는다. Qt 자체 대화상자를 쓰면 같은
         # 이벤트 루프 안에서 열리므로 열려 있는 동안에도 Ctrl+C가 그대로 동작한다.
+        #
+        # 시작 폴더(2026-08 추가): 힌트 없이 열면 OS/Qt가 홈 디렉터리(사내 HPC망에서는
+        # 대개 네트워크 마운트)부터 훑어야 해서 대화상자를 여는 것 자체가 느려질 수
+        # 있다. 이미 골라 둔 Output Path, 없으면 Step1의 PDK Folder(이미 접근 가능하다고
+        # 확인된 위치)를 힌트로 준다.
+        start_dir = self.output_path_edit.text().strip() or self.get_pdk_folder()
         path = QFileDialog.getExistingDirectory(
-            self, "Select Output Path", "", QFileDialog.DontUseNativeDialog,
+            self, "Select Output Path", start_dir, QFileDialog.DontUseNativeDialog,
         )
         if path:
             self.output_path_edit.setText(path)

@@ -12,6 +12,29 @@ GUI에 의존하지 않는 순수 함수로 작성.
    xlrd가 없을 때는 "무엇을 설치하면 되는지"가 그대로 Step1 Details에 뜨도록
    _import_xlrd()에서 메시지를 바꿔 올린다)
 - 허용 확장자 목록은 field_defs.PORT_LIST_FILE_EXTENSIONS 하나로 관리한다.
+
+2026-08 성능 재설계 (캐싱 + 조기 종료 - "빡센 파일 규칙"):
+  예전에는 이 파일의 거의 모든 공개 함수(read_port_list/read_port_list_rows/
+  list_pins_by_port_type/list_all_pin_names 등)가 각자 독립적으로 워크북을 열고
+  `sheet.iter_rows()`로 시트 "전체"(선언된 사용 범위 전부)를 파이썬 리스트로
+  통째로 읽어들였다. 실제 엔지니어링 Excel은 서식(테두리/색 등)이 열/행 전체에
+  걸쳐 적용된 경우가 흔해서 사용 범위가 실제 데이터보다 훨씬 크게(수십만 행) 잡히는
+  일이 매우 흔하고, 그 경우 매 호출마다 그 큰 범위를 처음부터 다시 스캔하는 게
+  Step1 Validate/Step2/Step3/Step4에서 "화면이 완전히 멈춘 것처럼" 보이는 주요
+  원인이었다.
+
+  이제 두 가지로 이 문제를 없앤다:
+  1. **캐싱**: 파일 하나당 (mtime, size)를 key로 파싱 결과를 캐시해 둔다
+     (_parse_port_list_cached). 파일이 안 바뀌었으면 이후의 모든 호출은 디스크를
+     다시 읽지 않고 캐시된 결과만 재사용한다 - Step2/3/4에서 반복적으로 읽던 비용이
+     세션당 1회로 줄어든다.
+  2. **조기 종료(더 빡센 파일 규칙)**: 헤더 다음부터 데이터를 읽되, 완전히 빈 행이
+     `_MAX_TRAILING_BLANK_ROWS`(500)개 연속으로 나오면 그 지점을 데이터의 끝으로
+     간주하고 더 이상 읽지 않는다. 즉 **Port List의 실제 데이터 구간에 500행을
+     넘는 완전 공백 gap이 있으면 안 된다**는 규칙을 강제한다 - 서식만 있고 값은
+     없는 나머지 수십만 행을 절대 스캔하지 않게 되어, 파일의 "선언된 크기"가 아니라
+     "실제 데이터 크기 + 여유분"에 비례하는 시간만 걸린다. 또한 읽는 열도 헤더에서
+     실제로 인식된 컬럼까지만으로 제한한다(서식이 걸린 먼 오른쪽 열까지 읽지 않음).
 """
 
 from __future__ import annotations
@@ -54,6 +77,12 @@ _HEADER_ALIASES = {
 
 _MAX_HEADER_SCAN_ROWS = 5
 _SHEET_NAME_HINT = "port list"
+
+# 2026-08 추가 - 데이터 조기 종료 규칙: 헤더 이후 이 개수만큼 완전히 빈 행이 연속되면
+# 그 지점을 데이터 끝으로 보고 더 이상 읽지 않는다. 실제 포트 개수가 아무리 많아도
+# (수천~수만 개) 이 정도의 연속 gap은 나오지 않는다고 가정하는, 의도적으로 엄격한
+# 규칙이다 - 이보다 큰 의도적인 공백 구간이 있는 Port List는 지원하지 않는다.
+_MAX_TRAILING_BLANK_ROWS = 500
 
 
 def _normalize(text: str) -> str:
@@ -153,26 +182,6 @@ def _list_sheet_names(file_path: str) -> list[str]:
     return list(wb.sheet_names())
 
 
-def _load_sheet_rows(file_path: str, sheet_name: str) -> list[list]:
-    """지정된 시트의 전체 셀 값을 2차원 리스트(행 우선, 1행부터 순서대로)로 반환."""
-    if _suffix_of(file_path) == ".xlsx":
-        from openpyxl import load_workbook
-        wb = load_workbook(file_path, read_only=True, data_only=True)
-        try:
-            sheet = wb[sheet_name]
-            return [[cell.value for cell in row] for row in sheet.iter_rows()]
-        finally:
-            wb.close()
-
-    xlrd = _import_xlrd()
-    wb = xlrd.open_workbook(file_path)
-    sheet = wb.sheet_by_name(sheet_name)
-    return [
-        [sheet.cell_value(r, c) for c in range(sheet.ncols)]
-        for r in range(sheet.nrows)
-    ]
-
-
 def find_port_list_sheet_name(file_path: str) -> str | None:
     """시트명에 (대소문자 무관) 'port list'가 포함된 첫 시트명을 반환."""
     if not file_path or not Path(file_path).is_file():
@@ -209,6 +218,144 @@ def _find_header_row(rows: list[list]) -> tuple[int, dict[str, int]]:
     return best_row_idx, best_map
 
 
+def _is_blank_row(values) -> bool:
+    return all(v is None or str(v).strip() == "" for v in values)
+
+
+def _load_header_scan_rows(file_path: str, sheet_name: str) -> list[list]:
+    """헤더 탐지용으로 처음 _MAX_HEADER_SCAN_ROWS행만 전체 열 폭으로 읽는다 (가벼움)."""
+    if _suffix_of(file_path) == ".xlsx":
+        from openpyxl import load_workbook
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        try:
+            sheet = wb[sheet_name]
+            return [
+                list(row) for row in
+                sheet.iter_rows(min_row=1, max_row=_MAX_HEADER_SCAN_ROWS, values_only=True)
+            ]
+        finally:
+            wb.close()
+
+    xlrd = _import_xlrd()
+    wb = xlrd.open_workbook(file_path)
+    sheet = wb.sheet_by_name(sheet_name)
+    last_row = min(sheet.nrows, _MAX_HEADER_SCAN_ROWS)
+    return [sheet.row_values(r) for r in range(last_row)]
+
+
+def _load_bounded_data_rows(
+    file_path: str, sheet_name: str, start_row: int, max_col: int,
+) -> list[tuple[int, list]]:
+    """
+    start_row(1-based)부터, 열은 max_col까지만 읽는다. 완전히 빈 행이
+    _MAX_TRAILING_BLANK_ROWS개 연속되면 그 지점에서 읽기를 멈춘다(2026-08 조기 종료
+    규칙 - 모듈 docstring 참고). 빈 행 자체는 반환하지 않는다(호출부는 항상 빈 행을
+    건너뛰므로 굳이 넘길 필요가 없다) - 다만 원본 Excel 행 번호는 그대로 유지해서
+    반환하므로, 에러 메시지의 "Row N"은 항상 실제 엑셀 행 번호와 일치한다.
+
+    Returns: [(row_number(1-based), values), ...] - 완전 공백이 아닌 행만.
+    """
+    if _suffix_of(file_path) == ".xlsx":
+        from openpyxl import load_workbook
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        try:
+            sheet = wb[sheet_name]
+            rows: list[tuple[int, list]] = []
+            blank_run = 0
+            row_number = start_row - 1
+            for values in sheet.iter_rows(min_row=start_row, max_col=max_col, values_only=True):
+                row_number += 1
+                if _is_blank_row(values):
+                    blank_run += 1
+                    if blank_run >= _MAX_TRAILING_BLANK_ROWS:
+                        break
+                    continue
+                blank_run = 0
+                rows.append((row_number, list(values)))
+            return rows
+        finally:
+            wb.close()
+
+    xlrd = _import_xlrd()
+    wb = xlrd.open_workbook(file_path)
+    sheet = wb.sheet_by_name(sheet_name)
+    rows = []
+    blank_run = 0
+    for row_number in range(start_row, sheet.nrows + 1):
+        values = sheet.row_values(row_number - 1, 0, max_col)
+        if _is_blank_row(values):
+            blank_run += 1
+            if blank_run >= _MAX_TRAILING_BLANK_ROWS:
+                break
+            continue
+        blank_run = 0
+        rows.append((row_number, list(values)))
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# 캐시: 파일 하나당 (mtime, size)를 key로 파싱 결과를 저장한다. 이 프로세스가
+# 살아있는 동안 같은 파일을 여러 번 읽어도(Step1 Validate -> Step2 콤보 -> Step3
+# Check/Validate -> Step4 Generate) 디스크 접근은 파일이 바뀌지 않는 한 최초 1회뿐.
+# ---------------------------------------------------------------------------
+_PARSE_CACHE: dict[str, tuple] = {}
+
+
+def _cache_key(file_path: str) -> tuple | None:
+    try:
+        st = Path(file_path).stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def clear_port_list_cache() -> None:
+    """테스트/디버깅용 - 캐시를 강제로 비운다. 평소 운영 코드에서는 부를 필요 없음."""
+    _PARSE_CACHE.clear()
+
+
+def _parse_port_list_uncached(file_path: str) -> dict:
+    sheet_name = find_port_list_sheet_name(file_path)
+    if sheet_name is None:
+        return {"sheet_name": None, "header_row": 0, "column_map": {}, "rows": []}
+
+    header_scan_rows = _load_header_scan_rows(file_path, sheet_name)
+    header_row, column_map = _find_header_row(header_scan_rows)
+
+    rows: list[tuple[int, list]] = []
+    if column_map:
+        max_col = max(column_map.values())
+        rows = _load_bounded_data_rows(file_path, sheet_name, header_row + 1, max_col)
+
+    return {
+        "sheet_name": sheet_name,
+        "header_row": header_row,
+        "column_map": column_map,
+        "rows": rows,
+    }
+
+
+def _parse_port_list_cached(file_path: str) -> dict:
+    """
+    Port List 하나를 딱 한 번만 실제로 읽어서(헤더 탐지 + 조기 종료 규칙이 적용된
+    데이터 행) 캐시해 두고, 이후 이 모듈의 모든 공개 함수가 이 캐시를 재사용한다.
+    파일의 mtime/size가 바뀌면(수정/교체) 자동으로 다시 읽는다.
+
+    Returns:
+        {"sheet_name": str|None, "header_row": int, "column_map": {col:idx},
+         "rows": [(row_number, values), ...]}
+    """
+    key = _cache_key(file_path)
+    cached = _PARSE_CACHE.get(file_path)
+    if cached is not None and key is not None and cached[0] == key:
+        return cached[1]
+
+    parsed = _parse_port_list_uncached(file_path)
+    if key is not None:
+        _PARSE_CACHE[file_path] = (key, parsed)
+    return parsed
+
+
 def read_port_list(file_path: str) -> dict:
     """
     Port List Excel 파일을 읽어 검증 결과를 반환.
@@ -223,7 +370,8 @@ def read_port_list(file_path: str) -> dict:
             "row_errors": [str, ...],   # "Row 12: missing value for Port" 형태
         }
     """
-    sheet_name = find_port_list_sheet_name(file_path)
+    parsed = _parse_port_list_cached(file_path)
+    sheet_name = parsed["sheet_name"]
     if sheet_name is None:
         return {
             "sheet_name": None,
@@ -234,21 +382,22 @@ def read_port_list(file_path: str) -> dict:
             "row_errors": [],
         }
 
-    rows = _load_sheet_rows(file_path, sheet_name)
-    header_row, column_map = _find_header_row(rows)
+    column_map = parsed["column_map"]
     missing_required = [c for c in PORT_LIST_REQUIRED_COLUMNS if c not in column_map]
 
     row_errors: list[str] = []
     port_count = 0
 
     if not missing_required:
-        for row_idx, row in enumerate(rows[header_row:], start=header_row + 1):
+        for row_idx, row in parsed["rows"]:
             def _value_at(col_idx: int, _row=row):
                 return _row[col_idx - 1] if col_idx - 1 < len(_row) else None
 
+            # 조기 종료 규칙 적용 후에는 완전 공백 행이 결과에 없지만, 그래도
+            # required 컬럼만 빈 "부분 공백" 행은 여전히 있을 수 있으니 방어적으로 유지.
             required_values = [_value_at(column_map[c]) for c in PORT_LIST_REQUIRED_COLUMNS]
             if all(v is None or str(v).strip() == "" for v in required_values):
-                continue  # 완전히 빈 행은 데이터 끝으로 간주하고 건너뜀
+                continue
 
             missing_in_row = [
                 c for c in PORT_LIST_REQUIRED_COLUMNS
@@ -270,7 +419,7 @@ def read_port_list(file_path: str) -> dict:
 
     return {
         "sheet_name": sheet_name,
-        "header_row": header_row,
+        "header_row": parsed["header_row"],
         "found_columns": sorted(column_map.keys()),
         "missing_required_columns": missing_required,
         "port_count": port_count,
@@ -280,12 +429,8 @@ def read_port_list(file_path: str) -> dict:
 
 def list_pins_by_port_type(file_path: str, port_type: str) -> list[str]:
     """Port List에서 'Port' 컬럼 값이 port_type과 일치하는 행들의 'Pin name' 값 목록을 반환."""
-    sheet_name = find_port_list_sheet_name(file_path)
-    if sheet_name is None:
-        return []
-
-    rows = _load_sheet_rows(file_path, sheet_name)
-    header_row, column_map = _find_header_row(rows)
+    parsed = _parse_port_list_cached(file_path)
+    column_map = parsed["column_map"]
     if "Port" not in column_map or "Pin name" not in column_map:
         return []
 
@@ -294,7 +439,7 @@ def list_pins_by_port_type(file_path: str, port_type: str) -> list[str]:
     target = port_type.strip().upper()
 
     result = []
-    for row in rows[header_row:]:
+    for _row_idx, row in parsed["rows"]:
         port_val = row[port_col - 1] if port_col - 1 < len(row) else None
         pin_val = row[pin_col - 1] if pin_col - 1 < len(row) else None
         if port_val is None or pin_val is None:
@@ -333,15 +478,14 @@ def read_port_list_rows(file_path: str) -> dict:
         "errors": [],
     }
 
-    sheet_name = find_port_list_sheet_name(file_path)
+    parsed = _parse_port_list_cached(file_path)
+    sheet_name = parsed["sheet_name"]
     result["sheet_name"] = sheet_name
     if sheet_name is None:
         result["errors"].append("No sheet found with a name containing 'Port list'.")
         return result
 
-    rows = _load_sheet_rows(file_path, sheet_name)
-    header_row, column_map = _find_header_row(rows)
-
+    column_map = parsed["column_map"]
     missing_required = [c for c in PORT_LIST_REQUIRED_COLUMNS if c not in column_map]
     if missing_required:
         result["errors"].append(
@@ -356,10 +500,10 @@ def read_port_list_rows(file_path: str) -> dict:
         raw = row[col_idx - 1] if col_idx - 1 < len(row) else None
         return "" if raw is None else raw
 
-    for row_idx, row in enumerate(rows[header_row:], start=header_row + 1):
+    for row_idx, row in parsed["rows"]:
         required_values = [_value_at(row, c) for c in PORT_LIST_REQUIRED_COLUMNS]
         if all(v is None or str(v).strip() == "" for v in required_values):
-            continue  # 완전히 빈 행은 데이터 끝으로 간주
+            continue  # 부분 공백 행 방어(완전 공백 행은 이미 파싱 단계에서 제외됨)
 
         record = {col: _value_at(row, col) for col in _ALL_ROW_COLUMNS}
         record["_row"] = row_idx
@@ -491,18 +635,14 @@ def list_port_pins_detailed(file_path: str) -> list[dict]:
 
 def list_all_pin_names(file_path: str) -> list[str]:
     """Port List의 모든 행에서 'Pin name' 값 목록을 반환 (Port 타입 무관)."""
-    sheet_name = find_port_list_sheet_name(file_path)
-    if sheet_name is None:
-        return []
-
-    rows = _load_sheet_rows(file_path, sheet_name)
-    header_row, column_map = _find_header_row(rows)
+    parsed = _parse_port_list_cached(file_path)
+    column_map = parsed["column_map"]
     if "Pin name" not in column_map:
         return []
 
     pin_col = column_map["Pin name"]
     result = []
-    for row in rows[header_row:]:
+    for _row_idx, row in parsed["rows"]:
         pin_val = row[pin_col - 1] if pin_col - 1 < len(row) else None
         if pin_val is not None:
             name = str(pin_val).strip()
