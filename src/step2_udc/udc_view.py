@@ -33,8 +33,8 @@ from typing import Callable
 from PyQt5.QtCore import QRegExp, Qt
 from PyQt5.QtGui import QBrush, QColor, QFont, QRegExpValidator
 from PyQt5.QtWidgets import (
-    QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QScrollArea, QSizePolicy, QSplitter, QVBoxLayout, QWidget,
 )
 
 from step1_setup.file_scanner import list_dbs_mt0_files, list_pdk_lib_files
@@ -55,7 +55,7 @@ from ui.theme import (
 )
 from ui.ui_common import (
     NoWheelComboBox, add_shadow, build_back_button, build_bottom_button_row,
-    build_hint, build_section_header,
+    build_hint, build_section_header, run_export_config_dialog,
 )
 
 _NUMBER_REGEX = QRegExp(r"^-?\d*\.?\d*$")
@@ -217,9 +217,20 @@ class _EntryCard(QFrame):
         row.addWidget(self.index_label)
         row.addStretch()
         remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(lambda: self._on_remove(self))
+        remove_btn.clicked.connect(self._confirm_remove)
         row.addWidget(remove_btn)
         return row
+
+    def _confirm_remove(self) -> None:
+        # 2026-08 추가: 실수로 setting을 지우는 것을 막기 위해 삭제 전에 확인창을
+        # 띄운다. 되돌릴 방법이 없으므로(입력값이 즉시 사라짐) 기본 선택지는 No.
+        answer = QMessageBox.question(
+            self, "Remove Liberty Setting",
+            f"Remove {self.index_label.text()}? This cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            self._on_remove(self)
 
     def _build_setting_row(self, entry: dict) -> QGridLayout:
         grid = QGridLayout()
@@ -388,9 +399,11 @@ class UDCView(QWidget):
         # 2026-08 레이아웃 개편: Step3처럼 좌우 2단으로 나눈다.
         #   왼쪽  = Common Fields + Voltage Map (Voltage Map이 Step3에서 여기로 옮겨옴)
         #   오른쪽 = Liberty Settings (setting 1개 = liberty 파일 1개)
-        columns = QHBoxLayout()
-        columns.setSpacing(16)
-
+        # 2026-08 추가: 오른쪽 Liberty Settings 쪽 setting이 많아질수록 왼쪽보다 훨씬
+        # 넓은 공간이 필요하다는 피드백을 반영해, 기본 폭 비율을 1:1 대신 왼쪽을 1/4
+        # 줄인 3:5로 시작한다. 또한 QHBoxLayout 대신 QSplitter를 써서 사용자가 두 열
+        # 사이 경계에 마우스를 올리면 커서가 좌우 조절 아이콘으로 바뀌며 드래그로 폭을
+        # 직접 조절할 수 있게 한다(QSplitter 기본 동작).
         left = QVBoxLayout()
         left.setSpacing(12)
         left.addWidget(self._build_common_card())
@@ -398,10 +411,23 @@ class UDCView(QWidget):
         left_container = QWidget()
         left_container.setObjectName("transparentRow")
         left_container.setLayout(left)
-        columns.addWidget(left_container, stretch=1)
 
-        columns.addWidget(self._build_entries_card(), stretch=1)
-        outer.addLayout(columns, stretch=1)
+        self.column_splitter = QSplitter(Qt.Horizontal)
+        self.column_splitter.setObjectName("columnSplitter")
+        self.column_splitter.setChildrenCollapsible(False)
+        self.column_splitter.addWidget(left_container)
+        self.column_splitter.addWidget(self._build_entries_card())
+        self.column_splitter.setStretchFactor(0, 3)
+        self.column_splitter.setStretchFactor(1, 5)
+        outer.addWidget(self.column_splitter, stretch=1)
+        # setSizes()를 지금(생성자 안, 아직 화면에 실제로 표시되기 전) 호출하면 위젯
+        # 폭이 아직 0에 가까워 요청한 비율이 무시되고 나중에 실제 창 크기로 보일 때
+        # 엉뚱한 비율(왼쪽이 더 넓어짐)로 굳어지는 것을 실측으로 확인했다. 그래서 실제
+        # 폭을 알 수 있는 첫 showEvent에서 한 번만 적용한다(_apply_default_column_sizes).
+        self._column_sizes_applied = False
+
+        self.export_btn = QPushButton("Export Config")
+        self.export_btn.clicked.connect(self._on_export_config)
 
         self.validate_btn = QPushButton("Validate")
         self.validate_btn.setObjectName("primaryButton")
@@ -414,7 +440,10 @@ class UDCView(QWidget):
         self.next_btn.clicked.connect(self._on_next_clicked)
 
         self.back_btn = build_back_button(self.on_back)
-        outer.addLayout(build_bottom_button_row(self.back_btn, self.validate_btn, self.next_btn))
+        outer.addLayout(build_bottom_button_row(
+            self.back_btn, self.validate_btn, self.next_btn,
+            extra_left_buttons=(self.export_btn,),
+        ))
 
         self.result_label = QLabel("")
         self.result_label.setWordWrap(True)
@@ -726,10 +755,18 @@ class UDCView(QWidget):
             self.on_next()
 
     # ------------------------------------------------------------------
+    # Config export (2026-08 추가)
+    # ------------------------------------------------------------------
+    def _on_export_config(self) -> None:
+        self._persist()
+        run_export_config_dialog(self, self.get_pdk_folder())
+
+    # ------------------------------------------------------------------
     # 화면이 다시 보일 때마다 (Step 1에서 돌아왔을 때 등) 최신 파일 목록 반영
     # ------------------------------------------------------------------
     def showEvent(self, event) -> None:  # noqa: N802 - Qt 오버라이드 시그니처
         super().showEvent(event)
+        self._apply_default_column_sizes()
         self._commit_current_ui()
         self._rescan_files()
         # PDK/DBS 폴더가 바뀌었을 수 있으므로 추천 목록을 전부 다시 계산한다.
@@ -742,3 +779,19 @@ class UDCView(QWidget):
     def _lock_next(self) -> None:
         self.next_btn.setEnabled(False)
         self.next_btn.setToolTip("Run Validate first.")
+
+    def _apply_default_column_sizes(self) -> None:
+        """
+        왼쪽(Common+Voltage Map) : 오른쪽(Liberty Settings) 기본 폭 비율을 3:5로
+        맞춘다. 위젯이 실제로 표시되어 진짜 폭을 알 수 있게 된 첫 showEvent에서 딱
+        한 번만 적용하고, 그 뒤로는 사용자가 직접 드래그해서 조절한 폭을 그대로
+        존중한다(다시 덮어쓰지 않음).
+        """
+        if self._column_sizes_applied:
+            return
+        width = self.column_splitter.width()
+        if width <= 0:
+            return
+        left_width = width * 3 // 8
+        self.column_splitter.setSizes([left_width, width - left_width])
+        self._column_sizes_applied = True

@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget,
 )
 
+from step1_setup import config_manager
 from step1_setup.field_defs import (
     INPUT_PATH_FIELDS, PORT_LIST_FILE_EXTENSIONS, is_port_list_filename,
 )
@@ -36,7 +37,10 @@ from ui.theme import (
     PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR,
 )
 from ui.background_task import run_task
-from ui.ui_common import DetailsList, add_shadow, build_section_header
+from ui.ui_common import (
+    DetailsList, add_shadow, build_section_header, run_export_config_dialog,
+    run_import_config_dialog,
+)
 
 # 2026-08 순서 변경: 화면의 입력 순서(PDK Folder -> Port List -> DBS Simulation)와
 # Validate 단계 순서를 동일하게 맞춘다 (field_defs.INPUT_PATH_FIELDS 참고).
@@ -129,16 +133,23 @@ class _StepLine(QFrame):
 
 
 class SetupView(QWidget):
-    def __init__(self, existing_config: dict, on_config_changed, on_next=None, parent=None):
+    def __init__(
+        self, existing_config: dict, on_config_changed, on_next=None,
+        on_config_imported=None, parent=None,
+    ):
         """
         Args:
             existing_config: 저장된 입력 경로 값
             on_config_changed: 값이 바뀔 때 저장을 요청하는 콜백(dict) -> None
             on_next: 모든 단계 통과 후 Next 버튼을 눌렀을 때 호출되는 콜백(선택)
+            on_config_imported: Import Config로 config 3종이 통째로 바뀐 뒤 호출되는
+                콜백(선택) - Step2/3 화면이 이미 예전 config로 만들어져 있으므로, 그
+                화면들을 새로 만들어 반영하도록 상위(MainWindow)에 알린다.
         """
         super().__init__(parent)
         self.on_config_changed = on_config_changed
         self.on_next = on_next
+        self.on_config_imported = on_config_imported
         self.path_edits: dict[str, QLineEdit] = {}
         self.step_chips: dict[str, _StepChip] = {}
         self.step_lines: list[_StepLine] = []
@@ -209,6 +220,15 @@ class SetupView(QWidget):
 
     def _build_action_row(self) -> QHBoxLayout:
         btn_row = QHBoxLayout()
+
+        self.export_btn = QPushButton("Export Config")
+        self.export_btn.clicked.connect(self._on_export_config)
+        btn_row.addWidget(self.export_btn)
+
+        self.import_btn = QPushButton("Import Config")
+        self.import_btn.clicked.connect(self._on_import_config)
+        btn_row.addWidget(self.import_btn)
+
         btn_row.addStretch()
 
         self.validate_btn = QPushButton("Validate")
@@ -480,6 +500,29 @@ class SetupView(QWidget):
     def _on_next_clicked(self) -> None:
         if self.on_next:
             self.on_next()
+
+    # ------------------------------------------------------------------
+    # Config export / import (2026-08 추가)
+    # ------------------------------------------------------------------
+    def _on_export_config(self) -> None:
+        self.on_config_changed(self._current_values())
+        run_export_config_dialog(self, self._current_values().get("pdk_folder", ""))
+
+    def _on_import_config(self) -> None:
+        if not run_import_config_dialog(self):
+            return
+        # config 3종이 디스크에서 전부 바뀌었으므로, 이 화면의 경로 입력을 새 값으로
+        # 채우고 검사 결과를 무효화한다. Step2/3 화면은 이미 예전 config로 만들어져
+        # 있으므로, 그 화면들도 새로 만들도록 상위(MainWindow)에 알린다.
+        self.load_from_config(config_manager.load_config())
+        if self.on_config_imported:
+            self.on_config_imported()
+
+    def load_from_config(self, config: dict) -> None:
+        """Import 직후, 저장된 경로 값으로 입력칸을 다시 채운다."""
+        for key, edit in self.path_edits.items():
+            edit.setText(config.get(key, ""))
+        self._invalidate_validation()
 
     # ------------------------------------------------------------------
     # 화면이 다시 보일 때마다 (Step2에서 Back으로 돌아왔을 때) 검사 결과를 무효화

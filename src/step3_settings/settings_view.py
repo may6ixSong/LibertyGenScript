@@ -40,7 +40,7 @@ from typing import Callable
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QAbstractItemView, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -63,7 +63,7 @@ from ui.theme import (
 )
 from ui.ui_common import (
     NoWheelComboBox, add_shadow, build_back_button, build_bottom_button_row,
-    build_label_with_info, build_section_header,
+    build_label_with_info, build_section_header, run_export_config_dialog,
 )
 
 _HINT_STYLE = f"color: {MUTED_TEXT_COLOR}; font-size: 11px;"
@@ -180,6 +180,11 @@ class SettingsView(QWidget):
         # "Check DBS Output Pins"를 눌러 현재 Port List로 pin을 펼친 상태인지 여부.
         # False인 동안에는 Validate 버튼이 잠겨 있다.
         self._dbs_check_done = False
+        # 2) Validate를 통과했는지 여부. Output Path의 Browse를 눌렀는데 아직
+        # 통과하지 못했으면, 그냥 잠긴 버튼으로 두는 대신 눌렀을 때 먼저 Check(1)와
+        # Validate(2)를 진행하라는 안내창을 띄운다 (2026-08 추가 - 사용자들이 버튼이
+        # 왜 안 눌리는지 몰랐다는 피드백 반영).
+        self._settings_validated = False
 
         self._build_layout()
 
@@ -533,11 +538,17 @@ class SettingsView(QWidget):
         self.output_path_edit.setEnabled(False)
         self.output_path_edit.textChanged.connect(self._update_generate_button_state)
         output_row.addWidget(self.output_path_edit, stretch=1)
+        # 2026-08 변경: 예전에는 Validate를 통과하기 전엔 이 버튼 자체가 disabled라서,
+        # 사용자가 "왜 안 눌리는지" 모른다는 피드백이 있었다. 이제 버튼은 항상 눌리게
+        # 두고, 클릭했는데 아직 Validate 전이면 그 자리에서 안내창을 띄운다
+        # (self._on_browse_output).
         self.output_browse_btn = QPushButton("Browse...")
-        self.output_browse_btn.setEnabled(False)
         self.output_browse_btn.clicked.connect(self._on_browse_output)
         output_row.addWidget(self.output_browse_btn)
         layout.addLayout(output_row)
+
+        self.export_btn = QPushButton("Export Config")
+        self.export_btn.clicked.connect(self._on_export_config)
 
         self.validate_btn = QPushButton("2) Validate")
         self.validate_btn.setObjectName("primaryButton")
@@ -549,9 +560,10 @@ class SettingsView(QWidget):
         self.generate_btn.clicked.connect(self._on_generate_clicked)
 
         self.back_btn = build_back_button(self.on_back)
-        layout.addLayout(
-            build_bottom_button_row(self.back_btn, self.validate_btn, self.generate_btn)
-        )
+        layout.addLayout(build_bottom_button_row(
+            self.back_btn, self.validate_btn, self.generate_btn,
+            extra_left_buttons=(self.export_btn,),
+        ))
 
         self._invalidate_dbs_check()
         return layout
@@ -584,6 +596,7 @@ class SettingsView(QWidget):
         돌아온 경우 포함) 호출된다.
         """
         self._dbs_check_done = False
+        self._settings_validated = False
         if hasattr(self, "dbs_related_table"):
             self.dbs_related_table.setRowCount(0)
             self.dbs_related_table.setVisible(False)
@@ -595,7 +608,9 @@ class SettingsView(QWidget):
             self.validate_btn.setToolTip("Run '1) Check DBS Output Pins' first.")
         if hasattr(self, "output_path_edit"):
             self.output_path_edit.setEnabled(False)
-            self.output_browse_btn.setEnabled(False)
+            self.output_browse_btn.setToolTip(
+                "Run '1) Check DBS Output Pins' and '2) Validate' first."
+            )
             self.generate_btn.setEnabled(False)
 
     def _on_check_dbs_pins(self) -> None:
@@ -733,16 +748,20 @@ class SettingsView(QWidget):
             self.hide_loading()
 
         if errors:
+            self._settings_validated = False
             self.result_label.setStyleSheet(f"color: {ERROR_COLOR};")
             self.result_label.setText("\n".join(f"• {e}" for e in errors))
             self.output_path_edit.setEnabled(False)
-            self.output_browse_btn.setEnabled(False)
+            self.output_browse_btn.setToolTip(
+                "Run '1) Check DBS Output Pins' and '2) Validate' first."
+            )
             self.generate_btn.setEnabled(False)
         else:
+            self._settings_validated = True
             self.result_label.setStyleSheet(f"color: {SUCCESS_COLOR};")
             self.result_label.setText("Settings passed validation. Choose an output path to continue.")
             self.output_path_edit.setEnabled(True)
-            self.output_browse_btn.setEnabled(True)
+            self.output_browse_btn.setToolTip("")
             self._update_generate_button_state()
 
     def _update_generate_button_state(self) -> None:
@@ -750,6 +769,17 @@ class SettingsView(QWidget):
         self.generate_btn.setEnabled(can_generate)
 
     def _on_browse_output(self) -> None:
+        # 2026-08 추가: Validate를 아직 통과하지 못했으면 대화상자를 열지 않고, 먼저
+        # Check(1) + Validate(2)를 진행하라는 안내창을 띄운다 - 예전에는 버튼 자체가
+        # disabled라서 사용자가 왜 안 눌리는지 몰랐다는 피드백을 반영.
+        if not self._settings_validated:
+            QMessageBox.information(
+                self, "Validate First",
+                "Run '1) Check DBS Output Pins' and '2) Validate' before choosing an "
+                "output path.",
+            )
+            return
+
         # DontUseNativeDialog(2026-08 추가): OS 고유 대화상자는 네트워크 폴더를 훑느라
         # 느릴 수 있고, 이 앱의 Ctrl+C 강제 종료 단축키(ui/force_quit.py)가 닿지 않는
         # 별도 창이라 열려 있는 동안은 먹히지 않는다. Qt 자체 대화상자를 쓰면 같은
@@ -773,6 +803,13 @@ class SettingsView(QWidget):
         self._persist()
         if self.on_generate:
             self.on_generate(output_path)
+
+    # ------------------------------------------------------------------
+    # Config export (2026-08 추가)
+    # ------------------------------------------------------------------
+    def _on_export_config(self) -> None:
+        self._persist()
+        run_export_config_dialog(self, self.get_pdk_folder())
 
     # ------------------------------------------------------------------
     # 화면이 다시 보일 때마다 (Step 2에서 왔을 때 / Step4에서 Back으로 돌아왔을 때)

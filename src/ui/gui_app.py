@@ -66,14 +66,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stack)
 
         loaded = config_manager.load_config()
-        self.setup_view = SetupView(loaded, self._on_config_changed, self._on_next)
-        self.udc_view = UDCView(
-            self._get_pdk_folder, self._get_dbs_folder, self._on_udc_next, self._on_udc_back,
+        self.setup_view = SetupView(
+            loaded, self._on_config_changed, self._on_next, self._on_config_imported,
         )
-        self.settings_view = SettingsView(
-            self._get_pdk_folder, self._get_dbs_folder, self._get_port_list_file,
-            self._on_generate, self._show_loading, self._hide_loading, self._on_settings_back,
-        )
+        self.udc_view = self._new_udc_view()
+        self.settings_view = self._new_settings_view()
         self.generate_view = GenerateView(self._on_generate_back)
 
         self.stack.addWidget(self.setup_view)
@@ -88,6 +85,46 @@ class MainWindow(QMainWindow):
         # 탐색) 등 느린 동기 작업 중 화면이 멈춘 것처럼 보일 때를 대비해, 어느 화면에
         # 있든 Ctrl+C를 누르면 즉시 강제 종료되도록 한다 (ui/force_quit.py 참고).
         install_force_quit(QApplication.instance(), self)
+
+    def _new_udc_view(self) -> UDCView:
+        return UDCView(
+            self._get_pdk_folder, self._get_dbs_folder, self._on_udc_next, self._on_udc_back,
+        )
+
+    def _new_settings_view(self) -> SettingsView:
+        return SettingsView(
+            self._get_pdk_folder, self._get_dbs_folder, self._get_port_list_file,
+            self._on_generate, self._show_loading, self._hide_loading, self._on_settings_back,
+        )
+
+    def _on_config_imported(self) -> None:
+        """
+        Step1의 Import Config로 config 3종 파일이 통째로 바뀐 뒤 호출된다. Step2/3
+        화면(self.udc_view/self.settings_view)은 이미 생성 시점의(예전) config로
+        만들어져 있어서 그 값을 그대로 들고 있으므로, 새로 만들어 갈아끼운다
+        (2026-08 추가). 콜백들이 항상 self.udc_view/self.settings_view를 그때그때
+        다시 읽으므로, 참조만 갈아끼우면 기존 배선(_on_udc_next 등)이 새 화면을 그대로
+        가리키게 된다.
+        """
+        old_udc, old_settings = self.udc_view, self.settings_view
+        current = self.stack.currentWidget()
+
+        self.udc_view = self._new_udc_view()
+        self.settings_view = self._new_settings_view()
+        self.stack.addWidget(self.udc_view)
+        self.stack.addWidget(self.settings_view)
+
+        self.stack.removeWidget(old_udc)
+        self.stack.removeWidget(old_settings)
+        old_udc.deleteLater()
+        old_settings.deleteLater()
+
+        if current is old_udc:
+            self.stack.setCurrentWidget(self.udc_view)
+        elif current is old_settings:
+            self.stack.setCurrentWidget(self.settings_view)
+        else:
+            self.stack.setCurrentWidget(current)
 
     def _on_config_changed(self, values: dict) -> None:
         config_manager.save_config(values)

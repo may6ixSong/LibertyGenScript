@@ -62,8 +62,21 @@ PDK 파일이 있고 DBS 파일은 그보다 적어서**, 자동 페어링만으
 만들지 결정할 수 없다는 것이 확인됐다 (2026-08 2차 재설계). 그래서 예전 UDC setting처럼
 **liberty 파일 하나당 setting 1개를 사용자가 직접 추가**하는 방식으로 되돌아왔다.
 
-**화면 레이아웃 (2026-08 개편)**: Step3처럼 좌우 2단. **왼쪽 = Common Fields + Voltage
-Map**(Step3에서 이리로 옮겨옴), **오른쪽 = Liberty Settings**.
+**화면 레이아웃 (2026-08 개편 → 2026-08 QSplitter 추가)**: Step3처럼 좌우 2단.
+**왼쪽 = Common Fields + Voltage Map**(Step3에서 이리로 옮겨옴), **오른쪽 = Liberty
+Settings**. 두 열은 `QHBoxLayout`이 아니라 `QSplitter`(`udc_view.UDCView.column_splitter`)
+로 나뉘어 있어서, 경계에 마우스를 올리면 커서가 좌우 조절 아이콘으로 바뀌고 드래그로
+폭을 직접 조절할 수 있다. 기본(첫 표시) 폭 비율은 1:1이 아니라 **왼쪽을 1/4 줄인 3:5**
+로 시작한다 - setting이 많아질수록 오른쪽 Liberty Settings에 훨씬 넓은 공간이 필요하다는
+피드백을 반영. 다만 왼쪽 카드(Common Fields + Voltage Map)의 실제 내용이 요구하는
+최소 폭보다 더 줄어들지는 않는다(Qt가 자식 위젯의 `minimumSizeHint`를 존중하므로,
+실측 비율은 화면 크기에 따라 3:5보다 완만할 수 있음). 이 기본 비율은 화면이 실제로
+처음 표시되어 진짜 폭을 알 수 있는 시점(`showEvent` → `_apply_default_column_sizes`)
+에 딱 한 번만 적용되고, 그 뒤 사용자가 드래그로 바꾼 폭은 Step1/3을 오가도 유지된다.
+
+각 Liberty Setting 카드의 **Remove 버튼은 클릭 즉시 지우지 않고 확인창(QMessageBox)
+을 먼저 띄운다**(`_EntryCard._confirm_remove`, 2026-08 추가) - 삭제를 되돌릴 방법이
+없어서 실수로 지우는 것을 막기 위함이며, 기본 선택지는 "No".
 
 1. **공통 필드** (전체 조합에 1번만 입력, 1차 재설계 그대로): `area`, `width`, `height`,
    `static_current`, `cell_name`, `MC/HDA/OUT Timing State`
@@ -166,6 +179,15 @@ output pin 입력을 고치거나 화면을 다시 열면(Step1에서 Port List�
 Check 결과는 무효가 되고 Validate가 다시 잠긴다. 와일드카드가 인식하는 대상은
 block5에서 실제로 `pin()`/`bus()`로 쓰이는 행들과 동일하게 `Port == "PORT"`인 행뿐이다.
 
+**Output Path Browse 클릭 시 안내창 (2026-08 추가)**: 예전에는 `1) Check` +
+`2) Validate`를 통과하기 전엔 Output Path의 Browse 버튼 자체가 disabled라서, 사용자가
+왜 그 버튼이 안 눌리는지 몰랐다는 피드백이 있었다. 그래서 이제 Browse 버튼은 항상
+눌리게 두고, 아직 Validate를 통과하지 못한 상태에서 클릭하면 폴더 선택 대화상자
+대신 "1) Check DBS Output Pins와 2) Validate를 먼저 진행하라"는 안내창
+(`QMessageBox.information`)을 띄운다(`SettingsView._on_browse_output`,
+`self._settings_validated` 플래그로 추적). Output Path 입력칸 자체는 예전처럼
+Validate를 통과해야만 편집 가능해진다.
+
 ### Step 3 Validate 검사 항목
 - Constants: `class` / `process_prefix` / `output_prefix` / `DFF Cell Name` /
   `LUT Table`이 비어있지 않은지, `Worst case primitive liberty`가 선택돼 있고 **Step2의
@@ -190,10 +212,18 @@ liberty 내부의 `library (...)` 이름도 이 파일명에서 `.lib`만 뺀 �
 
 ## Step 4 — Liberty 생성
 
-**생성된 파일 열기 (2026-08 추가)**: 파일 아이콘을 클릭하면 그 liberty 파일이 **새 창**에
-읽기 전용으로 열린다 — 어두운 배경 + 고정폭 글꼴 + 줄번호 + vim 상태줄이고, j/k/h/l,
-g/G, Ctrl+D/U로 이동하고 q 또는 Esc로 닫는다 (`ui/file_viewer.py`). 실제 `vi`/`vim`
-프로세스를 띄우려면 터미널 에뮬레이터가 필요해 X11 forwarding 환경에서 보장할 수 없어서,
+**생성된 파일 열기 (2026-08 추가 → 2026-08 검색 추가)**: 파일 아이콘을 클릭하면 그
+liberty 파일이 **새 창**에 읽기 전용으로 열린다 — 어두운 배경 + 고정폭 글꼴 + 줄번호 +
+vim 상태줄이고, j/k/h/l, g/G, Ctrl+D/U로 이동하고 q 또는 Esc로 닫는다
+(`ui/file_viewer.py`). **"/"를 누르면 상태줄 위에 vim 스타일 검색창이 뜨고, 패턴을
+입력한 뒤 Enter로 검색**한다(`_ViewerEdit`가 "/" 입력을 가로채 `FileViewerWindow._start_search`
+를 부르는 구조) - `QPlainTextEdit.find()`를 쓰므로 읽기 전용이어도 그대로 동작하고,
+현재 커서 위치부터 찾다가 끝까지 못 찾으면 파일 반대쪽 끝으로 옮겨 한 번 더 시도해
+자동으로 wrap-around한다. n = 마지막 검색어로 같은 방향 다음 일치, N = 반대 방향,
+검색창에서 Esc = 검색 취소하고 본문으로 포커스 복귀. 읽기 전용 뷰어라도 vi의 가장
+기본적인 명령(검색)은 그대로 먹혀야 한다는 요청을 반영한 것 - 편집/저장은 여전히
+지원하지 않는다. 실제 `vi`/`vim` 프로세스를 띄우려면 터미널 에뮬레이터가 필요해 X11
+forwarding 환경에서 보장할 수 없어서,
 **앱 안에 같은 느낌의 뷰어 창을 직접 구현**했다(편집/저장은 지원하지 않음). 아주 큰
 파일은 앞부분 20만 줄까지만 읽고 상태줄에 잘렸다고 표시한다.
 
@@ -259,7 +289,22 @@ operating_conditions (<NOT_FOUND_IN_PDK>) {
   1초 간격 tick 방식 유지).
 
 ## 아직 안 한 것 (TODO)
-- Config export/import 기능, 프로그램 시작 시 초기화 — 코드에 TODO만 남김, 미구현.
+- 프로그램 시작 시 초기화 — 코드에 TODO만 남김, 미구현.
+
+(해결됨) Config export/import 기능 — 2026-08 추가. 어느 Step에서든(Step1/2/3) 화면
+하단의 **Export Config** 버튼으로 지금 저장돼 있는 config 3종(`user_config.json` +
+`udc_settings.json` + `step3_settings.json`, Voltage Map 포함)을 파일 하나로 묶어
+내보낸다. 버튼 클릭 시 뜨는 저장 대화상자에서 출력 경로와 파일명을 직접 정할 수 있고
+(기본 이름 `liberty_generator_config`, 확장자 `.json`), Step1의 **Import Config**
+버튼으로 그 파일을 다시 불러와 config 3종을 통째로 덮어쓴다. 순수 로직은
+`config_transfer.py`(Qt 비의존, `export_config`/`import_config`), 대화상자 + 결과
+알림은 `ui/ui_common.py`의 `run_export_config_dialog`/`run_import_config_dialog`가
+담당한다. **Import 후에도 경로 유효성 검사는 예전과 동일하게 각 Step의 Validate가
+그대로 담당**한다(가져온 PDK/DBS 폴더, Port List 파일이 실제로 존재/유효한지는
+import 시점에 검사하지 않음 - 파일이 옮겨졌을 수 있으므로). Step1에서 Import하면
+이미 만들어져 있던 Step2/Step3 화면(UDCView/SettingsView)은 예전 config를 들고
+있으므로, `gui_app.MainWindow._on_config_imported`가 그 두 화면을 새로 만들어
+`QStackedWidget`에서 갈아끼운다.
 
 (해결됨) Port List 파싱 캐싱/조기 종료/백그라운드 스레드 이관 — 아래 "Port List 파싱
 성능 최적화" 절 참고.
