@@ -5,11 +5,11 @@
 ```
 generator/
 ├── run_generator.sh      # 실행 진입점 (소스로 바로 실행할 때)
-├── build_exe.sh            # 단일 실행파일로 빌드 (선택사항, 아래 참고)
+├── build_exe.sh            # 배포용 폴더로 빌드 (선택사항, 아래 참고)
 ├── config/                  # 설정 저장 위치 (소스 실행이든 빌드된 exe든 동일하게 여기 사용)
 │   └── user_config.json
 ├── output/                  # 실행마다 자동으로 비워지고 새 결과물로 채워짐 (직접 손대지 말 것)
-├── dist/                     # build_exe.sh 실행 시 결과물(generator 실행파일)이 생기는 곳
+├── dist/                     # build_exe.sh 결과물이 생기는 곳 (dist/liberty_generator/ 폴더)
 └── src/                       # 소스 코드
     ├── main.py                 # 진입점 (GUI 실행)
     ├── runtime_paths.py         # 소스 실행/빌드된 exe 실행 모두에서 경로를 올바르게 찾는 헬퍼
@@ -47,25 +47,41 @@ generator/
 PyQt5가 설치된 Anaconda Python(`/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7`)이
 필요함 (VWP에 이미 확인됨).
 
-### 2) 단일 실행파일로 빌드해서 배포 (python/pip 전혀 불필요)
+### 2) 빌드해서 폴더째 배포 (python/pip 전혀 불필요)
 
-이 Anaconda 환경에 PyInstaller가 이미 설치되어 있어 python/pip 없이도 동작하는
-완전한 단일 실행파일을 만들 수 있습니다.
+이 Anaconda 환경에 PyInstaller가 이미 설치되어 있어, python/pip 없이도 동작하는
+독립 실행 폴더를 만들 수 있습니다.
 
 ```bash
 ./build_exe.sh
 ```
-빌드가 끝나면 `dist/generator` 파일 하나가 생성됩니다. 이 파일만 다른 사람에게
-복사해주면, 그 사람은 python도 PyQt5도 몰라도 그냥 실행하면 됩니다:
+빌드가 끝나면 `dist/liberty_generator/` 폴더가 생깁니다. 이 폴더 안에 실행파일과
+필요한 라이브러리가 전부 들어있으니, **폴더 전체를** 다른 사람에게 복사해주면 됩니다.
+받는 사람은 python도 PyQt5도 몰라도 폴더 안의 실행파일만 실행하면 됩니다:
 ```bash
-chmod +x generator
-./generator
+cd liberty_generator
+chmod +x liberty_generator
+./liberty_generator
 ```
-실행하면 그 파일이 있는 위치 바로 옆에 `config/`, `output/` 폴더가 자동으로 생깁니다.
+실행하면 그 폴더 안에 `config/`, `output/` 폴더가 자동으로 생깁니다.
+폴더 안의 나머지 파일들은 실행에 필요한 라이브러리이므로 지우거나 옮기면 안 됩니다.
+
+묶어서 전달하려면:
+```bash
+tar czf liberty_generator.tar.gz -C dist liberty_generator
+```
 
 **참고**: 빌드(`build_exe.sh`)는 이 Anaconda 환경이 있어야 하지만, 빌드된 결과물
-(`dist/generator`)은 그 환경 없이도 독립적으로 동작합니다. 코드를 수정할 때마다
-`build_exe.sh`를 다시 실행해서 새 실행파일을 만들어야 합니다.
+(`dist/liberty_generator/`)은 그 환경 없이도 독립적으로 동작합니다. 코드를 수정할
+때마다 `build_exe.sh`를 다시 실행해서 새로 빌드해야 합니다.
+
+**주의**: 재빌드하면 `dist/liberty_generator/` 폴더를 통째로 지우고 다시 만듭니다.
+그 안에서 앱을 실행해 저장해둔 `config/`는 빌드 스크립트가 자동으로 백업했다가
+복원해주지만, `output/`은 사라집니다 (어차피 실행할 때마다 새로 채워지는 폴더입니다).
+
+**빌드가 느리다면**: `build_exe.sh` 안의 `EXCLUDES` 목록으로 Anaconda에 깔린
+numpy/scipy/matplotlib 등을 의존성 그래프에서 빼고 있습니다. 빌드된 앱이
+`No module named XXX`로 죽는다면 그 모듈만 목록에서 빼면 됩니다.
 
 ### "허가 거부(Permission denied)"가 뜨는 경우
 
