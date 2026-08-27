@@ -99,7 +99,7 @@ def _cap_text(value: float | None) -> str:
 
 
 def _volts_text(value: float | None) -> str:
-    return PORT_LIST_NOT_FOUND_TOKEN if value is None else "%0.4f" % value
+    return PORT_LIST_NOT_FOUND_TOKEN if value is None else "%0.5f" % value
 
 
 def _direction_text(f_out, pin: dict, pdk_filename: str) -> str:

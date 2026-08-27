@@ -329,6 +329,12 @@ import 시점에 검사하지 않음 - 파일이 옮겨졌을 수 있으므로).
 (해결됨) block4 pg_pin의 `switch_function` / `pg_function` 하드코딩 TODO — 2026-08에
 Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
 
+(해결됨) block5의 `{process_prefix}_input_signal_level`(Port List Volts 값) 소수점
+자리수 — 2026-08 변경: `%0.4f`(소수점 4자리)에서 **`%0.5f`(소수점 5자리)**로
+맞췄다(`block5_writer._volts_text`). block2의 `voltage_map`/`voltage`나 PDK의
+`input_voltage`/`output_voltage`가 이미 소수점 5자리로 나가고 있어서, block5의
+voltage 값도 그와 자리수를 맞춘 것.
+
 ## Ctrl+C 강제 종료 (2026-08 추가)
 
 Step1의 Port List 파싱, Step3의 Output Path 파일 대화상자(네트워크 폴더 탐색) 등에서
