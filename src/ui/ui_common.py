@@ -6,13 +6,17 @@ ui_common.py
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt5.QtCore import Qt, QPropertyAnimation
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
-    QAbstractItemView, QComboBox, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
-    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QToolTip, QWidget,
+    QAbstractItemView, QComboBox, QFileDialog, QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMessageBox, QPushButton, QToolTip, QWidget,
 )
 
+import config_transfer
 from ui.theme import ERROR_COLOR, MUTED_TEXT_COLOR, SUCCESS_COLOR, TEXT_COLOR
 
 
@@ -29,18 +33,81 @@ def build_back_button(on_back) -> QPushButton:
     return btn
 
 
-def build_bottom_button_row(back_button: QPushButton | None, *right_buttons: QPushButton) -> QHBoxLayout:
+def build_bottom_button_row(
+    back_button: QPushButton | None,
+    *right_buttons: QPushButton,
+    extra_left_buttons: tuple[QPushButton, ...] = (),
+) -> QHBoxLayout:
     """
-    하단 버튼 행 공통 레이아웃: Back 버튼(있으면)은 항상 왼쪽 끝, 나머지 버튼들은
-    오른쪽 끝에 정렬. back_button이 None이면 Back 없이 오른쪽 버튼들만 배치.
+    하단 버튼 행 공통 레이아웃: Back 버튼(있으면)은 항상 왼쪽 끝, extra_left_buttons가
+    있으면 그 옆에 이어서 배치(예: Export Config), 나머지 버튼들은 오른쪽 끝에 정렬.
+    back_button이 None이면 Back 없이 배치.
     """
     row = QHBoxLayout()
     if back_button is not None:
         row.addWidget(back_button)
+    for btn in extra_left_buttons:
+        row.addWidget(btn)
     row.addStretch()
     for btn in right_buttons:
         row.addWidget(btn)
     return row
+
+
+# ---------------------------------------------------------------------------
+# Config export/import (2026-08 추가) - 어느 Step에서든 현재 config(3개 json 파일)를
+# 파일 하나로 export할 수 있고, Step1에서 그 파일을 import할 수 있다. 실제 읽기/쓰기
+# 로직은 config_transfer.py(Qt 비의존)에 있고, 여기서는 파일 대화상자 + 결과 알림만
+# 담당한다.
+# ---------------------------------------------------------------------------
+def run_export_config_dialog(parent: QWidget, start_dir_hint: str = "") -> None:
+    default_name = config_transfer.DEFAULT_EXPORT_BASENAME + config_transfer.EXPORT_FILE_EXTENSION
+    initial_path = str(Path(start_dir_hint) / default_name) if start_dir_hint else default_name
+
+    path, _ = QFileDialog.getSaveFileName(
+        parent, "Export Config", initial_path,
+        f"Config Files (*{config_transfer.EXPORT_FILE_EXTENSION})",
+        options=QFileDialog.DontUseNativeDialog,
+    )
+    if not path:
+        return
+    if not path.lower().endswith(config_transfer.EXPORT_FILE_EXTENSION):
+        path += config_transfer.EXPORT_FILE_EXTENSION
+
+    try:
+        config_transfer.export_config(path)
+    except OSError as e:
+        QMessageBox.critical(parent, "Export Failed", f"Could not write config file:\n{e}")
+        return
+    QMessageBox.information(parent, "Export Complete", f"Config exported to:\n{path}")
+
+
+def run_import_config_dialog(parent: QWidget) -> bool:
+    """
+    config 파일을 불러와 3개 config 파일(user_config/udc_settings/step3_settings)을
+    전부 덮어쓴다. 성공하면 True를 반환하지만, 불러온 경로가 실제로 유효한지는 여기서
+    검사하지 않는다 - 예전처럼 각 Step의 Validate를 다시 통과해야 한다.
+    """
+    path, _ = QFileDialog.getOpenFileName(
+        parent, "Import Config", "",
+        f"Config Files (*{config_transfer.EXPORT_FILE_EXTENSION});;All Files (*)",
+        options=QFileDialog.DontUseNativeDialog,
+    )
+    if not path:
+        return False
+
+    try:
+        config_transfer.import_config(path)
+    except (OSError, ValueError) as e:
+        QMessageBox.critical(parent, "Import Failed", f"Could not read config file:\n{e}")
+        return False
+
+    QMessageBox.information(
+        parent, "Import Complete",
+        "Config imported. Files/folders referenced by the config may have changed or moved, "
+        "so run Validate again on each step to confirm they are still valid.",
+    )
+    return True
 
 
 class InfoIcon(QLabel):

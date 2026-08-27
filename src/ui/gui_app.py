@@ -13,6 +13,19 @@ Step 3(Constants & Pin Settings), Step 4(Generate 진행률)를 QStackedWidget�
 대화상자의 네트워크 폴더 탐색처럼 느린 동기 작업 중 화면이 멈춘 것처럼 보일 때, 어느
 Step 화면에서든 Ctrl+C를 누르면 프로세스를 즉시 하드킬한다.
 
+2026-08 추가: Step2/Step3 화면 지연 생성(lazy construction) - 예전에는 이 파일이
+MainWindow 생성자 안에서 UDCView/SettingsView를 앱 시작 시점에 미리 다 만들어 뒀는데,
+그 두 생성자가 각각 PDK/DBS 폴더 스캔(UDCView)과 저장된 Port List Excel 파싱
+(SettingsView의 Virtual Power 콤보)을 동기로 수행한다. 두 경로 다 사내망 네트워크
+마운트 폴더/파일일 수 있어 느릴 수 있는데, 이게 `window.show()`보다 먼저(생성자
+안에서) 끝나야 했으므로 `run_generator.sh`로 실행했을 때 **창 자체가 뜨기까지** 그
+시간을 그대로 기다려야 했다. 이제 두 화면은 사용자가 실제로 그 Step으로 처음
+이동할 때(`_get_or_create_udc_view`/`_get_or_create_settings_view`)에만 만들어지므로,
+창은 Step1(가벼운 SetupView 하나만 있음)만 준비되면 바로 뜬다 - 느린 스캔/파싱은
+그 Step으로 넘어가는 순간으로 미뤄질 뿐 없어지지는 않지만(Step2/3 자체를 열려면
+언젠가는 필요한 작업이므로), 최소한 "실행하자마자 뜨는 창"과 "그 다음에 필요한 순간
+기다리는 것"이 분리된다.
+
 실행 환경 주의사항 (VWP):
   - PyQt5는 Anaconda Python 3.7.6 (/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7)
     에서만 사용 가능함이 확인됨.
@@ -66,19 +79,18 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stack)
 
         loaded = config_manager.load_config()
-        self.setup_view = SetupView(loaded, self._on_config_changed, self._on_next)
-        self.udc_view = UDCView(
-            self._get_pdk_folder, self._get_dbs_folder, self._on_udc_next, self._on_udc_back,
+        self.setup_view = SetupView(
+            loaded, self._on_config_changed, self._on_next, self._on_config_imported,
         )
-        self.settings_view = SettingsView(
-            self._get_pdk_folder, self._get_dbs_folder, self._get_port_list_file,
-            self._on_generate, self._show_loading, self._hide_loading, self._on_settings_back,
-        )
+        # Step2/3는 지연 생성(위 모듈 docstring 참고) - 앱 시작 시점에는 만들지 않고
+        # 처음 그 Step으로 이동할 때 _get_or_create_*_view()가 만든다.
+        # (주의: 이 파일은 `from __future__ import annotations`가 없고 Python 3.7에서
+        # 실행되므로 "UDCView | None" 같은 PEP604 표기는 여기서 쓰지 않는다.)
+        self.udc_view = None
+        self.settings_view = None
         self.generate_view = GenerateView(self._on_generate_back)
 
         self.stack.addWidget(self.setup_view)
-        self.stack.addWidget(self.udc_view)
-        self.stack.addWidget(self.settings_view)
         self.stack.addWidget(self.generate_view)
 
         # 창 전체를 덮는 로딩 오버레이 (제일 마지막에 만들어야 다른 위젯들 위로 뜸)
@@ -88,6 +100,48 @@ class MainWindow(QMainWindow):
         # 탐색) 등 느린 동기 작업 중 화면이 멈춘 것처럼 보일 때를 대비해, 어느 화면에
         # 있든 Ctrl+C를 누르면 즉시 강제 종료되도록 한다 (ui/force_quit.py 참고).
         install_force_quit(QApplication.instance(), self)
+
+    def _get_or_create_udc_view(self) -> UDCView:
+        """
+        Step2 화면을 처음 요청받을 때만 만든다 - UDCView 생성자는 PDK/DBS 폴더를
+        스캔하므로(네트워크 마운트일 수 있어 느릴 수 있음), 앱을 시작하자마자 만들어
+        두면 그 스캔이 끝나야 창이 뜨는 문제가 있었다(위 모듈 docstring 참고).
+        """
+        if self.udc_view is None:
+            self.udc_view = UDCView(
+                self._get_pdk_folder, self._get_dbs_folder, self._on_udc_next, self._on_udc_back,
+            )
+            self.stack.addWidget(self.udc_view)
+        return self.udc_view
+
+    def _get_or_create_settings_view(self) -> SettingsView:
+        """Step3도 마찬가지로 처음 요청받을 때만 만든다(저장된 Port List Excel을 읽음)."""
+        if self.settings_view is None:
+            self.settings_view = SettingsView(
+                self._get_pdk_folder, self._get_dbs_folder, self._get_port_list_file,
+                self._on_generate, self._show_loading, self._hide_loading, self._on_settings_back,
+            )
+            self.stack.addWidget(self.settings_view)
+        return self.settings_view
+
+    def _on_config_imported(self) -> None:
+        """
+        Step1의 Import Config로 config 3종 파일이 통째로 바뀐 뒤 호출된다. Step2/3
+        화면(self.udc_view/self.settings_view)이 이미 만들어져 있었다면(예전 config를
+        들고 있으므로) 없애버려서, 다음에 그 Step으로 이동할 때
+        _get_or_create_udc_view()/_get_or_create_settings_view()가 새 config로 새로
+        만들게 한다(2026-08 추가). Import 버튼은 Step1에만 있으므로 이 시점의 현재
+        화면은 항상 setup_view이고, 지금 당장 Step2/3를 다시 보여줄 필요는 없다 - 아직
+        만들어진 적이 없다면(None) 그대로 둬도 다음 방문 때 최신 config로 만들어진다.
+        """
+        if self.udc_view is not None:
+            self.stack.removeWidget(self.udc_view)
+            self.udc_view.deleteLater()
+            self.udc_view = None
+        if self.settings_view is not None:
+            self.stack.removeWidget(self.settings_view)
+            self.settings_view.deleteLater()
+            self.settings_view = None
 
     def _on_config_changed(self, values: dict) -> None:
         config_manager.save_config(values)
@@ -108,18 +162,25 @@ class MainWindow(QMainWindow):
         self.loading_overlay.hide_overlay()
 
     def _on_next(self) -> None:
-        self.stack.setCurrentWidget(self.udc_view)
+        # Step2가 처음 만들어지는 순간이면 PDK/DBS 폴더 스캔이 함께 도는데(위 모듈
+        # docstring), 그동안 화면이 멈춘 것처럼 보이지 않도록 로딩 오버레이를 먼저
+        # 띄운다 (이미 한 번 만들어진 뒤라면 이 구간은 사실상 즉시 끝남).
+        self._show_loading("Loading UDC Settings...")
+        self.stack.setCurrentWidget(self._get_or_create_udc_view())
+        self._hide_loading()
 
     def _on_udc_next(self) -> None:
         self._show_loading("Loading Constants & Pin Settings...")
-        self.stack.setCurrentWidget(self.settings_view)
+        self.stack.setCurrentWidget(self._get_or_create_settings_view())
         self._hide_loading()
 
     def _on_udc_back(self) -> None:
         self.stack.setCurrentWidget(self.setup_view)
 
     def _on_settings_back(self) -> None:
-        self.stack.setCurrentWidget(self.udc_view)
+        # Step3는 Step2를 반드시 거쳐야만 도달하므로 이 시점에 udc_view는 이미
+        # 만들어져 있지만, 방어적으로 지연 생성 getter를 그대로 쓴다.
+        self.stack.setCurrentWidget(self._get_or_create_udc_view())
 
     def _on_generate_back(self) -> None:
         """

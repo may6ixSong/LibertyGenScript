@@ -18,22 +18,27 @@ timing·internal_power)를 만들 수 없으므로 이제 Validate 단계에서 
   - Pin 설정의 모든 하위 필드 (switch_function/pg_function, rise·fall power/when,
     timing_sense/timing_type, 인식된 DBS output pin마다의 related pin)
 
-DBS output pin의 related pin 검사(2026-08 확정):
+DBS output pin의 related pin 검사(2026-08 확정 → 2026-08 자동 채움 도입으로 수정):
   1. "Check DBS Output Pins"로 인식해 둔 pin 집합이 지금 Port List로 다시 펼친 결과와
      동일해야 한다 (Port List 파일이 바뀌면 인식 결과가 달라지므로, 다르면 다시 Check).
   2. 각 related pin은 비어 있으면 안 되고,
-  3. Port List에 실제로 존재하는 Pin name이어야 하며,
-  4. 그 DBS output pin이 있는 Port List 행의 'Related Pin' 컬럼 값과 정확히 일치해야
-     한다 (예: 입력이 'A'인데 Port List의 값이 'AA'면 에러).
+  3. Port List에 실제로 존재하는 Pin name이어야 한다.
+
+  (변경 이력) 예전에는 여기에 "그 DBS output pin이 있는 Port List 행의 'Related Pin'
+  컬럼 값과 정확히 일치해야 한다"는 4번째 규칙이 있었다. 이제 "Check DBS Output Pins"를
+  누르면 각 pin의 Related Pin이 Port List의 'Related Pin' 컬럼 값으로 **자동
+  채워지고**(settings_view._fill_related_pin_table), 사용자가 표에서 직접 다른 pin으로
+  고쳐 쓸 수도 있는 것이 의도된 동작이므로(Port List와 다른 pin을 쓰고 싶은 경우), 그
+  자동 채움 값을 그대로 다시 강제하는 이 규칙은 삭제했다 - 이제는 자동 채움이 곧 기본값
+  일치를 보장하고, 사용자가 의도적으로 바꾼 값은 "Port List에 실제 존재하는 pin"이기만
+  하면 통과한다.
 """
 
 from __future__ import annotations
 
 import fnmatch
 
-from step1_setup.port_list_reader import (
-    list_all_pin_names, list_pins_by_port_type, list_port_pins_detailed,
-)
+from step1_setup.port_list_reader import list_all_pin_names, list_pins_by_port_type
 from step3_settings.constants_field_defs import (
     CONDITION_NAME_KEY, CONDITION_VALUES_KEY, VOLTAGE_CONDITIONS_KEY, condition_value_key,
     power_type_count_of, power_type_label, voltage_map_name_key,
@@ -195,10 +200,6 @@ def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
         return errors
 
     all_pin_names = set(list_all_pin_names(port_list_file))
-    port_list_related = {
-        pin["pin_name"]: (pin.get("related_pin") or "").strip()
-        for pin in list_port_pins_detailed(port_list_file)
-    }
 
     for pin_name in recognized:
         value = str(related_map.get(pin_name, "")).strip()
@@ -208,13 +209,6 @@ def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
         if value not in all_pin_names:
             errors.append(
                 f"Related Pin '{value}' (for DBS output pin '{pin_name}') is not a pin in the Port List."
-            )
-            continue
-        expected = port_list_related.get(pin_name, "")
-        if value != expected:
-            errors.append(
-                f"Related Pin '{value}' (for DBS output pin '{pin_name}') does not match the "
-                f"Port List 'Related Pin' column value {expected!r}."
             )
 
     return errors

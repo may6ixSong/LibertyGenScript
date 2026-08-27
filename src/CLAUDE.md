@@ -62,8 +62,21 @@ PDK 파일이 있고 DBS 파일은 그보다 적어서**, 자동 페어링만으
 만들지 결정할 수 없다는 것이 확인됐다 (2026-08 2차 재설계). 그래서 예전 UDC setting처럼
 **liberty 파일 하나당 setting 1개를 사용자가 직접 추가**하는 방식으로 되돌아왔다.
 
-**화면 레이아웃 (2026-08 개편)**: Step3처럼 좌우 2단. **왼쪽 = Common Fields + Voltage
-Map**(Step3에서 이리로 옮겨옴), **오른쪽 = Liberty Settings**.
+**화면 레이아웃 (2026-08 개편 → 2026-08 QSplitter 추가)**: Step3처럼 좌우 2단.
+**왼쪽 = Common Fields + Voltage Map**(Step3에서 이리로 옮겨옴), **오른쪽 = Liberty
+Settings**. 두 열은 `QHBoxLayout`이 아니라 `QSplitter`(`udc_view.UDCView.column_splitter`)
+로 나뉘어 있어서, 경계에 마우스를 올리면 커서가 좌우 조절 아이콘으로 바뀌고 드래그로
+폭을 직접 조절할 수 있다. 기본(첫 표시) 폭 비율은 1:1이 아니라 **왼쪽을 1/4 줄인 3:5**
+로 시작한다 - setting이 많아질수록 오른쪽 Liberty Settings에 훨씬 넓은 공간이 필요하다는
+피드백을 반영. 다만 왼쪽 카드(Common Fields + Voltage Map)의 실제 내용이 요구하는
+최소 폭보다 더 줄어들지는 않는다(Qt가 자식 위젯의 `minimumSizeHint`를 존중하므로,
+실측 비율은 화면 크기에 따라 3:5보다 완만할 수 있음). 이 기본 비율은 화면이 실제로
+처음 표시되어 진짜 폭을 알 수 있는 시점(`showEvent` → `_apply_default_column_sizes`)
+에 딱 한 번만 적용되고, 그 뒤 사용자가 드래그로 바꾼 폭은 Step1/3을 오가도 유지된다.
+
+각 Liberty Setting 카드의 **Remove 버튼은 클릭 즉시 지우지 않고 확인창(QMessageBox)
+을 먼저 띄운다**(`_EntryCard._confirm_remove`, 2026-08 추가) - 삭제를 되돌릴 방법이
+없어서 실수로 지우는 것을 막기 위함이며, 기본 선택지는 "No".
 
 1. **공통 필드** (전체 조합에 1번만 입력, 1차 재설계 그대로): `area`, `width`, `height`,
    `static_current`, `cell_name`, `MC/HDA/OUT Timing State`
@@ -166,6 +179,24 @@ output pin 입력을 고치거나 화면을 다시 열면(Step1에서 Port List�
 Check 결과는 무효가 되고 Validate가 다시 잠긴다. 와일드카드가 인식하는 대상은
 block5에서 실제로 `pin()`/`bus()`로 쓰이는 행들과 동일하게 `Port == "PORT"`인 행뿐이다.
 
+**Related Pin 자동 채움 (2026-08 변경)**: `1) Check DBS Output Pins`를 누르면 인식된
+DBS output pin마다 Related Pin 칸이 **Port List의 'Related Pin' 컬럼 값으로 자동
+채워진다**(`SettingsView._fill_related_pin_table`, `port_list_reader.list_port_pins_detailed`
+로 pin 이름 → Related Pin 매핑을 가져옴). 예전에는 이 칸이 빈 채로 시작해서 사용자가
+Port List를 보고 직접 옮겨 적어야 했다. 표에서 바로 값을 고칠 수 있고(Port List와
+다른 pin을 쓰고 싶은 경우), 이미 그 pin에 대해 저장해 둔 값(직접 고쳤던 값 포함)이
+있으면 자동 채움 대신 그 값을 그대로 유지한다 - Check를 다시 눌러도 이미 입력해 둔
+값이 날아가지 않는다.
+
+**Output Path Browse 클릭 시 안내창 (2026-08 추가)**: 예전에는 `1) Check` +
+`2) Validate`를 통과하기 전엔 Output Path의 Browse 버튼 자체가 disabled라서, 사용자가
+왜 그 버튼이 안 눌리는지 몰랐다는 피드백이 있었다. 그래서 이제 Browse 버튼은 항상
+눌리게 두고, 아직 Validate를 통과하지 못한 상태에서 클릭하면 폴더 선택 대화상자
+대신 "1) Check DBS Output Pins와 2) Validate를 먼저 진행하라"는 안내창
+(`QMessageBox.information`)을 띄운다(`SettingsView._on_browse_output`,
+`self._settings_validated` 플래그로 추적). Output Path 입력칸 자체는 예전처럼
+Validate를 통과해야만 편집 가능해진다.
+
 ### Step 3 Validate 검사 항목
 - Constants: `class` / `process_prefix` / `output_prefix` / `DFF Cell Name` /
   `LUT Table`이 비어있지 않은지, `Worst case primitive liberty`가 선택돼 있고 **Step2의
@@ -176,9 +207,12 @@ block5에서 실제로 `pin()`/`bus()`로 쓰이는 행들과 동일하게 `Port
   pin과 매치되는지.
 - DBS output pin의 related pin: **① Check로 인식해 둔 pin 집합이 지금 Port List로 다시
   펼친 결과와 같은지** (다르면 "다시 Check" 에러), ② 각 related pin이 비어있지 않은지,
-  ③ Port List에 실제 존재하는 Pin name인지, ④ **그 DBS output pin이 있는 Port List 행의
-  `Related Pin` 컬럼 값과 정확히 일치하는지** (예: 입력이 `A`인데 Port List 값이 `AA`면
-  에러, `A`라는 pin이 Port List에 아예 없어도 에러).
+  ③ Port List에 실제 존재하는 Pin name인지. (변경 이력 - 2026-08: 예전에는 여기에
+  "그 DBS output pin이 있는 Port List 행의 `Related Pin` 컬럼 값과 정확히 일치해야
+  한다"는 ④번 규칙이 있었다. Check 시점에 이미 그 컬럼 값으로 자동 채워지고 사용자가
+  의도적으로 다른 pin으로 고칠 수도 있는 것이 정상 동작이 되면서, 그 자동 채움 값을
+  다시 강제하던 이 규칙은 삭제했다 - 이제는 Port List에 실제 존재하는 pin이기만 하면
+  자동 채움값이든 사용자가 고친 값이든 통과한다.)
 
 ## 출력 파일명
 
@@ -190,10 +224,18 @@ liberty 내부의 `library (...)` 이름도 이 파일명에서 `.lib`만 뺀 �
 
 ## Step 4 — Liberty 생성
 
-**생성된 파일 열기 (2026-08 추가)**: 파일 아이콘을 클릭하면 그 liberty 파일이 **새 창**에
-읽기 전용으로 열린다 — 어두운 배경 + 고정폭 글꼴 + 줄번호 + vim 상태줄이고, j/k/h/l,
-g/G, Ctrl+D/U로 이동하고 q 또는 Esc로 닫는다 (`ui/file_viewer.py`). 실제 `vi`/`vim`
-프로세스를 띄우려면 터미널 에뮬레이터가 필요해 X11 forwarding 환경에서 보장할 수 없어서,
+**생성된 파일 열기 (2026-08 추가 → 2026-08 검색 추가)**: 파일 아이콘을 클릭하면 그
+liberty 파일이 **새 창**에 읽기 전용으로 열린다 — 어두운 배경 + 고정폭 글꼴 + 줄번호 +
+vim 상태줄이고, j/k/h/l, g/G, Ctrl+D/U로 이동하고 q 또는 Esc로 닫는다
+(`ui/file_viewer.py`). **"/"를 누르면 상태줄 위에 vim 스타일 검색창이 뜨고, 패턴을
+입력한 뒤 Enter로 검색**한다(`_ViewerEdit`가 "/" 입력을 가로채 `FileViewerWindow._start_search`
+를 부르는 구조) - `QPlainTextEdit.find()`를 쓰므로 읽기 전용이어도 그대로 동작하고,
+현재 커서 위치부터 찾다가 끝까지 못 찾으면 파일 반대쪽 끝으로 옮겨 한 번 더 시도해
+자동으로 wrap-around한다. n = 마지막 검색어로 같은 방향 다음 일치, N = 반대 방향,
+검색창에서 Esc = 검색 취소하고 본문으로 포커스 복귀. 읽기 전용 뷰어라도 vi의 가장
+기본적인 명령(검색)은 그대로 먹혀야 한다는 요청을 반영한 것 - 편집/저장은 여전히
+지원하지 않는다. 실제 `vi`/`vim` 프로세스를 띄우려면 터미널 에뮬레이터가 필요해 X11
+forwarding 환경에서 보장할 수 없어서,
 **앱 안에 같은 느낌의 뷰어 창을 직접 구현**했다(편집/저장은 지원하지 않음). 아주 큰
 파일은 앞부분 20만 줄까지만 읽고 상태줄에 잘렸다고 표시한다.
 
@@ -259,7 +301,22 @@ operating_conditions (<NOT_FOUND_IN_PDK>) {
   1초 간격 tick 방식 유지).
 
 ## 아직 안 한 것 (TODO)
-- Config export/import 기능, 프로그램 시작 시 초기화 — 코드에 TODO만 남김, 미구현.
+- 프로그램 시작 시 초기화 — 코드에 TODO만 남김, 미구현.
+
+(해결됨) Config export/import 기능 — 2026-08 추가. 어느 Step에서든(Step1/2/3) 화면
+하단의 **Export Config** 버튼으로 지금 저장돼 있는 config 3종(`user_config.json` +
+`udc_settings.json` + `step3_settings.json`, Voltage Map 포함)을 파일 하나로 묶어
+내보낸다. 버튼 클릭 시 뜨는 저장 대화상자에서 출력 경로와 파일명을 직접 정할 수 있고
+(기본 이름 `liberty_generator_config`, 확장자 `.json`), Step1의 **Import Config**
+버튼으로 그 파일을 다시 불러와 config 3종을 통째로 덮어쓴다. 순수 로직은
+`config_transfer.py`(Qt 비의존, `export_config`/`import_config`), 대화상자 + 결과
+알림은 `ui/ui_common.py`의 `run_export_config_dialog`/`run_import_config_dialog`가
+담당한다. **Import 후에도 경로 유효성 검사는 예전과 동일하게 각 Step의 Validate가
+그대로 담당**한다(가져온 PDK/DBS 폴더, Port List 파일이 실제로 존재/유효한지는
+import 시점에 검사하지 않음 - 파일이 옮겨졌을 수 있으므로). Step1에서 Import하면
+이미 만들어져 있던 Step2/Step3 화면(UDCView/SettingsView)은 예전 config를 들고
+있으므로, `gui_app.MainWindow._on_config_imported`가 그 두 화면을 새로 만들어
+`QStackedWidget`에서 갈아끼운다.
 
 (해결됨) Port List 파싱 캐싱/조기 종료/백그라운드 스레드 이관 — 아래 "Port List 파싱
 성능 최적화" 절 참고.
@@ -271,6 +328,12 @@ operating_conditions (<NOT_FOUND_IN_PDK>) {
 
 (해결됨) block4 pg_pin의 `switch_function` / `pg_function` 하드코딩 TODO — 2026-08에
 Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
+
+(해결됨) block5의 `{process_prefix}_input_signal_level`(Port List Volts 값) 소수점
+자리수 — 2026-08 변경: `%0.4f`(소수점 4자리)에서 **`%0.5f`(소수점 5자리)**로
+맞췄다(`block5_writer._volts_text`). block2의 `voltage_map`/`voltage`나 PDK의
+`input_voltage`/`output_voltage`가 이미 소수점 5자리로 나가고 있어서, block5의
+voltage 값도 그와 자리수를 맞춘 것.
 
 ## Ctrl+C 강제 종료 (2026-08 추가)
 
@@ -372,6 +435,39 @@ Step1의 Port List 파싱, Step3의 Output Path 파일 대화상자(네트워크
    느린 네트워크 폴더로 들어가는 경우 - Qt API 특성상 모달이라 완전히 배경으로
    옮길 수 없다(위 "근본 원인" 절 참고). 두 경우 모두 Ctrl+C 강제 종료(위 절)가
    여전히 안전장치로 남아 있다.
+
+## 앱 실행 직후 창이 늦게 뜨는 문제 (2026-08 해결)
+
+`run_generator.sh`로 실행했을 때 **창 자체가 화면에 나타나기까지** 시간이 걸린다는
+사용자 피드백 원인: 예전에는 `gui_app.MainWindow.__init__`이 앱을 시작하는 시점에
+Step1(SetupView)뿐 아니라 **Step2(UDCView)/Step3(SettingsView)까지 전부 미리 만들어
+뒀다** - `launch_gui()`가 `window.show()`를 부르기 전에 이 생성자들이 전부 끝나야
+했다. 그런데:
+- `UDCView.__init__`은 곧바로 `_rescan_files()`로 PDK Folder/DBS Simulation Folder를
+  스캔한다 (`file_scanner.list_pdk_lib_files`/`list_dbs_mt0_files`).
+- `SettingsView.__init__`은 Virtual Power 콤보를 채우려고 저장된 Port List Excel
+  파일을 곧바로 연다(`_populate_virtual_power_combo` → `list_pins_by_port_type`).
+
+두 폴더/파일 모두 사내망 네트워크 마운트일 수 있어("근본 원인" 절 참고) 이 스캔/파싱
+자체가 느릴 수 있는데, 이게 **창이 뜨기도 전에** 동기로 끝나야 했으므로 실행하자마자
+한참 동안 아무 창도 안 뜨는 것처럼 보였다.
+
+**해결**: Step2/Step3 화면을 지연 생성(lazy construction)으로 바꿨다
+(`gui_app.MainWindow._get_or_create_udc_view`/`_get_or_create_settings_view`). 앱을
+시작할 때는 가벼운 SetupView 하나만 만들어서 창을 즉시 띄우고, UDCView/SettingsView는
+사용자가 **처음** 그 Step으로 실제로 이동하는 순간(`_on_next`/`_on_udc_next`)에만
+만든다 - 그 순간에는 로딩 오버레이를 먼저 띄운 뒤 만들어서(`_on_next`도 `_on_udc_next`
+처럼 `show_loading`/`hide_loading`으로 감쌈) 화면이 멈춘 것처럼 보이지 않게 한다. 한
+번 만들어진 뒤에는 Step을 오가도 다시 만들지 않고 그대로 재사용한다. Config Import
+(위 "Config export/import" 절)로 config 3종이 통째로 바뀌면 이미 만들어진
+UDCView/SettingsView는 예전 config를 들고 있는 채로 버려지고(`_on_config_imported`가
+`QStackedWidget`에서 제거 + `None`으로 되돌림), 다음에 그 Step으로 이동할 때 최신
+config로 다시 만들어진다.
+
+느린 스캔/파싱 자체가 없어지는 것은 아니다 - Step2/3를 열려면 언젠가는 필요한
+작업이므로, 그 비용은 "실행 직후"에서 "그 Step으로 처음 넘어가는 순간"으로 옮겨질
+뿐이다. 다만 그 시점은 이미 창이 떠서 사용자가 Step1을 채우고 있는 동안이라 체감
+대기가 훨씬 짧고, 로딩 오버레이도 뜬다.
 
 ## Step 이동 규칙 (2026-08 확정)
 

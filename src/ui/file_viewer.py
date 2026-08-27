@@ -8,6 +8,11 @@ Step4에서 파일 아이콘을 클릭하면 이 창이 뜬다. 화면 구성/�
   - 맨 아래 vim 스타일 상태줄 ("파일경로" 1234L, 56789B  --12%--)
   - 읽기 전용 (실수로 내용이 바뀌지 않음)
   - 이동 키: j/k, h/l, g/G, Ctrl+D/Ctrl+U, q 또는 Esc로 창 닫기
+  - 검색: "/"를 누르면 상태줄 위에 vim 스타일 검색창이 뜨고, 패턴을 입력한 뒤 Enter로
+    검색한다(끝까지 못 찾으면 파일 처음/끝에서 한 번 더 시도해 자동으로 wrap-around
+    한다). n = 같은 방향으로 다음 일치, N = 반대 방향. 검색창에서 Esc를 누르면 검색을
+    취소하고 본문으로 포커스가 돌아간다 (2026-08 추가 - 읽기 전용이어도 vi의 기본
+    검색 명령은 그대로 먹히게 해 달라는 요청 반영).
 
 **환경 제약 (2026-08 확인)**: 실제 `vi`/`vim` 프로세스를 띄우려면 터미널
 에뮬레이터(xterm 등)가 필요하고, GUI를 X11 forwarding으로 띄우는 VWP 환경에서는 그게
@@ -25,9 +30,13 @@ from pathlib import Path
 
 from PyQt5.QtCore import QRect, QSize, Qt
 from PyQt5.QtGui import (
-    QColor, QFont, QFontMetrics, QKeyEvent, QPainter, QTextCursor, QTextFormat, QTextOption,
+    QColor, QFont, QFontMetrics, QKeyEvent, QPainter, QTextCursor, QTextDocument,
+    QTextFormat, QTextOption,
 )
-from PyQt5.QtWidgets import QLabel, QMainWindow, QPlainTextEdit, QTextEdit, QWidget
+from PyQt5.QtWidgets import (
+    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QTextEdit, QVBoxLayout,
+    QWidget,
+)
 
 # vim 기본 배색(어두운 테마)에 가깝게
 _BG_COLOR = "#1E1E1E"
@@ -63,11 +72,13 @@ class _LineNumberArea(QWidget):
 
 
 class _ViewerEdit(QPlainTextEdit):
-    """읽기 전용 + 줄번호 + vim식 이동 키를 가진 텍스트 뷰."""
+    """읽기 전용 + 줄번호 + vim식 이동/검색 키를 가진 텍스트 뷰."""
 
-    def __init__(self, on_quit, parent=None):
+    def __init__(self, on_quit, on_search_start, on_search_step, parent=None):
         super().__init__(parent)
         self._on_quit = on_quit
+        self._on_search_start = on_search_start
+        self._on_search_step = on_search_step
         self.setReadOnly(True)
         self.setWordWrapMode(QTextOption.NoWrap)
         self.setFrameShape(QPlainTextEdit.NoFrame)
@@ -156,9 +167,19 @@ class _ViewerEdit(QPlainTextEdit):
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt 오버라이드 시그니처
         key = event.key()
         modifiers = event.modifiers()
+        text = event.text()
 
         if key in (Qt.Key_Q, Qt.Key_Escape) and not (modifiers & Qt.ControlModifier):
             self._on_quit()
+            return
+        if text == "/" and not (modifiers & Qt.ControlModifier):
+            self._on_search_start()
+            return
+        if text == "n":
+            self._on_search_step(True)
+            return
+        if text == "N":
+            self._on_search_step(False)
             return
         if modifiers & Qt.ControlModifier and key == Qt.Key_D:
             self._move_cursor_pages(0.5)
@@ -196,6 +217,23 @@ def _remap(event, key: int) -> QKeyEvent:
     return QKeyEvent(event.type(), key, event.modifiers())
 
 
+class _SearchEdit(QLineEdit):
+    """
+    "/" 검색창. Enter는 QLineEdit 기본 returnPressed로 처리하고, Esc만 여기서 가로채
+    (기본 동작이 없으므로) 검색을 취소하는 콜백을 부른다.
+    """
+
+    def __init__(self, on_cancel, parent=None):
+        super().__init__(parent)
+        self._on_cancel = on_cancel
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt 오버라이드 시그니처
+        if event.key() == Qt.Key_Escape:
+            self._on_cancel()
+            return
+        super().keyPressEvent(event)
+
+
 class FileViewerWindow(QMainWindow):
     """
     파일 하나를 보여주는 독립 창. 여러 개를 동시에 띄울 수 있으며, 닫으면 스스로
@@ -211,8 +249,38 @@ class FileViewerWindow(QMainWindow):
         self.setWindowTitle(f"{Path(self.file_path).name} - Liberty Generator (read-only)")
         self.resize(_VIEWER_DEFAULT_WIDTH, _VIEWER_DEFAULT_HEIGHT)
 
-        self.edit = _ViewerEdit(self.close)
-        self.setCentralWidget(self.edit)
+        self.edit = _ViewerEdit(self.close, self._start_search, self._step_search)
+        self._last_search = ""
+
+        # "/" 검색창 - 평소엔 숨겨져 있다가 "/"를 누르면 본문과 상태줄 사이에 나타난다
+        # (vim이 화면 맨 아래에 명령줄을 띄우는 것과 같은 자리).
+        search_row = QWidget()
+        search_row.setVisible(False)
+        search_row.setStyleSheet(f"background-color: {_STATUS_BG};")
+        search_layout = QHBoxLayout(search_row)
+        search_layout.setContentsMargins(6, 2, 6, 2)
+        search_layout.setSpacing(4)
+        prefix_label = QLabel("/")
+        prefix_label.setStyleSheet(
+            f"color: {_STATUS_FG}; font-family: {_MONOSPACE_FAMILIES}; font-size: 12px;"
+        )
+        search_layout.addWidget(prefix_label)
+        self.search_edit = _SearchEdit(self._cancel_search)
+        self.search_edit.setStyleSheet(
+            f"background-color: {_BG_COLOR}; color: {_FG_COLOR}; border: none; "
+            f"font-family: {_MONOSPACE_FAMILIES}; font-size: 12px; padding: 2px 4px;"
+        )
+        self.search_edit.returnPressed.connect(self._submit_search)
+        search_layout.addWidget(self.search_edit, 1)
+        self.search_row = search_row
+
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.edit, 1)
+        central_layout.addWidget(self.search_row)
+        self.setCentralWidget(central)
 
         self.status_label = QLabel("")
         self.status_label.setStyleSheet(
@@ -249,6 +317,50 @@ class FileViewerWindow(QMainWindow):
         self.edit.moveCursor(QTextCursor.Start)
         self._refresh_status()
 
+    # -- "/" 검색 -----------------------------------------------------------
+    def _start_search(self) -> None:
+        self.search_row.setVisible(True)
+        self.search_edit.setFocus()
+        self.search_edit.selectAll()
+
+    def _cancel_search(self) -> None:
+        self.search_row.setVisible(False)
+        self.edit.setFocus()
+
+    def _submit_search(self) -> None:
+        pattern = self.search_edit.text()
+        self.search_row.setVisible(False)
+        self.edit.setFocus()
+        if not pattern:
+            return
+        self._last_search = pattern
+        self._run_search(pattern, forward=True)
+
+    def _step_search(self, forward: bool) -> None:
+        """n(forward) / N(backward)로 마지막 검색어를 다시 찾는다."""
+        if not self._last_search:
+            return
+        self._run_search(self._last_search, forward=forward)
+
+    def _run_search(self, pattern: str, forward: bool) -> None:
+        """
+        현재 커서 위치부터 찾고, 끝(또는 시작)까지 못 찾으면 파일 반대쪽 끝으로 커서를
+        옮겨 한 번 더 시도한다 - vim의 검색 wrap-around와 같은 동작.
+        """
+        flags = QTextDocument.FindFlags()
+        if not forward:
+            flags |= QTextDocument.FindBackward
+
+        found = self.edit.find(pattern, flags)
+        if not found:
+            cursor = self.edit.textCursor()
+            cursor.movePosition(QTextCursor.Start if forward else QTextCursor.End)
+            self.edit.setTextCursor(cursor)
+            found = self.edit.find(pattern, flags)
+
+        if not found:
+            self.status_label.setText(f'Pattern not found: "{pattern}"')
+
     def _refresh_status(self) -> None:
         """vim 상태줄 흉내: "경로" 1234L, 5678B  12,1  Top/All/xx%"""
         cursor = self.edit.textCursor()
@@ -267,7 +379,7 @@ class FileViewerWindow(QMainWindow):
         self.status_label.setToolTip(self.file_path)
         self.status_label.setText(
             f'"{Path(self.file_path).name}" {self._line_count}L, {self._byte_size}B'
-            f"   {line},{column}   {position}   [read-only: j/k move, q closes]{truncated}"
+            f"   {line},{column}   {position}   [read-only: j/k move, / search, q closes]{truncated}"
         )
 
 
