@@ -3,8 +3,11 @@ udc_view.py
 
 'UDC Settings' 화면 (Step 2, 2026-08 전면 재설계 -> 2026-08 2차 재설계).
 
-  - 위쪽 "Common Fields" 카드에 이번에 생성할 모든 조합이 공유하는 값을 한 번만 입력.
-  - 아래쪽 "Liberty Settings" 카드에서 **liberty 파일 1개당 setting 1개**를 직접 추가한다.
+2026-08 레이아웃 개편: 화면을 좌우 2단으로 나눴다.
+  - **왼쪽**: "Common Fields"(이번에 생성할 모든 조합이 공유하는 값, 한 번만 입력) +
+    "Voltage Map"(Step 3에서 이리로 옮겨옴 - 사용자가 voltage condition을 직접 추가/
+    삭제하고 이름도 정한다. voltage_map_view.VoltageMapPanel).
+  - **오른쪽**: "Liberty Settings" 카드에서 **liberty 파일 1개당 setting 1개**를 직접 추가한다.
     각 setting은 corner / beol inform / voltage / temperature / condition 을 입력받고,
     그 값들로 PDK 폴더에서 맞을 것 같은 파일을 자동으로 찾아 드롭다운 맨 위에 추천으로
     올려 준다. PDK를 고르면 같은 corner/voltage/temperature를 가진 DBS output 파일이
@@ -14,8 +17,13 @@ PDK 파일명의 beol inform 토큰은 사용자가 고른 beol inform과 다를
 (2026-08 확인), 추천의 필수 조건은 corner + voltage + temperature 세 가지이고 beol은
 순위 가산점으로만 쓴다 (udc_field_defs.match_pdk_file 참고).
 
-Validate 버튼을 누르면 PDK/DBS 폴더를 다시 스캔해서, 공통 필드와 모든 setting이 빈 값
-없이 채워졌는지 + 고른 파일들이 실제로 존재하는지를 검사한다.
+각 setting의 Condition 드롭다운 선택지는 코드에 고정된 bst/wst/tiv가 아니라 **왼쪽
+Voltage Map에 정의된 condition 이름들**이다. condition을 추가/삭제하거나 이름을 고치면
+즉시 모든 setting의 드롭다운이 다시 채워진다(_on_voltage_conditions_changed).
+
+Validate 버튼을 누르면 PDK/DBS 폴더를 다시 스캔해서, 공통 필드/Voltage Map/모든 setting이
+빈 값 없이 채워졌는지 + 고른 파일들이 실제로 존재하는지를 검사한다. 화면에 다시 들어오면
+(Step1/Step3에서 돌아오면) 검사 결과는 무효가 되고 Next가 다시 잠긴다.
 """
 
 from __future__ import annotations
@@ -39,6 +47,9 @@ from step2_udc.udc_field_defs import (
     recommend_pdk_files,
 )
 from step2_udc.udc_validator import validate_common_fields, validate_entries
+from step2_udc.voltage_map_view import VoltageMapPanel
+from step3_settings import settings_manager
+from step3_settings.settings_validator import validate_voltage_map
 from ui.theme import (
     ERROR_COLOR, MUTED_TEXT_COLOR, RECOMMEND_BG, RECOMMEND_TEXT, SUCCESS_COLOR, TEXT_COLOR,
 )
@@ -79,14 +90,41 @@ _ENTRY_FIELD_INFO = {
     ENTRY_VOLTAGE_KEY: "Written as 0p####v in filenames (0.72 → 0p7200v).",
     ENTRY_TEMPERATURE_KEY: "Written as ##c / m##c in filenames (40 → 40c, -40 → m40c).",
     ENTRY_CONDITION_KEY: (
-        "Selects which group (BST / WST / TIV) of Step 3's Voltage Map supplies this "
-        "liberty's voltage_map values."
+        "Selects which voltage condition of the Voltage Map (left column) supplies this "
+        "liberty's voltage_map values. Add / rename conditions there - the list here "
+        "follows it."
     ),
 }
 
 
 def _apply_number_validator(edit: QLineEdit) -> None:
     edit.setValidator(QRegExpValidator(_NUMBER_REGEX, edit))
+
+
+def _fill_option_combo(combo: NoWheelComboBox, options: list[str], current: str) -> None:
+    """
+    고정 선택지(corner/beol) 또는 Voltage Map에서 온 condition 이름으로 드롭다운을 채운다.
+    current가 목록에 없으면 (Select) 상태가 되지만, 대소문자만 다른 값이면 목록에 있는
+    이름으로 정규화해서 선택을 살린다 - 예전 config의 'bst'가 기본 condition 이름
+    'BST'와 그대로 이어지도록.
+    """
+    combo.clear()
+    combo.addItem(_SELECT_LABEL, "")
+    for option in options:
+        combo.addItem(option, option)
+
+    current = str(current or "").strip()
+    if not current:
+        combo.setCurrentIndex(0)
+        return
+    index = combo.findData(current)
+    if index < 0:
+        lowered = current.lower()
+        for option in options:
+            if option.lower() == lowered:
+                index = combo.findData(option)
+                break
+    combo.setCurrentIndex(index if index >= 0 else 0)
 
 
 def _populate_file_combo(
@@ -141,6 +179,7 @@ class _EntryCard(QFrame):
         self,
         entry: dict,
         index: int,
+        condition_names: list[str],
         on_changed: Callable[["_EntryCard"], None],
         on_pdk_selected: Callable[["_EntryCard"], None],
         on_remove: Callable[["_EntryCard"], None],
@@ -152,6 +191,7 @@ class _EntryCard(QFrame):
         self._on_changed = on_changed
         self._on_pdk_selected = on_pdk_selected
         self._on_remove = on_remove
+        self._condition_names = list(condition_names)
         self.select_widgets: dict[str, NoWheelComboBox] = {}
         self.number_widgets: dict[str, QLineEdit] = {}
 
@@ -192,17 +232,15 @@ class _EntryCard(QFrame):
             caption.setToolTip(_ENTRY_FIELD_INFO.get(key, ""))
             grid.addWidget(caption, 0, column)
 
-            if kind == "select":
+            if kind in ("select", "condition_select"):
                 combo = NoWheelComboBox()
-                combo.addItem(_SELECT_LABEL, "")
-                for option in extra:
-                    combo.addItem(option, option)
-                saved = str(entry.get(key, ""))
-                found = combo.findData(saved) if saved else 0
-                combo.setCurrentIndex(found if found >= 0 else 0)
                 combo.setToolTip(_ENTRY_FIELD_INFO.get(key, ""))
+                options = self._condition_names if kind == "condition_select" else list(extra)
+                _fill_option_combo(combo, options, str(entry.get(key, "")))
                 combo.currentIndexChanged.connect(lambda _i: self._on_changed(self))
                 self.select_widgets[key] = combo
+                if kind == "condition_select":
+                    self.condition_combo = combo
                 grid.addWidget(combo, 1, column)
             else:
                 grid.addWidget(self._build_number_field(key, extra, entry), 1, column)
@@ -254,6 +292,25 @@ class _EntryCard(QFrame):
         return grid
 
     # -- 값 읽기/쓰기 -------------------------------------------------------
+    def set_condition_names(
+        self, condition_names: list[str], rename: tuple | None = None,
+    ) -> None:
+        """
+        Voltage Map의 condition이 추가/삭제/이름변경될 때마다 Condition 드롭다운을 다시
+        채운다. 지금 고른 값은 (대소문자 무시로) 살아남는 한 그대로 유지되고, rename
+        (직전 이름, 새 이름)이 주어지면 그 이름을 고르고 있었을 때 새 이름으로 따라간다.
+        """
+        self._condition_names = list(condition_names)
+        combo = getattr(self, "condition_combo", None)
+        if combo is None:
+            return
+        current = combo.currentData() or ""
+        if rename and current == rename[0]:
+            current = rename[1]
+        combo.blockSignals(True)
+        _fill_option_combo(combo, self._condition_names, current)
+        combo.blockSignals(False)
+
     def set_index(self, index: int) -> None:
         self.index_label.setText(f"Liberty #{index + 1}")
 
@@ -298,6 +355,9 @@ class UDCView(QWidget):
         self.on_back = on_back
 
         self.state: dict = udc_manager.load_state()
+        # Voltage Map은 화면만 여기(Step 2 왼쪽 열)로 옮겨왔을 뿐, 저장 위치는 예전
+        # 그대로 config/step3_settings.json의 voltage_map key다.
+        self.voltage_map: dict = settings_manager.load_voltage_map()
         self.common_widgets: dict[str, QWidget] = {}
         self.entry_cards: list[_EntryCard] = []
         self.pdk_files: list[str] = []
@@ -318,15 +378,30 @@ class UDCView(QWidget):
         title = QLabel("UDC Settings")
         title.setObjectName("titleLabel")
         subtitle = QLabel(
-            "Enter the common fields once, then add one setting per liberty file you want "
-            "to generate."
+            "Enter the common fields and the voltage map on the left, then add one liberty "
+            "setting per file you want to generate on the right."
         )
         subtitle.setObjectName("subtitleLabel")
         outer.addWidget(title)
         outer.addWidget(subtitle)
 
-        outer.addWidget(self._build_common_card())
-        outer.addWidget(self._build_entries_card(), stretch=1)
+        # 2026-08 레이아웃 개편: Step3처럼 좌우 2단으로 나눈다.
+        #   왼쪽  = Common Fields + Voltage Map (Voltage Map이 Step3에서 여기로 옮겨옴)
+        #   오른쪽 = Liberty Settings (setting 1개 = liberty 파일 1개)
+        columns = QHBoxLayout()
+        columns.setSpacing(16)
+
+        left = QVBoxLayout()
+        left.setSpacing(12)
+        left.addWidget(self._build_common_card())
+        left.addWidget(self._build_voltage_map_panel(), stretch=1)
+        left_container = QWidget()
+        left_container.setObjectName("transparentRow")
+        left_container.setLayout(left)
+        columns.addWidget(left_container, stretch=1)
+
+        columns.addWidget(self._build_entries_card(), stretch=1)
+        outer.addLayout(columns, stretch=1)
 
         self.validate_btn = QPushButton("Validate")
         self.validate_btn.setObjectName("primaryButton")
@@ -335,6 +410,7 @@ class UDCView(QWidget):
         self.next_btn = QPushButton("Next")
         self.next_btn.setObjectName("primaryButton")
         self.next_btn.setEnabled(False)
+        self.next_btn.setToolTip("Run Validate first.")
         self.next_btn.clicked.connect(self._on_next_clicked)
 
         self.back_btn = build_back_button(self.on_back)
@@ -346,8 +422,8 @@ class UDCView(QWidget):
 
     def _build_common_card(self) -> QFrame:
         """
-        공통 필드 8개를 세로로 길게 늘어놓지 않고 4열 그리드로 배치한다 - 아래쪽
-        Liberty Settings 목록이 화면에서 차지할 세로 공간을 확보하기 위해서
+        공통 필드 8개를 세로로 길게 늘어놓지 않고 2열 그리드로 배치한다 - 같은 열
+        아래쪽의 Voltage Map이 차지할 세로 공간을 확보하기 위해서
         (2026-08 레이아웃 개편).
         """
         card = QFrame()
@@ -361,7 +437,8 @@ class UDCView(QWidget):
         grid = QGridLayout()
         grid.setHorizontalSpacing(18)
         grid.setVerticalSpacing(8)
-        columns = 4
+        # 2026-08 레이아웃 개편으로 이 카드가 화면 왼쪽 절반만 쓰게 되어 4열 -> 2열.
+        columns = 2
         common = self.state["common"]
 
         for position, (key, label, kind) in enumerate(COMMON_FIELD_DEFS):
@@ -391,6 +468,30 @@ class UDCView(QWidget):
 
         layout.addLayout(grid)
         return card
+
+    def _build_voltage_map_panel(self) -> VoltageMapPanel:
+        self.voltage_map_panel = VoltageMapPanel(
+            self.voltage_map, self._on_voltage_conditions_changed,
+        )
+        return self.voltage_map_panel
+
+    def _on_voltage_conditions_changed(self, rename: tuple | None = None) -> None:
+        """
+        Voltage Map의 condition이 추가/삭제되거나 이름이 바뀌면, 오른쪽 liberty
+        setting들의 Condition 드롭다운을 즉시 다시 채운다.
+
+        rename이 주어지면("직전 이름", "새 이름") 그 이름을 고르고 있던 setting의 선택은
+        새 이름으로 따라간다 - 이름만 고쳤을 뿐인데 선택이 풀리면 안 되기 때문.
+
+        패널을 만드는 도중(생성자 안)에도 한 번 불리므로, 아직 패널 참조가 없거나
+        entry 카드가 만들어지기 전이면 조용히 넘어간다 - 카드가 만들어질 때
+        _rebuild_entry_cards가 어차피 현재 이름 목록을 넘겨준다.
+        """
+        if not hasattr(self, "voltage_map_panel"):
+            return
+        names = self.voltage_map_panel.condition_names()
+        for card in self.entry_cards:
+            card.set_condition_names(names, rename)
 
     def _build_entries_card(self) -> QFrame:
         card = QFrame()
@@ -444,10 +545,14 @@ class UDCView(QWidget):
             card.deleteLater()
         self.entry_cards = []
 
+        condition_names = (
+            self.voltage_map_panel.condition_names()
+            if hasattr(self, "voltage_map_panel") else []
+        )
         for index, entry in enumerate(entries):
             card = _EntryCard(
-                entry, index, self._on_entry_changed, self._on_entry_pdk_selected,
-                self._on_remove_entry,
+                entry, index, condition_names, self._on_entry_changed,
+                self._on_entry_pdk_selected, self._on_remove_entry,
             )
             # 카드를 만든 직후에는 PDK/DBS 콤보가 비어 있으므로, 저장돼 있던 선택값을
             # 살려서 채워 넣는다.
@@ -578,6 +683,10 @@ class UDCView(QWidget):
     def _persist(self) -> None:
         self._commit_current_ui()
         udc_manager.save_state(self.state)
+        # Voltage Map은 step3_settings.json 안에 있으므로 그 부분만 갈아끼운다
+        # (Step3에서 입력한 다른 값은 건드리지 않음).
+        self.voltage_map = self.voltage_map_panel.collect()
+        settings_manager.save_voltage_map(self.voltage_map)
 
     # ------------------------------------------------------------------
     # Validate
@@ -588,17 +697,28 @@ class UDCView(QWidget):
 
         entries = udc_manager.get_entries(self.state)
         errors = validate_common_fields(self.state["common"])
-        errors += validate_entries(entries, self.pdk_files, self.dbs_files)
+        # Voltage Map이 먼저다 - liberty setting의 Condition이 여기 정의된 이름이어야
+        # 하므로, Voltage Map 자체가 성립하는지부터 검사한다.
+        errors += validate_voltage_map(self.voltage_map)
+        errors += validate_entries(
+            entries, self.pdk_files, self.dbs_files, self.voltage_map_panel.condition_names(),
+        )
 
-        summary = f"{len(entries)} liberty file(s) configured"
+        summary = (
+            f"{len(entries)} liberty file(s) configured, "
+            f"{len(self.voltage_map_panel.condition_names())} voltage condition(s)"
+        )
         if errors:
             self.result_label.setStyleSheet(f"color: {ERROR_COLOR};")
             self.result_label.setText(summary + "\n" + "\n".join(f"• {e}" for e in errors))
-            self.next_btn.setEnabled(False)
+            self._lock_next()
         else:
             self.result_label.setStyleSheet(f"color: {SUCCESS_COLOR};")
-            self.result_label.setText(summary + "\nAll liberty settings passed validation.")
+            self.result_label.setText(
+                summary + "\nThe voltage map and all liberty settings passed validation."
+            )
             self.next_btn.setEnabled(True)
+            self.next_btn.setToolTip("")
 
     def _on_next_clicked(self) -> None:
         self._persist()
@@ -615,3 +735,10 @@ class UDCView(QWidget):
         # PDK/DBS 폴더가 바뀌었을 수 있으므로 추천 목록을 전부 다시 계산한다.
         for card in self.entry_cards:
             self._refresh_entry_files(card)
+        # Step1/Step3에서 돌아온 경우 입력이 달라졌을 수 있으므로 검사 결과를 무효화
+        # 한다 - Next는 다시 Validate를 통과해야만 열린다 (2026-08 확정).
+        self._lock_next()
+
+    def _lock_next(self) -> None:
+        self.next_btn.setEnabled(False)
+        self.next_btn.setToolTip("Run Validate first.")

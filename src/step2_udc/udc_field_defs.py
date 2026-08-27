@@ -13,7 +13,7 @@ Step 2 (UDC Settings) 화면의 필드 정의 (2026-08 전면 재설계 -> 2026-
   - beol inform   : nominal / sigcmin / sigrcmax / sigcmax 중 선택
   - voltage       : 숫자 입력 (화면에 V 단위 표시)
   - temperature   : 숫자 입력 (화면에 ℃ 단위 표시)
-  - condition     : bst / wst / tiv 중 선택
+  - condition     : Voltage Map에 정의된 voltage condition 중 선택 (이름은 사용자 정의)
   - PDK file      : Step1에서 인식된 모든 PDK 파일 중 선택
   - DBS file      : PDK를 고르면 자동으로 매핑, 없으면 직접 선택
 
@@ -51,11 +51,16 @@ TIMING_STATE_OPTIONS = ["rising", "falling"]
 # liberty 1개당 setting 필드 (2026-08 2차 재설계)
 # ---------------------------------------------------------------------------
 CORNER_OPTIONS = ["ffpg", "fsg", "sfg", "sspg", "tt"]
-BEOL_OPTIONS = ["nominal", "sigcmin", "sigrcmax", "sigcmax"]
+BEOL_OPTIONS = ["nominal", "sigcmin", "sigrcmin", "sigrcmax", "sigcmax"]
 
-# liberty 1개당 bst/wst/tiv 중 하나를 자유롭게 선택 -> Step3 Voltage Map의 어느 그룹
-# (BST/WST/TIV)에서 voltage_map 값을 가져올지 결정한다. PDK 파일명의 min/max와는 무관.
-CONDITION_OPTIONS = ["bst", "wst", "tiv"]
+# liberty 1개당 voltage condition 하나를 고른다 -> Voltage Map(같은 화면 왼쪽 열)의 어느
+# condition에서 voltage_map 값을 가져올지 결정한다. PDK 파일명의 min/max와는 무관.
+#
+# 2026-08 사용자 정의 condition 재설계: 예전에는 bst/wst/tiv로 고정된 목록이었지만,
+# 이제 선택지는 사용자가 Voltage Map에 만들어 둔 condition 이름들이다(코드에 고정된
+# 목록이 없다). 저장되는 값도 그 이름 문자열이며, 예전 config의 'bst'/'wst'/'tiv'는
+# 기본 condition 이름 'BST'/'WST'/'TIV'와 대소문자만 다르므로 그대로 이어서 쓸 수 있다
+# (udc_view가 콤보를 채울 때 대소문자 무시로 매칭해서 현재 이름으로 정규화한다).
 
 ENTRY_CORNER_KEY = "corner"
 ENTRY_BEOL_KEY = "beol_inform"
@@ -74,7 +79,8 @@ ENTRY_FIELD_DEFS = [
     (ENTRY_BEOL_KEY, "BEOL Inform", "select", BEOL_OPTIONS),
     (ENTRY_VOLTAGE_KEY, "Voltage", "number", "V"),
     (ENTRY_TEMPERATURE_KEY, "Temperature", "number", "℃"),
-    (ENTRY_CONDITION_KEY, "Condition", "select", CONDITION_OPTIONS),
+    # "condition_select": 선택지가 코드에 없고 Voltage Map에서 온다 (udc_view가 채움)
+    (ENTRY_CONDITION_KEY, "Condition", "condition_select", None),
 ]
 
 ENTRY_SELECT_FIELD_KEYS = [ENTRY_CORNER_KEY, ENTRY_BEOL_KEY, ENTRY_CONDITION_KEY]

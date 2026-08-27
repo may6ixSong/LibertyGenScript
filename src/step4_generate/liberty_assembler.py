@@ -2,10 +2,10 @@
 liberty_assembler.py
 
 Step2(liberty 1개당 setting - corner/beol inform/voltage/temperature/condition +
-PDK 파일 + DBS output 파일) + Step3(Constants,
-Voltage Map(BST/WST/TIV x Power Type1..N 값 + Power Type별 voltage name + power type
-개수), DFF Cell Name/LUT Table/Worst case primitive liberty, Pin Settings와 그 연계
-입력들) + Step1(PDK Folder, Port List)을 조합해서, liberty_writter의
+PDK 파일 + DBS output 파일, 그리고 같은 화면의 Voltage Map - 사용자 정의 voltage
+condition x Power Type1..N 값 + Power Type별 voltage name + power type 개수) +
+Step3(Constants, DFF Cell Name/LUT Table/Worst case primitive liberty, Pin Settings와
+그 연계 입력들) + Step1(PDK Folder, Port List)을 조합해서, liberty_writter의
 write_liberty_file()에 바로 넘길 수 있는 "job"(파일 1개 생성에 필요한 값 전부)을 메모리
 상에서 만든다.
 
@@ -22,12 +22,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from step2_udc.udc_field_defs import (
-    CONDITION_OPTIONS, ENTRY_CONDITION_KEY, ENTRY_DBS_KEY, ENTRY_PDK_KEY,
-    ENTRY_TEMPERATURE_KEY, ENTRY_VOLTAGE_KEY, parse_temperature_input, parse_voltage_input,
+    ENTRY_CONDITION_KEY, ENTRY_DBS_KEY, ENTRY_PDK_KEY, ENTRY_TEMPERATURE_KEY,
+    ENTRY_VOLTAGE_KEY, parse_temperature_input, parse_voltage_input,
 )
 from step3_settings.constants_field_defs import (
-    POWER_TYPE_COUNT_DEFAULT, POWER_TYPE_COUNT_KEY, POWER_TYPE_DEFAULT_VOLTAGE,
-    voltage_map_name_key, voltage_map_value_key,
+    CONDITION_NAME_KEY, CONDITION_VALUES_KEY, POWER_TYPE_DEFAULT_VOLTAGE,
+    condition_value_key, find_condition, power_type_count_of, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
     DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
@@ -87,8 +87,17 @@ def build_job(
         return None
 
     condition_value = str(entry.get(ENTRY_CONDITION_KEY, "")).strip()
-    if condition_value not in CONDITION_OPTIONS:
-        errors.append(f"[{pdk_filename}] Condition (bst/wst/tiv) is not selected.")
+    if not condition_value:
+        errors.append(f"[{pdk_filename}] Condition (voltage condition) is not selected.")
+        return None
+    # 2026-08 사용자 정의 condition: 이름으로 Voltage Map에서 찾는다(대소문자 무시 -
+    # 예전 config의 'bst'가 기본 condition 이름 'BST'와 그대로 이어지도록).
+    condition = find_condition(voltage_map_settings, condition_value)
+    if condition is None:
+        errors.append(
+            f"[{pdk_filename}] Condition '{condition_value}' is not defined in the "
+            "Voltage Map (Step 2)."
+        )
         return None
 
     nom_voltage = parse_voltage_input(entry.get(ENTRY_VOLTAGE_KEY, ""))
@@ -150,23 +159,20 @@ def build_job(
         else output_filename
     )
 
-    group_label = condition_value.upper()  # bst/wst/tiv -> BST/WST/TIV (VOLTAGE_MAP_GROUPS)
+    condition_label = str(condition.get(CONDITION_NAME_KEY, condition_value)).strip()
 
-    try:
-        power_type_count = int(voltage_map_settings.get(POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_DEFAULT))
-    except (TypeError, ValueError):
-        power_type_count = POWER_TYPE_COUNT_DEFAULT
-    voltage_map_values = voltage_map_settings.get("values", {}) or {}
+    power_type_count = power_type_count_of(voltage_map_settings)
+    condition_values = condition.get(CONDITION_VALUES_KEY, {}) or {}
     voltage_map_names = voltage_map_settings.get("names", {}) or {}
 
-    # 이 job(pair)이 선택한 bst/wst/tiv 그룹의 Power Type1..N 값 - block2의 voltage_map
+    # 이 job이 선택한 voltage condition의 Power Type1..N 값 - block2의 voltage_map
     # 줄마다 (voltage name, value) 하나씩.
     voltage_types: list[dict] = []
     for type_index in range(1, power_type_count + 1):
-        value_key = voltage_map_value_key(group_label, type_index)
         name_key = voltage_map_name_key(type_index)
         value = _to_float(
-            voltage_map_values.get(value_key, ""), f"{group_label} Power Type{type_index}", errors,
+            condition_values.get(condition_value_key(type_index), ""),
+            f"{condition_label} Power Type{type_index}", errors,
         )
         name = str(voltage_map_names.get(name_key, "")).strip()
         if not name:
@@ -176,7 +182,7 @@ def build_job(
         voltage_types.append({"name": name, "value": value})
 
     # block4가 Port List Volts 값을 Power Type에 매칭시킬 때 쓰는 고정 임계값(대표
-    # 전압 0.8V/2.2V/1.8V) -> Power Type voltage name. bst/wst/tiv 구분과 무관하게
+    # 전압 0.8V/2.2V/1.8V) -> Power Type voltage name. voltage condition 구분과 무관하게
     # power type 개수만큼만 포함한다 (2026-08 확정: power type 개수가 2면 1.8V도 매칭
     # 대상에서 제외).
     voltage_name_thresholds = {
@@ -214,6 +220,7 @@ def build_job(
         # Step2에서 사용자가 직접 입력한 값 (파일명 파싱 결과가 아님)
         "nom_voltage": float(nom_voltage),
         "nom_temperature": nom_temperature,
+        "voltage_condition": condition_label,
         "voltage_types": voltage_types,
         "voltage_name_thresholds": voltage_name_thresholds,
         "cell_name": cell_name,

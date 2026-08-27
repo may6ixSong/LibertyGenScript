@@ -93,17 +93,20 @@ def build_section_header(title: str, info_text: str = "", object_name: str = "se
     return container
 
 
-def build_label_with_info(text: str, info_text: str) -> QWidget:
+def build_label_with_info(text, info_text: str) -> QWidget:
     """
     폼(QFormLayout)의 라벨 자리에 넣는 "라벨 + hover 정보 아이콘" 위젯.
     필드 하나하나에 붙는 설명을 접어두는 용도.
+
+    text는 문자열이거나 이미 만들어진 라벨 위젯(예: Step3 Pin Settings의 상위 pin용
+    굵은 라벨)일 수 있다.
     """
     container = QWidget()
     container.setObjectName("transparentRow")  # 카드 위에서 회색 띠로 보이지 않도록
     layout = QHBoxLayout(container)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(6)
-    label = QLabel(text)
+    label = text if isinstance(text, QWidget) else QLabel(text)
     layout.addWidget(label)
     layout.addWidget(InfoIcon(info_text))
     layout.addStretch()

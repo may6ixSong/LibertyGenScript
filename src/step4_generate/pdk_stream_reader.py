@@ -219,6 +219,30 @@ def new_lut_sections() -> dict:
     }
 
 
+_INDEX_VALUE_PATTERN = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+
+
+def parse_index_last_value(index_line: str | None) -> str | None:
+    """
+    index 줄에서 **맨 끝 값**을 원문 표기 그대로 뽑는다 (2026-08 추가).
+
+        index_2 ("0.0001, 0.0005, 0.0025");        -> "0.0025"
+        index_2 ("0.0001", "0.0005", "0.0025") ;   -> "0.0025"
+
+    block5의 max_capacitance는 worst case PDK에서 읽은 index_2의 마지막 값을 쓴다
+    (2026-08 확정 - 예전에는 값을 몰라서 `#max_capacitance : No Answer;` 주석이었다).
+    숫자를 하나도 못 찾으면 None(호출 측에서 결측 처리).
+    """
+    if not index_line:
+        return None
+    # 'index_2' 자체에 붙은 숫자(2)가 값으로 잡히지 않도록 괄호 안쪽만 본다.
+    start = index_line.find("(")
+    end = index_line.rfind(")")
+    body = index_line[start + 1: end] if start != -1 and end > start else index_line
+    matches = _INDEX_VALUE_PATTERN.findall(body)
+    return matches[-1] if matches else None
+
+
 def read_lut_table_sections(pdk_path: str, dff_cell_name: str, lut_table_name: str) -> dict:
     """
     block3의 lu_table_template에 쓸 index_1/index_2 줄을 뽑아낸다. "cell (DFF Cell

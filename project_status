@@ -1,5 +1,34 @@
 # Liberty Generator — 프로젝트 현황 요약 (다음 세션 이어가기용)
 
+> **주의**: 이 문서는 예전 세션의 요약이라 아래 "이번 라운드 변경" 밖의 내용은 일부
+> 낡았다. 현재 기준 설계 문서는 `src/CLAUDE.md`이며, 충돌하면 그쪽이 우선한다.
+
+## 이번 라운드 변경 (2026-08, Step1~4 UI/생성 규칙)
+
+1. **Step1 입력 순서**: PDK Folder → Port List(Excel) → DBS Simulation Folder.
+   저장 config는 key 기준이라 기존 `config/user_config.json`을 그대로 쓴다.
+2. **Port List**: `.xls` / `.xlsx` 둘 다 정식 지원(허용 확장자는
+   `field_defs.PORT_LIST_FILE_EXTENSIONS` 한 곳에서 관리, `.xls`는 xlrd로 읽고 없으면
+   설치 안내 메시지가 Details에 뜬다).
+3. **Voltage Map이 Step3 → Step2로 이동**. Step2가 좌우 2단이 되어 왼쪽에 Common
+   Fields + Voltage Map, 오른쪽에 Liberty Settings가 놓인다.
+4. **Voltage condition을 사용자가 직접 추가/삭제/이름 지정**(기본값만 BST/WST/TIV).
+   카드마다 접기/펴기 지원. Liberty Setting의 Condition 드롭다운은 여기서 정의한
+   이름들로 채워지고, 생성 시 voltage_map 값도 그 condition에서 가져온다
+   (Power Type 정책은 기존 유지). 저장 위치는 예전 그대로
+   `config/step3_settings.json`의 `voltage_map`이고, 예전 포맷(bst/wst/tiv 고정)은
+   로드할 때 자동 변환된다.
+5. **BEOL Inform에 `sigrcmin` 추가**.
+6. **Step3 Pin Settings**: 상위 pin 3개 라벨을 크고 굵게, 보라색 시스템 안내 문구는
+   투명도를 낮춰 연하게.
+7. **max_capacitance**: worst case primitive liberty의 `index_2` 마지막 값을 쓴다
+   (예전 `#max_capacitance : No Answer;` TODO 해결).
+8. **Step4에서 생성된 파일 아이콘 클릭 → 새 창으로 파일 열기** (vi/vim 스타일 읽기 전용
+   뷰어, `ui/file_viewer.py`). 실제 vi/vim 프로세스는 터미널 에뮬레이터가 필요해
+   보장할 수 없어서 앱 안에 같은 느낌의 뷰어를 직접 구현했다.
+9. **모든 Step에서 Back으로 돌아오면 반드시 다시 Validate**해야 하고, Next/Generate는
+   Validate 통과 전까지 비활성.
+
 ## 프로젝트 개요
 
 사내 HPC망 VWP 환경에서 실행되는 PyQt5 GUI 프로그램. Excel Port List + PDK/DK 라이브러리

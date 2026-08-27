@@ -1,11 +1,19 @@
 """
 setup_view.py
 
-'Setup & Validate' 화면: PDK/DBS 폴더 + Port List 엑셀 파일 입력을 받고,
-Validate 버튼으로 3단계(PDK -> DBS -> Port List)를 순서대로 검사한다.
+'Setup & Validate' 화면: PDK 폴더 + Port List 엑셀 파일 + DBS 폴더 입력을 받고,
+Validate 버튼으로 3단계(PDK -> Port List -> DBS)를 순서대로 검사한다.
 각 단계는 상단 가로 스텝 인디케이터에 진행 상태(pending/running/success/error)로
 표시되고, 세부 메시지는 하단 Details 패널(읽기 전용, 선택 불가)에 나열된다.
 모든 단계가 통과하면 Next 버튼이 활성화된다.
+
+2026-08 성능 개선: port_list 단계는 큰 Excel 파일을 열 수 있어 느릴 수 있으므로
+`ui/background_task.py`의 `run_task()`로 백그라운드 스레드에서 돌린다 - 그동안에도
+창이 계속 응답하고 Ctrl+C 강제 종료(ui/force_quit.py)도 즉시 먹힌다. `_validate_run_token`
+으로 재진입(그 사이 Validate를 다시 누르거나 화면을 벗어난 경우)을 감지해 오래된
+실행의 결과가 새 실행의 화면 상태를 덮어쓰지 않게 막는다. Port List 파싱 자체는
+`port_list_reader.py`가 파일당 캐싱 + 조기 종료 규칙으로 이미 크게 빨라져 있다
+(자세한 내용은 src/CLAUDE.md의 "Port List 파싱 성능 최적화" 절 참고).
 """
 
 from __future__ import annotations
@@ -18,19 +26,24 @@ from PyQt5.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget,
 )
 
-from step1_setup.field_defs import INPUT_PATH_FIELDS
+from step1_setup.field_defs import (
+    INPUT_PATH_FIELDS, PORT_LIST_FILE_EXTENSIONS, is_port_list_filename,
+)
 from step1_setup.file_scanner import list_dbs_mt0_files, list_pdk_lib_files
 from step1_setup.port_list_reader import read_port_list
 from ui.theme import (
     BORDER_COLOR, ERROR_COLOR, MUTED_TEXT_COLOR, PENDING_COLOR,
     PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR,
 )
+from ui.background_task import run_task
 from ui.ui_common import DetailsList, add_shadow, build_section_header
 
+# 2026-08 순서 변경: 화면의 입력 순서(PDK Folder -> Port List -> DBS Simulation)와
+# Validate 단계 순서를 동일하게 맞춘다 (field_defs.INPUT_PATH_FIELDS 참고).
 STEP_DEFS = [
     ("pdk", "PDK Folder"),
-    ("dbs", "DBS Simulation"),
     ("port_list", "Port List"),
+    ("dbs", "DBS Simulation"),
 ]
 
 _STEP_DELAY_MS = 350
@@ -41,7 +54,9 @@ _INPUT_PATHS_INFO = (
     "The PDK Folder must contain only files whose extension starts with .lib "
     "(e.g. .lib, .lib_css_tn), and the DBS Simulation Folder must contain only .mt0 files.\n\n"
     "Extra files may lead to incorrect results.\n\n"
-    "The Port List must be an .xls / .xlsx file."
+    "The Port List must be an "
+    + " / ".join(PORT_LIST_FILE_EXTENSIONS)
+    + " file."
 )
 
 
@@ -129,6 +144,12 @@ class SetupView(QWidget):
         self.step_lines: list[_StepLine] = []
         self._all_passed = False
         self._details_anim = None  # QPropertyAnimation 참조 유지용 (GC 방지)
+        # 2026-08 추가: port_list 단계가 백그라운드 스레드로 도는 동안에도 창이
+        # 응답하므로, 그 사이 Validate를 다시 누르면(재진입) 이전 실행의 백그라운드
+        # 결과가 나중에 도착해 새 실행의 화면 상태를 덮어쓸 수 있다. 매 Validate
+        # 실행마다 토큰을 새로 발급해서, 완료 콜백이 지금 실행과 다른 토큰이면
+        # 조용히 무시한다(GenerateView._run_token과 같은 패턴).
+        self._validate_run_token = 0
 
         self._build_layout(existing_config)
         self._update_validate_button_state()
@@ -234,21 +255,61 @@ class SetupView(QWidget):
     # 입력 처리
     # ------------------------------------------------------------------
     def _browse(self, key: str, label: str, kind: str, extensions, edit: QLineEdit) -> None:
+        # DontUseNativeDialog(2026-08 추가): OS 고유 대화상자는 네트워크 폴더를 훑느라
+        # 느릴 수 있고, 이 앱의 Ctrl+C 강제 종료 단축키(ui/force_quit.py)가 닿지 않는
+        # 별도 창이라 열려 있는 동안은 먹히지 않는다. Qt 자체 대화상자를 쓰면 같은 이벤트
+        # 루프 안에서 열리므로 열려 있는 동안에도 Ctrl+C가 그대로 동작한다.
+        #
+        # 시작 폴더(2026-08 추가): 힌트 없이 열면 OS/Qt가 마지막 사용 위치나 홈
+        # 디렉터리(사내 HPC망에서는 대개 네트워크 마운트)부터 훑어야 해서 대화상자를
+        # 여는 것 자체가 느려질 수 있다. 이미 입력돼 있는 값(재선택)이나 이미 채워진
+        # 다른 입력 경로의 폴더를 우선 힌트로 준다 - 사용자가 최근에 실제로 접근했다고
+        # 확인된 위치이므로 훑기 자체가 느릴 가능성이 낮다.
+        start_dir = self._browse_start_dir(edit)
         if kind == "dir":
-            path = QFileDialog.getExistingDirectory(self, f"Select {label}")
+            path = QFileDialog.getExistingDirectory(
+                self, f"Select {label}", start_dir, QFileDialog.DontUseNativeDialog,
+            )
         else:
             filter_str = (
                 f"Excel Files ({' '.join('*' + ext for ext in extensions)})"
                 if extensions else "All Files (*)"
             )
-            path, _ = QFileDialog.getOpenFileName(self, f"Select {label}", "", filter_str)
+            path, _ = QFileDialog.getOpenFileName(
+                self, f"Select {label}", start_dir, filter_str,
+                options=QFileDialog.DontUseNativeDialog,
+            )
         if path:
             edit.setText(path)
+
+    def _browse_start_dir(self, edit: QLineEdit) -> str:
+        """
+        파일 대화상자를 열 시작 폴더 힌트. 이미 채워진 경로가 있으면 그 폴더를,
+        없으면 이미 채워진 다른 입력 경로(폴더면 그대로, 파일이면 부모 폴더)를 쓴다 -
+        전부 비어 있으면 빈 문자열(OS/Qt 기본값)로 둔다.
+        """
+        current = edit.text().strip()
+        if current:
+            path = Path(current)
+            return str(path if path.is_dir() else path.parent)
+
+        for other_edit in self.path_edits.values():
+            if other_edit is edit:
+                continue
+            value = other_edit.text().strip()
+            if not value:
+                continue
+            path = Path(value)
+            if path.is_dir():
+                return str(path)
+            if path.is_file():
+                return str(path.parent)
+        return ""
 
     def _update_validate_button_state(self) -> None:
         values = self._current_values()
         port_list_file = values.get("port_list_file", "")
-        valid_extension = port_list_file.lower().endswith((".xls", ".xlsx"))
+        valid_extension = is_port_list_filename(port_list_file)
         all_filled = all(values.values())
         self.validate_btn.setEnabled(all_filled and valid_extension)
         self.next_btn.setEnabled(False)
@@ -345,26 +406,54 @@ class SetupView(QWidget):
         self._clear_details()
         self.next_btn.setEnabled(False)
         self._all_passed = True
+        self._validate_run_token += 1
 
         for chip in self.step_chips.values():
             chip.set_state("pending")
         for line in self.step_lines:
             line.set_status("pending")
 
-        self._run_step_at(0)
+        self._run_step_at(0, self._validate_run_token)
 
-    def _run_step_at(self, index: int) -> None:
+    def _run_step_at(self, index: int, token: int) -> None:
+        if token != self._validate_run_token:
+            return  # 그 사이 Validate가 다시 눌려 이 실행은 더 이상 유효하지 않음
         if index >= len(STEP_DEFS):
             self._finish_validation()
             return
 
         step_key, _ = STEP_DEFS[index]
         self.step_chips[step_key].set_state("running")
-        QTimer.singleShot(_STEP_DELAY_MS, lambda: self._execute_step(index))
+        QTimer.singleShot(_STEP_DELAY_MS, lambda: self._execute_step(index, token))
 
-    def _execute_step(self, index: int) -> None:
+    def _execute_step(self, index: int, token: int) -> None:
+        if token != self._validate_run_token:
+            return
         step_key, _ = STEP_DEFS[index]
-        passed, messages = self._evaluate_step(step_key)
+
+        # 2026-08 추가: port_list 단계만 큰 Excel 파일을 읽을 수 있어 느릴 수 있으므로
+        # 백그라운드 스레드로 돌린다(ui/background_task.py) - 그래야 파싱 도중에도
+        # 창이 계속 응답하고(다른 단계처럼 애니메이션도 살아있고), Ctrl+C 강제 종료의
+        # 이벤트 필터 경로도 그 순간에 바로 먹힌다. PDK/DBS 단계는 폴더 목록만 나열하는
+        # 가벼운 작업이라 그대로 동기 처리한다. run_task는 백그라운드 스레드에서 돌지만
+        # 완료 콜백은 항상 메인 스레드에서 호출되므로 화면 갱신이 안전하다.
+        if step_key == "port_list":
+            run_task(
+                self, lambda: self._evaluate_step(step_key),
+                lambda result: self._finish_step(index, step_key, result, token),
+                lambda message: self._finish_step(
+                    index, step_key, (False, [(f"Unexpected error: {message}", "error")]), token,
+                ),
+            )
+            return
+
+        result = self._evaluate_step(step_key)
+        self._finish_step(index, step_key, result, token)
+
+    def _finish_step(self, index: int, step_key: str, result: tuple, token: int) -> None:
+        if token != self._validate_run_token:
+            return  # 백그라운드로 도는 사이 Validate가 다시 눌린 경우 - 조용히 버림
+        passed, messages = result
 
         summary = self._truncate(messages[-1][0] if messages else "")
         self.step_chips[step_key].set_state("success" if passed else "error", summary)
@@ -378,10 +467,11 @@ class SetupView(QWidget):
         if not passed:
             self._all_passed = False
 
-        self._run_step_at(index + 1)
+        self._run_step_at(index + 1, token)
 
     def _finish_validation(self) -> None:
         self.next_btn.setEnabled(self._all_passed)
+        self.next_btn.setToolTip("" if self._all_passed else "Run Validate first.")
         self._animate_details_in()
 
     # ------------------------------------------------------------------
@@ -390,3 +480,26 @@ class SetupView(QWidget):
     def _on_next_clicked(self) -> None:
         if self.on_next:
             self.on_next()
+
+    # ------------------------------------------------------------------
+    # 화면이 다시 보일 때마다 (Step2에서 Back으로 돌아왔을 때) 검사 결과를 무효화
+    # 한다 - 경로를 고쳤을 수 있으므로 Next는 다시 Validate를 통과해야만 열린다
+    # (2026-08 확정: 모든 Step에서 Back으로 돌아오면 반드시 다시 Validate).
+    # ------------------------------------------------------------------
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 오버라이드 시그니처
+        super().showEvent(event)
+        self._invalidate_validation()
+
+    def _invalidate_validation(self) -> None:
+        self._all_passed = False
+        # 백그라운드로 도는 중이었을 port_list 단계의 결과가 나중에 도착해도 이 화면
+        # 상태를 건드리지 않도록 토큰을 새로 발급한다.
+        self._validate_run_token += 1
+        self.next_btn.setEnabled(False)
+        self.next_btn.setToolTip("Run Validate first.")
+        for chip in self.step_chips.values():
+            chip.set_state("pending")
+        for line in self.step_lines:
+            line.set_status("pending")
+        self._clear_details()
+        self._update_validate_button_state()
