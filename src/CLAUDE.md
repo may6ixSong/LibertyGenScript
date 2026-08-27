@@ -260,6 +260,9 @@ operating_conditions (<NOT_FOUND_IN_PDK>) {
 
 ## 아직 안 한 것 (TODO)
 - Config export/import 기능, 프로그램 시작 시 초기화 — 코드에 TODO만 남김, 미구현.
+- Port List 파싱 캐싱/조기 종료/백그라운드 스레드 이관 — Step1 Validate와 Step3
+  Output Path 대화상자가 느린 근본 원인(위 "Ctrl+C 강제 종료" 절 참고)의 실제 해결책.
+  지금은 Ctrl+C 강제 종료로 안전장치만 마련한 상태.
 
 (해결됨) block5의 `max_capacitance` — 2026-08 확정: **worst case primitive liberty에서
 읽은 `lu_table_template`의 `index_2` 마지막 값**을 그대로 쓴다
@@ -268,6 +271,66 @@ operating_conditions (<NOT_FOUND_IN_PDK>) {
 
 (해결됨) block4 pg_pin의 `switch_function` / `pg_function` 하드코딩 TODO — 2026-08에
 Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
+
+## Ctrl+C 강제 종료 (2026-08 추가)
+
+Step1의 Port List 파싱, Step3의 Output Path 파일 대화상자(네트워크 폴더 탐색) 등에서
+화면이 완전히 멈춘 것처럼 보이는 경우를 대비해, **어느 Step 화면에서든 Ctrl+C를 누르면
+프로세스를 즉시 하드킬**한다 (`ui/force_quit.py`, `gui_app.MainWindow.__init__`에서
+`install_force_quit()` 한 번 호출).
+
+- GUI가 응답 가능한 동안(이벤트 루프가 돌고 있음): QApplication 전체에 건 이벤트
+  필터가 모든 KeyPress를 가로채 Ctrl+C를 직접 잡는다. 처음엔 `QShortcut` +
+  `Qt.ApplicationShortcut`로 구현했는데, 이 방식은 Qt가 내부적으로 판단하는 "활성
+  창" 상태에 의존하다 보니 일부 창관리자/X11 forwarding 조합에서 창을 띄워도 그
+  플래그가 안 서서 단축키가 조용히 먹통이 되는 게 실측으로 확인되어(2026-08),
+  그 판단 자체를 거치지 않는 이벤트 필터 방식으로 바꿨다.
+- 터미널에서 SIGINT(Ctrl+C)가 온 경우도 `signal.signal(SIGINT, ...)`로 받는다. Qt
+  이벤트 루프는 idle 대기 중 파이썬 바이트코드를 실행하지 않아 시그널을 처리할
+  기회가 없으므로, 짧은 주기(200ms)로 아무 일도 안 하는 `QTimer`를 돌려 계속
+  파이썬에 제어권을 돌려준다(PyQt에서 터미널 Ctrl+C가 안 먹는 문제의 표준 우회법).
+- 두 경로 모두 `os._exit()`로 그 자리에서 즉시 끝낸다 - 정리/저장 시도 없음.
+- Step1/Step3의 파일 대화상자는 `QFileDialog.DontUseNativeDialog`를 켜서 OS 고유
+  대화상자가 아니라 이 앱과 같은 이벤트 루프를 쓰는 Qt 대화상자를 띄운다 - 그래야
+  대화상자가 열려 있는 동안에도 이벤트 필터가 Ctrl+C를 받을 수 있다.
+- **한계**: 위 두 경로 모두 "다음 파이썬 바이트코드가 실행되는 시점"에 들어오므로,
+  메인 스레드가 순수 파이썬 루프(예: 큰 Excel 파일을 openpyxl로 파싱하는 도중)를
+  실행하는 동안은 GUI에 포커스를 두고 누르는 Ctrl+C(이벤트 필터 경로)가 그 루프가
+  끝날 때까지 처리되지 못한다 - Qt 창은 그 순간 키 입력은 물론 닫기 버튼까지 전부
+  응답하지 않기 때문. 반면 **터미널 SIGINT는 이 경우에도 즉시 먹힌다**(파이썬
+  바이트코드 사이사이에 체크되므로) - 실측으로 12MB급 인위적 대형 xlsx 파싱 도중
+  SIGINT를 보내 1.5초 만에 강제 종료되는 것까지 확인함. 앱은 항상 `run_generator.sh`로
+  터미널에서 띄워지므로, 진짜 멈춘 것 같으면 그 터미널에서 Ctrl+C를 누르는 게 가장
+  확실한 탈출구다.
+- Ctrl+C를 앱 전역에서 가로채므로 텍스트 입력칸의 Ctrl+C 복사 단축키는 더 이상 쓸 수
+  없다(우클릭 메뉴의 Copy로 대체).
+
+### 근본 원인 (Step1 Port List / Step3 Output Path가 느린 이유)
+
+- **Port List 파싱**: `port_list_reader._load_sheet_rows()`가 openpyxl
+  `read_only` 모드로 `[[cell.value for cell in row] for row in sheet.iter_rows()]`를
+  실행해 시트 전체를 한 번에 파이썬 리스트로 통째로 올린다. 실제 엔지니어링 Excel은
+  서식(테두리/색 등)이 열/행 전체에 걸쳐 적용된 경우가 흔해서, `dimensions`
+  (사용 범위)가 실제 데이터보다 훨씬 크게 잡히는 일이 매우 흔하다 - 실측으로 헤더
+  2줄만 있고 60만 번째 행 한 칸에만 값이 있는 파일을 만들었더니 `ws.dimensions`가
+  `A1:DP600000`(약 7천만 셀)이 되고, 파싱에 수 초가 걸렸다. 게다가 **캐시가 전혀
+  없어서** `read_port_list`/`read_port_list_rows`/`list_pins_by_port_type`/
+  `list_port_bit_values`/`list_power_ground_pins`/`list_port_pins_detailed`/
+  `list_all_pin_names`가 각각 파일을 처음부터 다시 열고 다시 파싱한다 - Step1
+  Validate 한 번뿐 아니라 Step2(Virtual Power 콤보)/Step3(Check/Validate/Virtual
+  Power 콤보)/Step4(Generate)에서도 매번 똑같은 비용을 반복해서 치른다. 이 모든
+  파싱이 GUI 메인 스레드에서 동기로 실행되므로, 그동안 창이 완전히 응답하지 않는다.
+- **Output Path 대화상자**: `QFileDialog.getExistingDirectory(self, "Select Output
+  Path")`가 시작 폴더 힌트 없이 호출되어, OS 고유(대개 GTK) 대화상자가 마지막 사용
+  폴더/즐겨찾기/마운트된 네트워크 공유까지 미리 훑는다. 이 프로젝트가 돌아가는
+  "사내 HPC망 VWP" 환경처럼 네트워크 마운트 스토리지가 느리면 이 훑기 자체가 오래
+  걸리고, 완전히 별개의 네이티브 툴킷 루프라 우리 앱 코드로는 제어할 수 없었다
+  (2026-08부터 `DontUseNativeDialog`로 Qt 자체 대화상자를 쓰도록 바꿔서 최소한 Ctrl+C
+  이벤트 필터가 열려 있는 동안에도 도달하게는 했다).
+- **완전한 해결책은 아직 미구현**: 무거운 파싱을 캐싱하고(같은 파일이면 재사용),
+  진짜 데이터 이후의 완전 공백 구간에서 조기 종료하고, 백그라운드 스레드로 옮겨
+  진행률/취소 UI를 붙이는 것 - 코드에 TODO만 남겨두고 아직 하지 않음(아래 "아직 안 한
+  것" 참고).
 
 ## Step 이동 규칙 (2026-08 확정)
 

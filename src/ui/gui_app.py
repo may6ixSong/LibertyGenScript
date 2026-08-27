@@ -9,6 +9,10 @@ Step 3(Constants & Pin Settings), Step 4(Generate 진행률)를 QStackedWidget�
 목록을 직접 넘겨받지 않고, 필요한 순간(Generate 클릭 시)에 PDK/DBS 폴더 경로만 받아서
 스스로 Step2/Step3 상태를 다시 읽어 pair/job을 계산한다.
 
+2026-08 추가: Ctrl+C 강제 종료(ui/force_quit.py) - 큰 Port List Excel 파싱이나 파일
+대화상자의 네트워크 폴더 탐색처럼 느린 동기 작업 중 화면이 멈춘 것처럼 보일 때, 어느
+Step 화면에서든 Ctrl+C를 누르면 프로세스를 즉시 하드킬한다.
+
 실행 환경 주의사항 (VWP):
   - PyQt5는 Anaconda Python 3.7.6 (/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7)
     에서만 사용 가능함이 확인됨.
@@ -26,6 +30,7 @@ from step1_setup.setup_view import SetupView
 from step2_udc.udc_view import UDCView
 from step3_settings.settings_view import SettingsView
 from step4_generate.generate_view import GenerateView
+from ui.force_quit import install_force_quit
 from ui.loading_overlay import LoadingOverlay
 from ui.theme import (
     APP_STYLESHEET, WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH,
@@ -78,6 +83,11 @@ class MainWindow(QMainWindow):
 
         # 창 전체를 덮는 로딩 오버레이 (제일 마지막에 만들어야 다른 위젯들 위로 뜸)
         self.loading_overlay = LoadingOverlay(self)
+
+        # 2026-08 추가: Step1 Port List 파싱, Step3 Output Path 선택(네트워크 폴더
+        # 탐색) 등 느린 동기 작업 중 화면이 멈춘 것처럼 보일 때를 대비해, 어느 화면에
+        # 있든 Ctrl+C를 누르면 즉시 강제 종료되도록 한다 (ui/force_quit.py 참고).
+        install_force_quit(QApplication.instance(), self)
 
     def _on_config_changed(self, values: dict) -> None:
         config_manager.save_config(values)

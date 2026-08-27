@@ -750,7 +750,13 @@ class SettingsView(QWidget):
         self.generate_btn.setEnabled(can_generate)
 
     def _on_browse_output(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select Output Path")
+        # DontUseNativeDialog(2026-08 추가): OS 고유 대화상자는 네트워크 폴더를 훑느라
+        # 느릴 수 있고, 이 앱의 Ctrl+C 강제 종료 단축키(ui/force_quit.py)가 닿지 않는
+        # 별도 창이라 열려 있는 동안은 먹히지 않는다. Qt 자체 대화상자를 쓰면 같은
+        # 이벤트 루프 안에서 열리므로 열려 있는 동안에도 Ctrl+C가 그대로 동작한다.
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Output Path", "", QFileDialog.DontUseNativeDialog,
+        )
         if path:
             self.output_path_edit.setText(path)
 
