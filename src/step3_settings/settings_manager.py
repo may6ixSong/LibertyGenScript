@@ -9,14 +9,19 @@ step3_settings.json의 `voltage_map` key다 - 기존에 저장해 둔 config를 
 쓸 수 있게 하기 위해서다. Step 2 화면은 load_voltage_map()/save_voltage_map()으로
 이 부분만 읽고 쓴다(다른 Step3 값은 건드리지 않는다).
 
-Voltage Map 구조 (2026-08 사용자 정의 condition 재설계):
+Voltage Map 구조 (2026-08 사용자 정의 condition 재설계 → 2026-08 Power Type 개수 무제한
++ voltage(digital) 필드 추가):
     {"power_type_count": 3,
      "conditions": [{"id": ..., "name": "BST", "values": {"type1": "0.8", ...}}, ...],
-     "names": {"power_type1_name": ..., ...}}
+     "names": {"power_type1_name": ..., ...},
+     "digital_voltages": {"power_type1_digital_voltage": "0.8", ...}}
 
 예전 config는 conditions 대신 `values: {"bst_type1": ..., "tiv_type3": ...}` 형태로
 BST/WST/TIV 세 그룹이 고정되어 있었다. 그런 config를 읽으면 그 값 그대로 BST/WST/TIV
-세 condition을 만들어 준다(_migrate_legacy_conditions).
+세 condition을 만들어 준다(_migrate_legacy_conditions). `digital_voltages` 필드가 아예
+없는 config(2026-08 이전)를 읽을 때는 Power Type1/2/3에 한해 예전 고정 매칭값
+(0.8/2.2/1.8)을 그대로 seed해서, 사용자가 새 필드를 손대지 않아도 기존과 같은 생성
+결과가 나오게 한다.
 """
 
 from __future__ import annotations
@@ -25,11 +30,11 @@ import json
 
 from step1_setup.config_manager import CONFIG_DIR
 from step3_settings.constants_field_defs import (
-    CONDITION_ID_KEY, CONDITION_NAME_KEY, CONDITION_VALUES_KEY, LEGACY_VOLTAGE_MAP_GROUPS,
-    LEGACY_VOLTAGE_MAP_VALUES_KEY, POWER_TYPE_COUNT_DEFAULT, POWER_TYPE_COUNT_KEY,
-    POWER_TYPE_COUNT_MAX, POWER_TYPE_COUNT_MIN, POWER_TYPE_DEFAULT_VOLTAGE,
-    SCALAR_CONSTANT_DEFS, VOLTAGE_CONDITIONS_KEY, condition_value_key, default_conditions,
-    legacy_voltage_map_value_key, new_condition, voltage_map_name_key,
+    CONDITION_ID_KEY, CONDITION_NAME_KEY, CONDITION_VALUES_KEY, LEGACY_POWER_TYPE_SEED_VOLTAGE,
+    LEGACY_VOLTAGE_MAP_GROUPS, LEGACY_VOLTAGE_MAP_VALUES_KEY, POWER_TYPE_COUNT_DEFAULT,
+    POWER_TYPE_COUNT_KEY, POWER_TYPE_COUNT_MIN, SCALAR_CONSTANT_DEFS, VOLTAGE_CONDITIONS_KEY,
+    condition_value_key, default_conditions, legacy_voltage_map_value_key, new_condition,
+    voltage_map_digital_voltage_key, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
     DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_DEFAULT, DBS_TIMING_SENSE_KEY,
@@ -50,13 +55,19 @@ def _default_scalars() -> dict:
 def _default_voltage_map() -> dict:
     """
     config가 아예 없을 때의 Voltage Map: 기본 condition 3개(BST/WST/TIV) x Power Type
-    대표값(0.8V/2.2V/1.8V). voltage name은 기본값이 없으므로 빈 문자열로 시작.
+    대표값(0.8V/2.2V/1.8V). voltage name은 기본값이 없으므로 빈 문자열로 시작하고,
+    voltage(digital)은 예전 고정 매칭값으로 seed된다(2026-08 추가).
     """
-    names = {voltage_map_name_key(i): "" for i in POWER_TYPE_DEFAULT_VOLTAGE}
+    names = {voltage_map_name_key(i): "" for i in LEGACY_POWER_TYPE_SEED_VOLTAGE}
+    digital_voltages = {
+        voltage_map_digital_voltage_key(i): str(v)
+        for i, v in LEGACY_POWER_TYPE_SEED_VOLTAGE.items()
+    }
     return {
         POWER_TYPE_COUNT_KEY: POWER_TYPE_COUNT_DEFAULT,
         VOLTAGE_CONDITIONS_KEY: default_conditions(),
         "names": names,
+        "digital_voltages": digital_voltages,
     }
 
 
@@ -75,6 +86,12 @@ def _normalize_condition(raw, fallback_name: str = "") -> dict | None:
     return condition
 
 
+# 아주 예전(2026-08 사용자 정의 condition 재설계 이전) config는 BST/WST/TIV 세
+# 그룹 x Power Type1~3으로 고정되어 있었다 - Power Type 개수 무제한 재설계와
+# 무관한, 이 마이그레이션 전용 상수다.
+_LEGACY_POWER_TYPE_COUNT = 3
+
+
 def _migrate_legacy_conditions(saved: dict) -> list[dict]:
     """
     2026-08 이전 config(`values: {"bst_type1": ...}`)를 condition 목록으로 옮긴다.
@@ -87,7 +104,7 @@ def _migrate_legacy_conditions(saved: dict) -> list[dict]:
     conditions = []
     for group in LEGACY_VOLTAGE_MAP_GROUPS:
         values = {}
-        for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
+        for type_index in range(1, _LEGACY_POWER_TYPE_COUNT + 1):
             value = legacy_values.get(legacy_voltage_map_value_key(group, type_index))
             if value is not None and str(value).strip():
                 values[condition_value_key(type_index)] = str(value).strip()
@@ -103,7 +120,7 @@ def _merge_voltage_map(saved: dict | None) -> dict:
         count = int(saved.get(POWER_TYPE_COUNT_KEY, defaults[POWER_TYPE_COUNT_KEY]))
     except (TypeError, ValueError):
         count = defaults[POWER_TYPE_COUNT_KEY]
-    count = max(POWER_TYPE_COUNT_MIN, min(POWER_TYPE_COUNT_MAX, count))
+    count = max(POWER_TYPE_COUNT_MIN, count)
 
     raw_conditions = saved.get(VOLTAGE_CONDITIONS_KEY)
     conditions: list[dict] = []
@@ -117,10 +134,20 @@ def _merge_voltage_map(saved: dict | None) -> dict:
     saved_names = saved.get("names")
     names = {**defaults["names"], **(saved_names if isinstance(saved_names, dict) else {})}
 
+    # 2026-08 추가: voltage(digital) 필드가 없는 예전 config는 defaults(Power Type1~3
+    # 예전 고정값)로 채워진다 - 사용자가 이 필드를 아예 본 적이 없어도 매칭 결과가
+    # 그대로 유지되도록.
+    saved_digital = saved.get("digital_voltages")
+    digital_voltages = {
+        **defaults["digital_voltages"],
+        **(saved_digital if isinstance(saved_digital, dict) else {}),
+    }
+
     return {
         POWER_TYPE_COUNT_KEY: count,
         VOLTAGE_CONDITIONS_KEY: conditions,
         "names": names,
+        "digital_voltages": digital_voltages,
     }
 
 

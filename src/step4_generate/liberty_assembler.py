@@ -3,11 +3,11 @@ liberty_assembler.py
 
 Step2(liberty 1개당 setting - corner/beol inform/voltage/temperature/condition +
 PDK 파일 + DBS output 파일, 그리고 같은 화면의 Voltage Map - 사용자 정의 voltage
-condition x Power Type1..N 값 + Power Type별 voltage name + power type 개수) +
-Step3(Constants, DFF Cell Name/LUT Table/Worst case primitive liberty, Pin Settings와
-그 연계 입력들) + Step1(PDK Folder, Port List)을 조합해서, liberty_writter의
-write_liberty_file()에 바로 넘길 수 있는 "job"(파일 1개 생성에 필요한 값 전부)을 메모리
-상에서 만든다.
+condition x Power Type1..N 값 + Power Type별 name/voltage(digital) + power type 개수
+(2026-08: 개수 무제한 재설계)) + Step3(Constants, DFF Cell Name/LUT Table/Worst case
+primitive liberty, Pin Settings와 그 연계 입력들) + Step1(PDK Folder, Port List)을
+조합해서, liberty_writter의 write_liberty_file()에 바로 넘길 수 있는 "job"(파일 1개
+생성에 필요한 값 전부)을 메모리 상에서 만든다.
 
 .udc/.pdt/pg_pin 같은 중간 파일은 만들지 않는다(2026-08 확정) - PDK 파일 자체는
 write_liberty_file()이 직접 스트리밍해서 읽으므로, 이 모듈은 그 외의 값(출력 파일명,
@@ -26,8 +26,8 @@ from step2_udc.udc_field_defs import (
     ENTRY_TEMPERATURE_KEY, ENTRY_VOLTAGE_KEY, parse_temperature_input, parse_voltage_input,
 )
 from step3_settings.constants_field_defs import (
-    CONDITION_NAME_KEY, CONDITION_VALUES_KEY, POWER_TYPE_DEFAULT_VOLTAGE,
-    condition_value_key, find_condition, power_type_count_of, voltage_map_name_key,
+    CONDITION_NAME_KEY, CONDITION_VALUES_KEY, condition_value_key, find_condition,
+    power_type_count_of, voltage_map_digital_voltage_key, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
     DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
@@ -174,6 +174,7 @@ def build_job(
     power_type_count = power_type_count_of(voltage_map_settings)
     condition_values = condition.get(CONDITION_VALUES_KEY, {}) or {}
     voltage_map_names = voltage_map_settings.get("names", {}) or {}
+    voltage_map_digital_voltages = voltage_map_settings.get("digital_voltages", {}) or {}
 
     # 이 job이 선택한 voltage condition의 Power Type1..N 값 - block2의 voltage_map
     # 줄마다 (voltage name, value) 하나씩.
@@ -191,16 +192,30 @@ def build_job(
             )
         voltage_types.append({"name": name, "value": value})
 
-    # block4가 Port List Volts 값을 Power Type에 매칭시킬 때 쓰는 고정 임계값(대표
-    # 전압 0.8V/2.2V/1.8V) -> Power Type voltage name. voltage condition 구분과 무관하게
-    # power type 개수만큼만 포함한다 (2026-08 확정: power type 개수가 2면 1.8V도 매칭
-    # 대상에서 제외).
-    voltage_name_thresholds = {
-        POWER_TYPE_DEFAULT_VOLTAGE[type_index]: str(
+    # 2026-08 재설계: Power Type별 대표 전압이 더 이상 코드에 고정(0.8/2.2/1.8V)되지
+    # 않고, 사용자가 Voltage Map에서 Power Type마다 직접 입력하는 'voltage (digital)'
+    # 값이다(power_type_count만큼만 포함 - Power Type 개수를 줄이면 그만큼 매칭 대상도
+    # 줄어든다). 이 값을 Port List Volts 값과 매칭시켜 두 곳에서 쓴다:
+    #   - block4 pg_pin의 voltage_name: 일치하면 그 Power Type의 name으로 치환
+    #     (voltage_name_thresholds: threshold -> name)
+    #   - block5 pin()의 input_signal_level: 일치하면 **이 job이 선택한 condition**의
+    #     같은 Power Type Type[N] 값으로 치환
+    #     (input_signal_level_thresholds: threshold -> condition의 Type[N] 값)
+    voltage_name_thresholds: dict[float, str] = {}
+    input_signal_level_thresholds: dict[float, float] = {}
+    for type_index in range(1, power_type_count + 1):
+        digital_text = voltage_map_digital_voltages.get(voltage_map_digital_voltage_key(type_index), "")
+        digital_value = _to_float(
+            digital_text, f"Power Type{type_index} voltage (digital) (Step 3 Voltage Map)", errors,
+        )
+        if digital_value is None:
+            continue
+        voltage_name_thresholds[digital_value] = str(
             voltage_map_names.get(voltage_map_name_key(type_index), "")
         ).strip()
-        for type_index in range(1, power_type_count + 1)
-    }
+        type_value = voltage_types[type_index - 1]["value"]
+        if type_value is not None:
+            input_signal_level_thresholds[digital_value] = type_value
 
     area = _to_float(common.get("area", ""), "Area (Common Fields)", errors)
     width = _to_float(common.get("width", ""), "Width (Common Fields)", errors)
@@ -235,6 +250,7 @@ def build_job(
         "voltage_condition": condition_label,
         "voltage_types": voltage_types,
         "voltage_name_thresholds": voltage_name_thresholds,
+        "input_signal_level_thresholds": input_signal_level_thresholds,
         "cell_name": cell_name,
         "dff_cell_name": dff_cell_name,
         "lut_table_name": lut_table_name,

@@ -122,23 +122,46 @@ PDK/DBS 파일명과 바로 비교해볼 수 있다(`_EntryCard._refresh_collaps
    예전 config의 `"bst"`는 기본 이름 `"BST"`와 대소문자만 다르므로 그대로 이어서 쓴다
    (드롭다운을 채울 때/생성할 때 모두 대소문자 무시로 매칭).
 
-### Voltage Map (2026-08 Step3 → Step2 이동 + 사용자 정의 condition)
+### Voltage Map (2026-08 Step3 → Step2 이동 + 사용자 정의 condition → 2026-08 Power
+Type 개수 무제한 + voltage(digital) 필드 추가)
 - **사용자가 voltage condition을 원하는 만큼 추가/삭제하고 이름도 직접 정한다.** config에
   아무것도 없을 때만 기본으로 `BST`/`WST`/`TIV` 세 개가 만들어진다(예전에는 이 셋으로
   고정이었다). condition 개수가 많아질 수 있어 카드마다 **접기/펴기**가 있고, 접으면
   헤더 오른쪽에 값 요약(`0.9 / 2.2 / 1.8`)이 보인다. "Collapse all"로 한 번에 접는다.
 - condition 하나 = `{"id", "name", "values": {"type1": 값, "type2": ..., "type3": ...}}`.
-- **Power Type 정책은 기존 그대로**: 개수는 2~3 조절(기본 3), 대표 전압
-  (0.8V/2.2V/1.8V)은 block4에서 Port List Volts를 Power Type에 매칭시키는 고정 임계값,
-  Power Type별 voltage name은 condition 구분 없이 Power Type당 하나.
+- **Power Type 개수는 최소 1, 상한 없음**(2026-08 재설계 - 예전엔 2~3으로 고정이었다).
+  화면의 `Power Type Count` 스핀박스는 상한을 두지 않고(`POWER_TYPE_COUNT_UI_MAX=999`
+  는 QSpinBox가 요구하는 값일 뿐, 데이터 모델 자체에는 상한이 없음), Power Type
+  Name/Voltage(digital) 행과 condition의 Type 값 행 모두 필요한 만큼만 그때그때
+  만들고(`_ensure_name_row`/`_ConditionCard._ensure_value_row`) 개수를 줄여도 지우지
+  않고 숨기기만 한다 - 늘렸다 줄였다 해도 값이 안 날아간다.
+- **Power Type마다 Name + Voltage(digital) 두 필드를 입력한다**(2026-08 추가). "Power
+  Type Name / Voltage (digital)" 카드에서 한 행에 반씩 나란히 입력한다(Name 왼쪽,
+  Voltage(digital) 오른쪽). Voltage(digital)은 예전에 코드에 고정되어 있던 대표 전압
+  (0.8V/2.2V/1.8V)을 대신하는 **Port List Volts 값 매칭 임계값**이다:
+    - block4 pg_pin의 `voltage_name`: Port List Volts 값이 어느 Power Type의
+      Voltage(digital)과 일치하면 그 Power Type의 **Name**으로 치환(기존과 동일한
+      치환 방식, 매칭 기준만 사용자 입력값으로 바뀜).
+    - block5 `pin()`의 `input_signal_level`: 일치하면 **이 liberty(job)가 선택한
+      voltage condition**의 같은 Power Type Type[N] 값(사용자가 그 condition
+      표에 입력한 실제 숫자)으로 치환한다 - block4처럼 이름이 아니라 값 자체를
+      바꾼다는 점이 다르다(아래 "Step 4 — Liberty 생성" 절 참고).
+  일치하는 Power Type이 없으면 두 곳 모두 기존처럼 Port List Volts 값을 그대로 쓴다.
+  매칭 허용 오차는 `constants_field_defs.VOLTAGE_MATCH_TOLERANCE`(1e-3) 하나를
+  block4/block5/Validate가 공유한다.
 - **저장 위치는 예전 그대로** `config/step3_settings.json`의 `voltage_map` key다(화면만
-  옮겨졌다). 구조: `{power_type_count, conditions: [...], names: {power_type1_name, ...}}`.
-  예전 config의 `values: {"bst_type1": ...}` 형태는 로드 시 BST/WST/TIV 세 condition으로
-  자동 변환된다(`settings_manager._migrate_legacy_conditions`). Step2가 이 부분만
+  옮겨졌다). 구조: `{power_type_count, conditions: [...], names: {power_type1_name,
+  ...}, digital_voltages: {power_type1_digital_voltage, ...}}`. 예전 config의
+  `values: {"bst_type1": ...}` 형태는 로드 시 BST/WST/TIV 세 condition으로 자동
+  변환된다(`settings_manager._migrate_legacy_conditions`). **`digital_voltages`
+  필드가 아예 없는 config(2026-08 이전)는 Power Type1/2/3에 한해 예전 고정값
+  (0.8/2.2/1.8)으로 seed된다**(`settings_manager._default_voltage_map`) - 사용자가
+  새 필드를 손대지 않아도 기존과 같은 생성 결과가 나오도록. Step2가 이 부분만
   갈아끼우므로(`save_voltage_map`) Step3에서 입력한 다른 값은 그대로 남는다.
 - Step2 Validate가 Voltage Map도 함께 검사한다: condition 1개 이상, 이름이 비어있지
   않고 서로 중복되지 않을 것(대소문자 무시), 현재 Power Type 개수만큼의 값이 전부 숫자,
-  그 개수만큼의 voltage name이 전부 채워져 있을 것.
+  그 개수만큼의 Name이 전부 채워져 있을 것, 그 개수만큼의 Voltage(digital)이 전부
+  채워진 숫자이고 서로 겹치지 않을 것(겹치면 어느 Power Type에 매칭될지 모호해지므로).
 
 ## Step 3 — Constants & Pin Settings
 
@@ -290,14 +313,25 @@ forwarding 환경에서 보장할 수 없어서,
    4자리(`0.8` → `0p8000`, `udc_field_defs.format_voltage_token`)이지만 trailing
    `v`는 붙이지 않고, temperature는 파일명 토큰 그대로(`format_temperature_token`,
    음수면 `m` 접두 + `c` 접미, `-40` → `m40c`) 쓴다(`block2_writer._format_oc_library`).
-5. **Block 4 pg_pin의 `voltage_name`** (2026-08 Voltage Map 재설계): 예전에는 항상
-   Port List Volts 값을 그대로 포맷(`VDD_0.80000`)해서 썼지만, 이제 그 Volts 값이
-   Power Type 대표 전압(0.8V/2.2V/1.8V, power type 개수가 2면 1.8V는 매칭 대상에서
-   제외)과 일치하면 그 Power Type의 voltage name을 대신 쓴다(`VDD_{voltage name}` -
-   block2가 쓴 voltage_map 이름과 정확히 같아야 리버티 문법상 유효하므로). 일치하는
-   Power Type이 없으면 기존처럼 `VDD_{value}` 그대로. 매칭 기준은 **고정 임계값**이며
-   Step3에서 BST/WST/TIV 표의 값을 조정해도 바뀌지 않는다 (`block4_writer.py`의
-   `_voltage_name_text`, `liberty_assembler.build_job`의 `voltage_name_thresholds`).
+5. **Block 4 pg_pin의 `voltage_name`** (2026-08 Voltage Map 재설계 → 2026-08 Power
+   Type voltage(digital) 필드 추가): 예전에는 항상 Port List Volts 값을 그대로
+   포맷(`VDD_0.80000`)해서 썼지만, 이제 그 Volts 값이 **Step2 Voltage Map에서 Power
+   Type마다 사용자가 직접 입력한 voltage(digital)** 값과 일치하면 그 Power Type의
+   Name을 대신 쓴다(`VDD_{name}` - block2가 쓴 voltage_map 이름과 정확히 같아야
+   리버티 문법상 유효하므로). 일치하는 Power Type이 없으면 기존처럼 `VDD_{value}`
+   그대로. 매칭 기준(voltage(digital))은 Voltage Map의 condition 표 값(worst case로
+   조정될 수 있는 값)과는 별개의 필드이므로, condition 값을 조정해도 매칭 결과는
+   바뀌지 않는다 (`block4_writer.py`의 `_voltage_name_text`,
+   `liberty_assembler.build_job`의 `voltage_name_thresholds`).
+6. **Block 5 `pin()`의 `input_signal_level`** (2026-08 재설계, Block 4의 voltage_name과
+   같은 매칭을 쓰지만 치환 결과는 다르다): Port List Volts 값이 어느 Power Type의
+   voltage(digital)과 일치하면, **이 job이 선택한 voltage condition**의 같은 Power
+   Type Type[N] 값(그 condition 표에 사용자가 입력한 실제 숫자, 예: worst case로 올린
+   0.85)으로 치환해서 쓴다 - block4처럼 이름으로 바꾸는 게 아니라 값 자체를 그
+   condition의 값으로 바꾼다는 점이 다르다. 일치하는 Power Type이 없으면 기존처럼
+   Port List Volts 값을 그대로 쓴다(소수점 5자리, `%0.5f`).
+   (`block5_writer.py`의 `_input_signal_level_text`,
+   `liberty_assembler.build_job`의 `input_signal_level_thresholds`)
 
 ### 결측 데이터 처리
 하드코딩되는 부분(예: `vmin: 0.00`, `process: 1.000`)을 제외하고, PDK 파일에서 기대한
@@ -361,14 +395,15 @@ Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
 block2의 `voltage_map`/`voltage`나 PDK의 `input_voltage`/`output_voltage`가 이미
 소수점 5자리로 나가고 있어서, block5의 voltage 값도 그와 자리수를 맞춘 것.
 
-(해결됨) block5의 `{process_prefix}_input_signal_level` 값의 출처 — 2026-08 변경:
-예전에는 Port List **'Volts' 컬럼 값**(핀별)을 그대로 썼는데, 한 실행에서 생성하는
-모든 liberty가 같은 Port List 파일을 공유하다 보니 서로 다른 voltage corner로
+(해결됨) block5의 `{process_prefix}_input_signal_level` 값의 출처 — 2026-08 두 차례
+변경. 1차: 예전에는 Port List **'Volts' 컬럼 값**(핀별)을 그대로 썼는데, 한 실행에서
+생성하는 모든 liberty가 같은 Port List 파일을 공유하다 보니 서로 다른 voltage corner로
 생성되는 liberty들끼리도 이 값이 항상 똑같이 나오는 문제가 있었다(예: 항상
-`0.80000`). 이제 **이 liberty(job)가 Step2에서 직접 설정한 `nom_voltage`**를 쓴다
-(`block5_writer._write_pin_body`, `volts_text = _volts_text(job["nom_voltage"])`)
-— block2의 `voltage` 줄이 쓰는 값과 동일한 소스이며, liberty마다(voltage corner마다)
-다르게 나온다. 자리수(`%0.5f`)는 그대로 유지.
+`0.80000`) - 이를 이 liberty(job)의 `nom_voltage`로 바꿨었다. 2차(최종): Port List
+Volts 값이 어느 Power Type의 voltage(digital)과 일치하면 **이 job이 선택한 voltage
+condition의 같은 Power Type Type[N] 값**으로, 일치하지 않으면 Port List Volts 값
+그대로 쓰도록 다시 바꿨다 - 위 "Step 4 — Block 5" 절 참고
+(`block5_writer._input_signal_level_text`). 자리수(`%0.5f`)는 그대로 유지.
 
 ## Ctrl+C 강제 종료 (2026-08 추가)
 
