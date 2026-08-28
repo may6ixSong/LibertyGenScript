@@ -356,11 +356,19 @@ import 시점에 검사하지 않음 - 파일이 옮겨졌을 수 있으므로).
 (해결됨) block4 pg_pin의 `switch_function` / `pg_function` 하드코딩 TODO — 2026-08에
 Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
 
-(해결됨) block5의 `{process_prefix}_input_signal_level`(Port List Volts 값) 소수점
-자리수 — 2026-08 변경: `%0.4f`(소수점 4자리)에서 **`%0.5f`(소수점 5자리)**로
-맞췄다(`block5_writer._volts_text`). block2의 `voltage_map`/`voltage`나 PDK의
-`input_voltage`/`output_voltage`가 이미 소수점 5자리로 나가고 있어서, block5의
-voltage 값도 그와 자리수를 맞춘 것.
+(해결됨) block5의 `{process_prefix}_input_signal_level` 소수점 자리수 — 2026-08 변경:
+`%0.4f`(소수점 4자리)에서 **`%0.5f`(소수점 5자리)**로 맞췄다(`block5_writer._volts_text`).
+block2의 `voltage_map`/`voltage`나 PDK의 `input_voltage`/`output_voltage`가 이미
+소수점 5자리로 나가고 있어서, block5의 voltage 값도 그와 자리수를 맞춘 것.
+
+(해결됨) block5의 `{process_prefix}_input_signal_level` 값의 출처 — 2026-08 변경:
+예전에는 Port List **'Volts' 컬럼 값**(핀별)을 그대로 썼는데, 한 실행에서 생성하는
+모든 liberty가 같은 Port List 파일을 공유하다 보니 서로 다른 voltage corner로
+생성되는 liberty들끼리도 이 값이 항상 똑같이 나오는 문제가 있었다(예: 항상
+`0.80000`). 이제 **이 liberty(job)가 Step2에서 직접 설정한 `nom_voltage`**를 쓴다
+(`block5_writer._write_pin_body`, `volts_text = _volts_text(job["nom_voltage"])`)
+— block2의 `voltage` 줄이 쓰는 값과 동일한 소스이며, liberty마다(voltage corner마다)
+다르게 나온다. 자리수(`%0.5f`)는 그대로 유지.
 
 ## Ctrl+C 강제 종료 (2026-08 추가)
 
