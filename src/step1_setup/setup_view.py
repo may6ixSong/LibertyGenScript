@@ -334,6 +334,13 @@ class SetupView(QWidget):
         return ""
 
     def _update_validate_button_state(self) -> None:
+        # 입력칸이 바뀌면(=경로를 고쳤으면) 이전 Validate 결과는 더 이상 유효하지 않으므로
+        # Next도 함께 다시 잠근다. Validate 종료 후 Validate 버튼만 다시 켜고 싶을 때는
+        # Next를 건드리지 않는 _refresh_validate_btn_enabled()를 대신 쓴다.
+        self.next_btn.setEnabled(False)
+        self._refresh_validate_btn_enabled()
+
+    def _refresh_validate_btn_enabled(self) -> None:
         if self._validating:
             return  # Validate가 도는 동안에는 입력 변경으로 버튼이 다시 켜지면 안 됨
         values = self._current_values()
@@ -341,7 +348,6 @@ class SetupView(QWidget):
         valid_extension = is_port_list_filename(port_list_file)
         all_filled = all(values.values())
         self.validate_btn.setEnabled(all_filled and valid_extension)
-        self.next_btn.setEnabled(False)
 
     def _current_values(self) -> dict:
         return {key: edit.text().strip() for key, edit in self.path_edits.items()}
@@ -511,7 +517,7 @@ class SetupView(QWidget):
             self.hide_loading()
         self.next_btn.setEnabled(self._all_passed)
         self.next_btn.setToolTip("" if self._all_passed else "Run Validate first.")
-        self._update_validate_button_state()
+        self._refresh_validate_btn_enabled()
         self._animate_details_in()
 
     # ------------------------------------------------------------------
