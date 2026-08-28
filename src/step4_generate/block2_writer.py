@@ -27,6 +27,7 @@ from __future__ import annotations
 from step2_udc.udc_field_defs import format_temperature_token, format_voltage_token
 from step4_generate.kfactor_block import write_k_factor_block
 from step4_generate.missing_data import INDENT_1, INDENT_2, NOT_FOUND_TOKEN, write_missing_comment
+from step4_generate.process_prefix_defines import write_process_prefix_defines
 
 _INPUT_VOLTAGE_KEYS = ["vil", "vih", "vimax", "vimin"]
 _OUTPUT_VOLTAGE_KEYS = ["vol", "voh", "vomax", "vomin"]
@@ -85,6 +86,15 @@ def write_block2(f_out, job: dict, sections: dict, header_date_parts: tuple) -> 
     f_out.write(f'{INDENT_1}date : "{month}  {date_}  {year}" ;\n')
     f_out.write(f'{INDENT_1}revision : "V1.000 (TECH. FILE : V1.000)" ;\n')
     f_out.write(f'{INDENT_1}comment : "Copyright {year}, SAMSUNG Electronics" ;\n')
+
+    # 이 생성기가 block4/block5에서 실제로 쓰는 {process_prefix}_* custom attribute는
+    # 전부 여기서 스스로 define한다 (process_prefix_defines.py 모듈 docstring 참고 -
+    # PDK가 일부만 define해두면 나머지 attribute를 cell{}/pin{}에서 쓰는 순간 Liberty
+    # 컴파일러가 "attribute/group name cannot be specified here"로 거부해서 .db 변환이
+    # 실패했다). PDK 본문(sections["body_lines"])에 이미 같은 이름의 define/
+    # define_group이 있으면 그 이름은 건너뛰고 없는 것만 새로 쓴다 - PDK가 우리가
+    # 모르는 설정으로 이미 정의해둔 걸 덮어쓰지 않기 위함.
+    write_process_prefix_defines(f_out, job["process_prefix"], sections["body_lines"])
 
     if not sections["found_library_decl"]:
         write_missing_comment(f_out, "PDK body (library declaration)", pdk_filename)
