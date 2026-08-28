@@ -324,12 +324,14 @@ forwarding 환경에서 보장할 수 없어서,
 ### 처리 순서
 1. **Block 1 (헤더 주석)**: 기존과 동일한 포맷, `GENERATE OPTION` 블록만 완전히 삭제.
 2. **Block 2-(1) (library 선언 + PDK 본문)**: 우리 쪽 `date`/`revision`/`comment`를 먼저
-   쓴 뒤, **이 생성기가 `{process_prefix}_*`로 쓰는 모든 custom attribute/group을
-   `define`/`define_group`으로 등록**하고(`process_prefix_defines.py`, 2026-08 추가 -
-   아래 단락 참고), 그 다음 PDK/DK 파일을 줄 단위로 스트리밍하며 `library (...) {`
-   다음부터 `voltage_map` 직전까지 그대로 복사. **PDK 자체의 `date`/`revision`/
-   `comment` 줄(줄 첫 토큰 기준)은 순서/위치에 상관없이 만날 때마다 개별적으로 스킵**
-   (중복 방지, 2026-08 확정).
+   쓴 뒤, PDK/DK 파일을 줄 단위로 스트리밍하며 `library (...) {` 다음부터
+   `voltage_map` 직전까지 그대로 복사. **PDK 자체의 `date`/`revision`/`comment` 줄(줄
+   첫 토큰 기준)은 순서/위치에 상관없이 만날 때마다 개별적으로 스킵** (중복 방지,
+   2026-08 확정). 그 PDK 본문을 다 복사한 바로 다음, 우리 쪽 `voltage_map`(Block
+   2-(2)) 바로 앞에서 **이 생성기가 `{process_prefix}_*`로 쓰는 모든 custom
+   attribute/group을 `define`/`define_group`으로 등록**한다(`process_prefix_defines.py`,
+   2026-08 추가 - 아래 단락 참고. PDK 본문을 붙여넣은 바로 뒤에 두어 PDK 자체의
+   define들과 한데 모이게 한 배치다).
 
    **`{process_prefix}_*` custom attribute를 이 생성기가 직접 define하는 이유
    (2026-08 확정)**: 예전에는 PDK/DK 파일이 이 attribute들을 이미 define해뒀다고
@@ -343,8 +345,8 @@ forwarding 환경에서 보장할 수 없어서,
    거부해서 .db 변환이 실패했다. `process_prefix_defines.py`가 block4_writer.py/
    block5_writer.py가 실제로 쓰는 attribute/group 전부를(이름·소속 그룹·타입까지
    정확히) 목록으로 갖고 있다가, PDK 본문에 이미 같은 이름의 define/define_group이
-   있으면 건너뛰고 없는 것만(그 job의 process_prefix로 채워) library 헤더 맨 앞(PDK
-   본문 복사보다도 먼저)에 써준다. **block4/block5에서 새 `{process_prefix}_` 줄을
+   있으면 건너뛰고 없는 것만(그 job의 process_prefix로 채워) PDK 본문 바로 뒤,
+   `voltage_map`보다는 앞에 써준다. **block4/block5에서 새 `{process_prefix}_` 줄을
    추가/삭제/이름변경할 때 이 목록을 같이 맞추는 규칙은 이 문서 맨 위 "코드 수정 규칙"
    절에 있다 - 반드시 지킬 것.**
 3. **Block 2-(2) (voltage_map)** (2026-08 Voltage Map 재설계): Step2에서 이 liberty에
