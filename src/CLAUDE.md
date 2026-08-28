@@ -14,6 +14,38 @@ Python 기반 liberty 파일 생성기. 기존 파이프라인의 한계:
 새 파이프라인 목표: PDK/DK 파일 개수만큼(제한 없이) liberty를 한 번에 생성, 중간 파일
 없이 메모리에서 바로 조립, 특정 IP에 종속되지 않는 범용 구조.
 
+## 코드 수정 규칙 (항상 지킬 것): `{process_prefix}_*` custom attribute 목록 동기화
+
+**Claude Code를 포함해 이 코드베이스를 고치는 누구든, `block4_writer.py` /
+`block5_writer.py`(또는 새로 추가되는 block 파일)에서 `{process_prefix}_`로 시작하는
+줄(cell{}/pin{}에 쓰는 attribute, 또는 `{process_prefix}_xxx(...) {` 같은 custom
+group 선언)을 추가·삭제·이름변경할 때마다, 같은 변경 안에서 반드시
+`step4_generate/process_prefix_defines.py`의 `_ATTRIBUTES`/`_CUSTOM_GROUPS` 목록도
+같이 고칠 것.** 이 파일이 `block2_writer.py`를 통해 library 헤더에 자동으로 써주는
+`define`/`define_group` 문의 유일한 소스이기 때문이다 - 둘이 어긋나면, 새로 추가한
+attribute는 아무 데도 define되지 않은 채로 cell{}/pin{}에 쓰이게 되고, Liberty
+컴파일러가 "The '{process_prefix}_xxx' attribute/group name cannot be specified
+here."로 거부해서 .db 변환이 실패한다 - 2026-08에 `{process_prefix}_width`/
+`{process_prefix}_height`가 정확히 이렇게 실패한 걸 진단하고 고친 적이 있다
+(자세한 배경은 아래 "Step 4 — Block 2-(1)" 절 참고).
+
+새 줄을 추가할 때 확인할 것 (`process_prefix_defines.py` 상단 주석에도 같은 체크리스트가
+있다):
+1. **소속 그룹**: 표준 Liberty 그룹(`cell`/`pin`)인지, 아니면 `{process_prefix}_xxx(...) {`
+   형태로 새로 여는 custom group 안인지. custom group이면 그 그룹 자체도
+   `_CUSTOM_GROUPS`에 `(그룹 이름 뒷부분, 부모 그룹)`으로 먼저 추가해야 한다
+   (`define_group`이 그 그룹 안 attribute의 `define`보다 먼저 나와야 하므로,
+   `write_process_prefix_defines()`는 항상 `_CUSTOM_GROUPS`를 `_ATTRIBUTES`보다
+   먼저 쓴다 - 이 순서를 건드리지 말 것).
+2. **값 타입**: 코드에서 `"..."`로 감싸 쓰면 `string`, 안 감싸고 숫자를 그대로 쓰면
+   `float`.
+3. `_ATTRIBUTES`에 `(attribute 이름 뒷부분, 그룹, 타입)` 튜플을 추가.
+
+`process_prefix_defines.py`는 PDK가 이미 같은 이름으로 define해둔 게 있으면 그 이름은
+건너뛰고 없는 것만 새로 쓰므로(`_collect_pdk_defined_names`, PDK 본문에서 이미 읽어온
+`define`/`define_group` 줄만 걸러냄), 이 목록을 최대한 넓게(실제로 쓰는 attribute를
+전부) 유지해도 PDK가 이미 갖고 있는 정의를 덮어쓸 걱정은 없다.
+
 ## 입력
 
 1. **PDK Folder**: `.lib` PDK/DK 파일들이 있는 폴더 — **확장자가 `.lib`로 시작하는 파일은
@@ -310,12 +342,11 @@ forwarding 환경에서 보장할 수 없어서,
    '{process_prefix}_width' attribute/group name cannot be specified here."로
    거부해서 .db 변환이 실패했다. `process_prefix_defines.py`가 block4_writer.py/
    block5_writer.py가 실제로 쓰는 attribute/group 전부를(이름·소속 그룹·타입까지
-   정확히) 목록으로 갖고 있다가, 그 job의 process_prefix로 채워 library 헤더
-   맨 앞(PDK 본문 복사보다도 먼저)에 써준다. PDK가 같은 이름/그룹을 이미 정의해뒀어도
-   완전히 같은 내용의 재정의라 Liberty 컴파일러가 그대로 허용한다. **block4/block5에서
-   `{process_prefix}_` 로 시작하는 줄을 추가/삭제/이름변경하면 반드시
-   `process_prefix_defines.py`의 목록도 같이 맞춰야 한다** - 둘이 어긋나면 이 문제가
-   똑같이 재발한다.
+   정확히) 목록으로 갖고 있다가, PDK 본문에 이미 같은 이름의 define/define_group이
+   있으면 건너뛰고 없는 것만(그 job의 process_prefix로 채워) library 헤더 맨 앞(PDK
+   본문 복사보다도 먼저)에 써준다. **block4/block5에서 새 `{process_prefix}_` 줄을
+   추가/삭제/이름변경할 때 이 목록을 같이 맞추는 규칙은 이 문서 맨 위 "코드 수정 규칙"
+   절에 있다 - 반드시 지킬 것.**
 3. **Block 2-(2) (voltage_map)** (2026-08 Voltage Map 재설계): Step2에서 이 liberty에
    선택된 voltage condition 이름으로 Voltage Map에서 그 condition을 찾아(대소문자 무시)
    Power Type1..N 값을 가져와, **power type 개수만큼의 VDD 줄 + VSS 1줄**을 항상 전부 작성한다.
