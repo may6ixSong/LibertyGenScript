@@ -109,8 +109,8 @@ def write_block4(f_out, job: dict) -> None:
     f_out.write(f"{INDENT_2}{process_prefix}_height : %0.5f ;\n" % job["height"])
     f_out.write(f"{INDENT_2}dont_use : true ;\n")
     f_out.write(f"{INDENT_2}dont_touch : true ;\n")
-    f_out.write(f'{INDENT_2}{process_prefix}_voltage : "%0.4f" ;\n' % job["nom_voltage"])
-    f_out.write(f'{INDENT_2}{process_prefix}_temperature : "%0.4f" ;\n' % job["nom_temperature"])
+    f_out.write(f'{INDENT_2}{process_prefix}_voltage : "%0.5f" ;\n' % job["nom_voltage"])
+    f_out.write(f'{INDENT_2}{process_prefix}_temperature : "%0.5f" ;\n' % job["nom_temperature"])
     f_out.write(f"{INDENT_2}cell_leakage_power : 0.00000 ;\n")
     f_out.write("\n")
 

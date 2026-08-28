@@ -69,6 +69,13 @@ def _read_voltage_block(it, first_line: str) -> dict:
     'input_voltage(NAME) {' 또는 'output_voltage(NAME) {' 줄(first_line) 바로 다음
     4줄(vil/vih/vimax/vimin 또는 vol/voh/vomax/vomin)을 읽어 dict로 반환.
     (기존 make_liberty.py의 4줄 고정 판독 방식과 동일)
+
+    2026-08 버그 수정: 이 블록을 닫는 '}' 줄까지 여기서 같이 소비한다. 예전에는
+    안 그래서 그 '}'가 그대로 iterator에 남아 스트리밍을 이어가는 다음 단계(예:
+    첫 voltage_map 줄 이후 구간을 읽는 3단계)로 넘어가 버렸는데, 그 단계가
+    "input_voltage/output_voltage/cell이 아닌 줄은 본문으로 옮긴다"로 바뀌면서
+    이 남은 '}'까지 본문에 그대로 섞여 들어가 library{} 전체의 중괄호 균형이
+    깨지는 문제가 있었다.
     """
     entry: dict = {"param": _paren_content(first_line)}
     for _ in range(4):
@@ -76,6 +83,7 @@ def _read_voltage_block(it, first_line: str) -> dict:
         if sub_line is None:
             break
         _apply_voltage_subline(entry, sub_line)
+    next(it, None)  # 이 블록을 닫는 '}' 줄 소비
     return entry
 
 
@@ -176,6 +184,15 @@ def read_pdk_library_sections(pdk_path: str) -> dict:
         # 과 핀 안에서의 "단순 값 대입"(예: input_voltage : NAME ;, 핀 개수만큼 반복)
         # 둘 다 첫 토큰이 동일하므로, 그 줄에 '{'가 있어야만(=진짜 블록 선언일 때만)
         # 블록으로 취급한다. '{'가 없는 단순 대입 줄은 그냥 건너뛴다.
+        #
+        # 2026-08 버그 수정: 예전에는 이 구간(첫 voltage_map 줄 ~ 첫 cell 선언)에서
+        # input_voltage/output_voltage가 아닌 나머지 줄(특히 `define (...)` - block4가
+        # 쓰는 {process_prefix}_width 등 커스텀 attribute를 이 define이 없으면 Liberty
+        # 컴파일러가 "attribute/group name cannot be specified here"로 거부한다)을 전부
+        # 조용히 버렸다. PDK/DK 파일에 따라 define이 voltage_map보다 뒤, 첫 cell 선언보다
+        # 앞에 있는 경우가 있어서, 그런 PDK로 만들면 실제로 이 에러가 났다. 이제 이 구간의
+        # 다른 줄도(추가 voltage_map 줄만 제외 - 우리 쪽 voltage_map으로 따로 이미 쓰므로)
+        # 2단계 본문 복사와 동일한 규칙으로 body_lines에 이어서 담는다.
         for line in it:
             token = _first_token(line)
 
@@ -193,6 +210,13 @@ def read_pdk_library_sections(pdk_path: str) -> dict:
             if token == "output_voltage" and "{" in line:
                 result["output_voltage_entries"].append(_read_voltage_block(it, line))
                 continue
+
+            if token == "voltage_map" or token in _SKIP_TOKENS_IN_BODY:
+                continue
+
+            stripped = line.strip()
+            if stripped:
+                result["body_lines"].append(stripped)
 
     return result
 
