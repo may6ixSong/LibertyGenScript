@@ -261,9 +261,14 @@ forwarding 환경에서 보장할 수 없어서,
 4. **Block 2-(3) (operating_conditions)**: `nom_temperature`/`nom_voltage`는 **Step2에서
    사용자가 직접 입력한 voltage/temperature 값**을 그대로 쓴다 (2026-08 2차 재설계 확정 —
    예전에는 파일명 파싱 결과를 썼다. 보통 같은 값이 나오지만, 파일명 규칙에서 벗어난
-   파일을 고르는 경우까지 고려한 것이다). 괄호 안 library명은 PDK 파일도 우리 출력 파일도 아닌,
-   **PDK 파일 내부 자신의 `operating_conditions(library명) { ... }` 선언에서 추출한 값**
-   (voltage_map 근처에 위치, 스트리밍 중 계속 찾다가 발견하면 멈춤).
+   파일을 고르는 경우까지 고려한 것이다). 괄호 안 library명(`oc_library`)은 PDK 파일도
+   우리 출력 파일도 아니고, PDK 내부 선언에서 추출하지도 않는다(2026-08 3차 재설계) —
+   **Step2 liberty setting의 `corner`/`beol_inform`/`voltage`/`temperature`로 직접
+   조립**한다: `{corner}_{beol_inform}_{voltage}_{temperature}c`
+   (예: `ffpg_nominal_0p8000_m40c`). voltage는 파일명 토큰과 같은 규칙으로 소수점
+   4자리(`0.8` → `0p8000`, `udc_field_defs.format_voltage_token`)이지만 trailing
+   `v`는 붙이지 않고, temperature는 파일명 토큰 그대로(`format_temperature_token`,
+   음수면 `m` 접두 + `c` 접미, `-40` → `m40c`) 쓴다(`block2_writer._format_oc_library`).
 5. **Block 4 pg_pin의 `voltage_name`** (2026-08 Voltage Map 재설계): 예전에는 항상
    Port List Volts 값을 그대로 포맷(`VDD_0.80000`)해서 썼지만, 이제 그 Volts 값이
    Power Type 대표 전압(0.8V/2.2V/1.8V, power type 개수가 2면 1.8V는 매칭 대상에서
@@ -278,19 +283,20 @@ forwarding 환경에서 보장할 수 없어서,
 값/줄을 못 찾으면 예외를 던지지 않고 빈 자리로 두되, 무엇이 어느 파일에서 빠졌는지
 주석으로 표시:
 ```
-####### operating_conditions library name is missing in {pdk_filename} #########
-operating_conditions (<NOT_FOUND_IN_PDK>) {
+####### input_voltage block(s) is missing in {pdk_filename} #########
 ```
+(`operating_conditions` library명은 더 이상 PDK에서 읽지 않으므로 이 결측 케이스는
+해당 없음 — Step2 Validate가 corner/beol_inform/voltage/temperature를 이미 필수값으로
+강제한다.)
 
 ### 성능/안정성 (2026-08 재설계)
 - PDK/DK 파일이 30만 줄 이상일 수 있음 → **`readlines()`로 전체를 메모리에 올리지 않고
   줄 단위로 스트리밍**하며, 필요한 걸 다 얻는 즉시 읽기를 중단한다.
 - PDK 읽기는 두 갈래로 완전히 분리되어 있다 (`pdk_stream_reader.py`):
   1. `read_pdk_library_sections(pdk_path)` — **liberty 하나당 한 번**, block2용.
-     library 선언 / 본문 / `operating_conditions` 이름 / `input_voltage` /
-     `output_voltage`만 필요하고 이것들은 전부 첫 `cell (...)` 선언보다 앞에 있으므로,
-     **첫 cell 선언을 만나는 즉시 중단**한다. 파일의 대부분(cell 본문 수십만 줄)은 아예
-     읽지 않는다.
+     library 선언 / 본문 / `input_voltage` / `output_voltage`만 필요하고 이것들은 전부
+     첫 `cell (...)` 선언보다 앞에 있으므로, **첫 cell 선언을 만나는 즉시 중단**한다.
+     파일의 대부분(cell 본문 수십만 줄)은 아예 읽지 않는다.
   2. `read_lut_table_sections(pdk_path, dff, lut)` — **실행당 한 번**, block3용.
      Step3에서 고른 worst case PDK 하나에서만 읽고, index_1/index_2를 찾는 즉시 중단.
      결과는 모든 job이 그대로 재사용한다.

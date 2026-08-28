@@ -12,10 +12,9 @@ lu_table_template(index_1/index_2)을 한 번에 뽑았다. 이제 lu_table_temp
 에서만 찾아 모든 liberty에 재사용하므로, 두 가지 읽기를 완전히 분리했다:
 
   1. read_pdk_library_sections(pdk_path)  - liberty 하나당 한 번 (block2용)
-     library 선언 ~ voltage_map ~ operating_conditions / input_voltage / output_voltage
-     까지만 필요하다. 이 값들은 전부 첫 `cell (...)` 선언보다 앞에 있으므로, 첫 cell
-     선언을 만나는 즉시 읽기를 멈춘다 - 파일의 압도적인 대부분(cell 본문 수십만 줄)은
-     아예 읽지 않는다.
+     library 선언 ~ voltage_map ~ input_voltage / output_voltage까지만 필요하다. 이
+     값들은 전부 첫 `cell (...)` 선언보다 앞에 있으므로, 첫 cell 선언을 만나는 즉시
+     읽기를 멈춘다 - 파일의 압도적인 대부분(cell 본문 수십만 줄)은 아예 읽지 않는다.
 
   2. read_lut_table_sections(pdk_path, dff_cell_name, lut_table_name) - 실행당 한 번
      (block3용, worst case PDK 전용) cell 영역만 보므로 body_lines 같은 건 아예 모으지
@@ -31,7 +30,6 @@ from __future__ import annotations
 import re
 
 _SKIP_TOKENS_IN_BODY = {"date", "revision", "comment"}
-_OPERATING_CONDITIONS_PATTERN = re.compile(r"operating_conditions\s*\(([^)]*)\)")
 _PAREN_CONTENT_PATTERN = re.compile(r"\(([^)]*)\)")
 
 # index_1/index_2 검색을 무한정 계속하지 않도록 하는 안전장치(비정상적으로 큰
@@ -129,7 +127,6 @@ def new_library_sections() -> dict:
         "found_library_decl": False,
         "body_lines": [],
         "found_voltage_map": False,
-        "operating_conditions_library": None,
         "input_voltage_entries": [],
         "output_voltage_entries": [],
     }
@@ -137,9 +134,9 @@ def new_library_sections() -> dict:
 
 def read_pdk_library_sections(pdk_path: str) -> dict:
     """
-    block2 작성에 필요한 것만 뽑아낸다 (library 선언 / 본문 / operating_conditions
-    library명 / input_voltage / output_voltage). 이 값들은 전부 첫 `cell (...)` 선언
-    앞에 있으므로, 첫 cell 선언을 만나는 즉시 읽기를 멈춘다.
+    block2 작성에 필요한 것만 뽑아낸다 (library 선언 / 본문 / input_voltage /
+    output_voltage). 이 값들은 전부 첫 `cell (...)` 선언 앞에 있으므로, 첫 cell 선언을
+    만나는 즉시 읽기를 멈춘다.
 
     Returns: 위 new_library_sections()가 정의하는 형태의 dict.
     """
@@ -173,7 +170,7 @@ def read_pdk_library_sections(pdk_path: str) -> dict:
         if not result["found_voltage_map"]:
             return result
 
-        # 3단계: operating_conditions / input_voltage / output_voltage 를 찾는다.
+        # 3단계: input_voltage / output_voltage 를 찾는다.
         #
         # 주의: input_voltage/output_voltage는 "블록 선언"(예: input_voltage(NAME) {)
         # 과 핀 안에서의 "단순 값 대입"(예: input_voltage : NAME ;, 핀 개수만큼 반복)
@@ -188,12 +185,6 @@ def read_pdk_library_sections(pdk_path: str) -> dict:
             # 바뀌면서 가능해짐).
             if token == "cell" and "(" in line:
                 break
-
-            if result["operating_conditions_library"] is None:
-                match = _OPERATING_CONDITIONS_PATTERN.search(line)
-                if match:
-                    result["operating_conditions_library"] = match.group(1).strip()
-                    continue
 
             if token == "input_voltage" and "{" in line:
                 result["input_voltage_entries"].append(_read_voltage_block(it, line))

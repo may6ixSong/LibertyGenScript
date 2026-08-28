@@ -22,8 +22,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from step2_udc.udc_field_defs import (
-    ENTRY_CONDITION_KEY, ENTRY_DBS_KEY, ENTRY_PDK_KEY, ENTRY_TEMPERATURE_KEY,
-    ENTRY_VOLTAGE_KEY, parse_temperature_input, parse_voltage_input,
+    ENTRY_BEOL_KEY, ENTRY_CONDITION_KEY, ENTRY_CORNER_KEY, ENTRY_DBS_KEY, ENTRY_PDK_KEY,
+    ENTRY_TEMPERATURE_KEY, ENTRY_VOLTAGE_KEY, parse_temperature_input, parse_voltage_input,
 )
 from step3_settings.constants_field_defs import (
     CONDITION_NAME_KEY, CONDITION_VALUES_KEY, POWER_TYPE_DEFAULT_VOLTAGE,
@@ -84,6 +84,16 @@ def build_job(
         return None
     if not dbs_filename:
         errors.append(f"[{pdk_filename}] DBS output file is not selected.")
+        return None
+
+    corner = str(entry.get(ENTRY_CORNER_KEY, "")).strip()
+    if not corner:
+        errors.append(f"[{pdk_filename}] Corner (Step 2) is not selected.")
+        return None
+
+    beol_inform = str(entry.get(ENTRY_BEOL_KEY, "")).strip()
+    if not beol_inform:
+        errors.append(f"[{pdk_filename}] BEOL Inform (Step 2) is not selected.")
         return None
 
     condition_value = str(entry.get(ENTRY_CONDITION_KEY, "")).strip()
@@ -218,6 +228,8 @@ def build_job(
         "output_filename": output_filename,
         "library_name": library_name,
         # Step2에서 사용자가 직접 입력한 값 (파일명 파싱 결과가 아님)
+        "corner": corner,
+        "beol_inform": beol_inform,
         "nom_voltage": float(nom_voltage),
         "nom_temperature": nom_temperature,
         "voltage_condition": condition_label,
