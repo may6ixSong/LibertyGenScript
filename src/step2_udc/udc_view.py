@@ -62,6 +62,8 @@ _NUMBER_REGEX = QRegExp(r"^-?\d*\.?\d*$")
 _SELECT_LABEL = "(Select)"
 _NONE_LABEL = "(None)"
 _RECOMMEND_PREFIX = "★ "  # ★
+_COLLAPSED_SYMBOL = "▶"  # ▶
+_EXPANDED_SYMBOL = "▼"  # ▼
 
 _COMMON_FIELDS_INFO = (
     "These values are shared by every liberty file generated in this run.\n"
@@ -169,10 +171,28 @@ def _populate_file_combo(
     combo.blockSignals(False)
 
 
+def _collapsed_summary_text(entry: dict) -> str:
+    """
+    카드를 접었을 때 헤더에 보이는 한 줄 요약(2026-08 추가). voltage/temperature는
+    PDK/DBS 파일명 토큰과 동일한 규칙(0p####v, 음수 온도는 m##c)으로 표기해서 파일명과
+    바로 비교해볼 수 있게 한다. 아직 안 채워진 항목은 '?'로 표시한다.
+    """
+    corner = str(entry.get(ENTRY_CORNER_KEY, "")).strip() or "?"
+    beol = str(entry.get(ENTRY_BEOL_KEY, "")).strip() or "?"
+    voltage_token = format_voltage_token(entry.get(ENTRY_VOLTAGE_KEY, "")) or "?"
+    temperature_token = format_temperature_token(entry.get(ENTRY_TEMPERATURE_KEY, "")) or "?"
+    return f"{corner}_{beol}_{voltage_token}_{temperature_token}"
+
+
 class _EntryCard(QFrame):
     """
     liberty 1개분 setting 카드. corner/beol/voltage/temperature/condition 입력이 바뀌면
     on_changed를 호출해서 부모가 PDK/DBS 추천을 다시 계산하도록 한다.
+
+    2026-08 추가: setting 개수가 많아질 수 있으므로 헤더의 토글 버튼으로 본문(설정 입력
+    행들)을 접었다 펼 수 있다(기본은 펼침). 접으면 헤더에 "Liberty #N.  {corner}_{beol}_
+    {voltage}_{temperature}" 형태의 한 줄 요약이 보인다(voltage_map_view._ConditionCard와
+    같은 패턴).
     """
 
     def __init__(
@@ -187,7 +207,16 @@ class _EntryCard(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("entryCard")
+        # 접었을 때 카드가 실제로 헤더 높이까지 줄어들도록 세로로는 필요한 만큼만 쓴다.
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self.entry_id = entry.get(ENTRY_ID_KEY, "")
+        self._index = index
+        # 접힘 여부는 body.isVisible()로 되짚어보지 않고 별도 플래그로 직접 관리한다
+        # (2026-08) - 카드가 아직 화면에 실제로 표시되기 전(생성 직후 등)에는 최상위
+        # 창이 보이지 않는 상태라 위젯 자신을 숨기지 않았어도 QWidget.isVisible()이
+        # False를 반환할 수 있어, 그 값을 그대로 "펼침 여부"로 쓰면 초기 상태가 잘못
+        # 접힌 것처럼 보이는 문제가 있었다(실측으로 확인).
+        self._expanded = True
         self._on_changed = on_changed
         self._on_pdk_selected = on_pdk_selected
         self._on_remove = on_remove
@@ -199,38 +228,93 @@ class _EntryCard(QFrame):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(10)
 
-        layout.addLayout(self._build_header_row(index))
-        layout.addLayout(self._build_setting_row(entry))
-        layout.addLayout(self._build_file_row(entry))
+        layout.addLayout(self._build_header_row())
+        layout.addWidget(self._build_body(entry))
+
+        self._connect_summary_triggers()
+        self._refresh_collapsed_label()
+
+    # -- 구성 ---------------------------------------------------------------
+    def _build_header_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        self.toggle_btn = QPushButton(_EXPANDED_SYMBOL)
+        self.toggle_btn.setFixedWidth(28)
+        self.toggle_btn.setStyleSheet("font-size: 14px; padding: 2px 4px;")
+        self.toggle_btn.setToolTip("Collapse / expand this liberty setting")
+        self.toggle_btn.clicked.connect(self._toggle_body)
+        row.addWidget(self.toggle_btn)
+
+        self.index_label = QLabel(f"Liberty #{self._index + 1}")
+        self.index_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 700;")
+        row.addWidget(self.index_label, stretch=1)
+
+        remove_btn = QPushButton("🗑")
+        remove_btn.setObjectName("iconDangerButton")
+        remove_btn.setFixedSize(30, 30)
+        remove_btn.setToolTip("Remove this liberty setting")
+        remove_btn.clicked.connect(self._confirm_remove)
+        row.addWidget(remove_btn)
+        return row
+
+    def _build_body(self, entry: dict) -> QWidget:
+        self.body = QWidget()
+        self.body.setObjectName("transparentRow")
+        body_layout = QVBoxLayout(self.body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(10)
+
+        body_layout.addLayout(self._build_setting_row(entry))
+        body_layout.addLayout(self._build_file_row(entry))
 
         self.match_label = QLabel("")
         self.match_label.setWordWrap(True)
         self.match_label.setStyleSheet(f"color: {MUTED_TEXT_COLOR}; font-size: 11px;")
-        layout.addWidget(self.match_label)
+        body_layout.addWidget(self.match_label)
+        return self.body
 
-    # -- 구성 ---------------------------------------------------------------
-    def _build_header_row(self, index: int) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        self.index_label = QLabel(f"Liberty #{index + 1}")
-        self.index_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 700;")
-        row.addWidget(self.index_label)
-        row.addStretch()
-        remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(self._confirm_remove)
-        row.addWidget(remove_btn)
-        return row
+    def _connect_summary_triggers(self) -> None:
+        """corner/beol/voltage/temperature가 바뀔 때마다 접힌 상태의 요약 문구도 갱신."""
+        for key in (ENTRY_CORNER_KEY, ENTRY_BEOL_KEY):
+            combo = self.select_widgets.get(key)
+            if combo is not None:
+                combo.currentIndexChanged.connect(lambda _i: self._refresh_collapsed_label())
+        for key in (ENTRY_VOLTAGE_KEY, ENTRY_TEMPERATURE_KEY):
+            edit = self.number_widgets.get(key)
+            if edit is not None:
+                edit.textChanged.connect(lambda _t: self._refresh_collapsed_label())
 
     def _confirm_remove(self) -> None:
         # 2026-08 추가: 실수로 setting을 지우는 것을 막기 위해 삭제 전에 확인창을
         # 띄운다. 되돌릴 방법이 없으므로(입력값이 즉시 사라짐) 기본 선택지는 No.
         answer = QMessageBox.question(
             self, "Remove Liberty Setting",
-            f"Remove {self.index_label.text()}? This cannot be undone.",
+            f"Remove Liberty #{self._index + 1}? This cannot be undone.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer == QMessageBox.Yes:
             self._on_remove(self)
+
+    # -- 접기/펴기 ------------------------------------------------------------
+    def _toggle_body(self) -> None:
+        self.set_expanded(not self._expanded)
+
+    def set_expanded(self, expanded: bool) -> None:
+        self._expanded = expanded
+        self.body.setVisible(expanded)
+        self.toggle_btn.setText(_EXPANDED_SYMBOL if expanded else _COLLAPSED_SYMBOL)
+        self._refresh_collapsed_label()
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def _refresh_collapsed_label(self) -> None:
+        prefix = f"Liberty #{self._index + 1}"
+        if self._expanded:
+            self.index_label.setText(prefix)
+        else:
+            self.index_label.setText(f"{prefix}.  {_collapsed_summary_text(self.collect())}")
 
     def _build_setting_row(self, entry: dict) -> QGridLayout:
         grid = QGridLayout()
@@ -323,7 +407,8 @@ class _EntryCard(QFrame):
         combo.blockSignals(False)
 
     def set_index(self, index: int) -> None:
-        self.index_label.setText(f"Liberty #{index + 1}")
+        self._index = index
+        self._refresh_collapsed_label()
 
     def collect(self) -> dict:
         entry = {ENTRY_ID_KEY: self.entry_id}
@@ -350,6 +435,8 @@ class UDCView(QWidget):
         get_dbs_folder: Callable[[], str],
         on_next: Callable[[], None] | None = None,
         on_back: Callable[[], None] | None = None,
+        show_loading: Callable[[str], None] | None = None,
+        hide_loading: Callable[[], None] | None = None,
         parent=None,
     ):
         """
@@ -358,12 +445,17 @@ class UDCView(QWidget):
             get_dbs_folder: 최신 DBS Simulation Folder 경로를 즉시 조회하는 콜백
             on_next: 모든 검사를 통과한 뒤 Next 버튼을 눌렀을 때 호출되는 콜백
             on_back: Back 버튼을 눌렀을 때 호출되는 콜백 (이전 Step으로 이동)
+            show_loading / hide_loading: Validate 도중 전역 로딩 오버레이를 보여주고
+                숨기는 콜백(선택, 2026-08 추가) - Validate 버튼은 그동안 disabled로
+                바뀌어 중복 실행을 막는다.
         """
         super().__init__(parent)
         self.get_pdk_folder = get_pdk_folder
         self.get_dbs_folder = get_dbs_folder
         self.on_next = on_next
         self.on_back = on_back
+        self.show_loading = show_loading
+        self.hide_loading = hide_loading
 
         self.state: dict = udc_manager.load_state()
         # Voltage Map은 화면만 여기(Step 2 왼쪽 열)로 옮겨왔을 뿐, 저장 위치는 예전
@@ -408,14 +500,29 @@ class UDCView(QWidget):
         left.setSpacing(12)
         left.addWidget(self._build_common_card())
         left.addWidget(self._build_voltage_map_panel(), stretch=1)
-        left_container = QWidget()
-        left_container.setObjectName("transparentRow")
-        left_container.setLayout(left)
+        self.left_container = QWidget()
+        self.left_container.setObjectName("transparentRow")
+        self.left_container.setLayout(left)
+
+        # 2026-08 추가: 예전에는 왼쪽 열을 QSplitter에 직접 넣어서, Common Fields/
+        # Voltage Map의 실제 내용이 요구하는 최소 폭(minimumSizeHint) 밑으로는 전혀
+        # 줄일 수 없었다. QScrollArea(widgetResizable=True)로 감싸면 스크롤 영역
+        # 자신의 minimumSizeHint는 내용물 크기와 무관해지므로, 아래
+        # _apply_default_column_sizes에서 그 minimumSizeHint의 절반을 새 최소 폭으로
+        # 직접 지정하고, 그보다 더 줄어들면(=폭이 실제 내용보다 좁아지면) 잘리는 대신
+        # 가로 스크롤바가 뜬다. 세로는 Voltage Map 패널이 자체 스크롤을 갖고 있으므로
+        # 여기서는 끈다.
+        self.left_scroll = QScrollArea()
+        self.left_scroll.setWidgetResizable(True)
+        self.left_scroll.setFrameShape(QFrame.NoFrame)
+        self.left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.left_scroll.setWidget(self.left_container)
 
         self.column_splitter = QSplitter(Qt.Horizontal)
         self.column_splitter.setObjectName("columnSplitter")
         self.column_splitter.setChildrenCollapsible(False)
-        self.column_splitter.addWidget(left_container)
+        self.column_splitter.addWidget(self.left_scroll)
         self.column_splitter.addWidget(self._build_entries_card())
         self.column_splitter.setStretchFactor(0, 3)
         self.column_splitter.setStretchFactor(1, 5)
@@ -569,6 +676,10 @@ class UDCView(QWidget):
         self.dbs_files = list_dbs_mt0_files(self.get_dbs_folder())
 
     def _rebuild_entry_cards(self, entries: list[dict]) -> None:
+        # 접기/펴기 상태는 entry_id 기준으로 다음 rebuild까지 유지한다(2026-08 추가) -
+        # 예를 들어 다른 setting을 하나 추가/삭제해도 이미 접어 둔 카드가 다시 펴지지
+        # 않도록 (voltage_map_view._ConditionCard와 같은 패턴).
+        expanded_state = {card.entry_id: card.is_expanded() for card in self.entry_cards}
         for card in self.entry_cards:
             self.entries_layout.removeWidget(card)
             card.deleteLater()
@@ -583,6 +694,7 @@ class UDCView(QWidget):
                 entry, index, condition_names, self._on_entry_changed,
                 self._on_entry_pdk_selected, self._on_remove_entry,
             )
+            card.set_expanded(expanded_state.get(entry.get(ENTRY_ID_KEY, ""), True))
             # 카드를 만든 직후에는 PDK/DBS 콤보가 비어 있으므로, 저장돼 있던 선택값을
             # 살려서 채워 넣는다.
             self._refresh_entry_files(card, entry.get(ENTRY_PDK_KEY, ""), entry.get(ENTRY_DBS_KEY, ""))
@@ -721,17 +833,27 @@ class UDCView(QWidget):
     # Validate
     # ------------------------------------------------------------------
     def _on_validate(self) -> None:
-        self._rescan_files()
-        self._persist()
+        # Validate 도중 다시 눌려 중복 실행되지 않도록 잠그고, PDK/DBS 폴더 재스캔이
+        # 오래 걸릴 수 있음을 로딩 오버레이로 보여준다 (2026-08 추가).
+        self.validate_btn.setEnabled(False)
+        if self.show_loading:
+            self.show_loading("Validating UDC settings...")
+        try:
+            self._rescan_files()
+            self._persist()
 
-        entries = udc_manager.get_entries(self.state)
-        errors = validate_common_fields(self.state["common"])
-        # Voltage Map이 먼저다 - liberty setting의 Condition이 여기 정의된 이름이어야
-        # 하므로, Voltage Map 자체가 성립하는지부터 검사한다.
-        errors += validate_voltage_map(self.voltage_map)
-        errors += validate_entries(
-            entries, self.pdk_files, self.dbs_files, self.voltage_map_panel.condition_names(),
-        )
+            entries = udc_manager.get_entries(self.state)
+            errors = validate_common_fields(self.state["common"])
+            # Voltage Map이 먼저다 - liberty setting의 Condition이 여기 정의된 이름이어야
+            # 하므로, Voltage Map 자체가 성립하는지부터 검사한다.
+            errors += validate_voltage_map(self.voltage_map)
+            errors += validate_entries(
+                entries, self.pdk_files, self.dbs_files, self.voltage_map_panel.condition_names(),
+            )
+        finally:
+            self.validate_btn.setEnabled(True)
+            if self.hide_loading:
+                self.hide_loading()
 
         summary = (
             f"{len(entries)} liberty file(s) configured, "
@@ -786,12 +908,20 @@ class UDCView(QWidget):
         맞춘다. 위젯이 실제로 표시되어 진짜 폭을 알 수 있게 된 첫 showEvent에서 딱
         한 번만 적용하고, 그 뒤로는 사용자가 직접 드래그해서 조절한 폭을 그대로
         존중한다(다시 덮어쓰지 않음).
+
+        같은 시점에 왼쪽 열의 새 최소 폭도 정한다(2026-08 추가): 예전에는 Common
+        Fields/Voltage Map의 실제 내용이 요구하는 최소 폭(minimumSizeHint)이 그대로
+        splitter의 하한이었는데, 이제 그 폭의 절반까지 줄일 수 있게 하고 그보다 더
+        좁아지면 가로 스크롤바가 뜬다(left_scroll, 위 _build_layout 참고). 폭 역시 첫
+        showEvent에서만 측정해서 고정한다 - 그 전에는 minimumSizeHint가 아직 실제
+        폰트/DPI 기준으로 안정되지 않았을 수 있다.
         """
-        if self._column_sizes_applied:
-            return
-        width = self.column_splitter.width()
-        if width <= 0:
-            return
-        left_width = width * 3 // 8
-        self.column_splitter.setSizes([left_width, width - left_width])
-        self._column_sizes_applied = True
+        if not self._column_sizes_applied:
+            width = self.column_splitter.width()
+            if width <= 0:
+                return
+            natural_min_width = self.left_container.minimumSizeHint().width()
+            self.left_scroll.setMinimumWidth(max(1, natural_min_width // 2))
+            left_width = width * 3 // 8
+            self.column_splitter.setSizes([left_width, width - left_width])
+            self._column_sizes_applied = True

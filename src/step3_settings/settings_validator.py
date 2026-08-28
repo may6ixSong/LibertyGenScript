@@ -37,6 +37,7 @@ DBS output pin의 related pin 검사(2026-08 확정 → 2026-08 자동 채움 �
 from __future__ import annotations
 
 import fnmatch
+from pathlib import Path
 
 from step1_setup.port_list_reader import list_all_pin_names, list_pins_by_port_type
 from step3_settings.constants_field_defs import (
@@ -212,6 +213,23 @@ def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
             )
 
     return errors
+
+
+def validate_output_path(output_path: str) -> list[str]:
+    """
+    Output Path 검사 (2026-08 추가): 예전에는 Validate를 통과해야만 Output Path
+    입력칸/Browse가 열렸으므로 경로 자체는 따로 검사하지 않았다. 이제 Output Path는
+    Validate 전에도 자유롭게 입력/변경할 수 있으므로, Validate가 그 값이 실제로
+    존재하는 폴더인지 확인한다. 아직 아무것도 입력하지 않았으면(빈 값) 이 시점에는
+    에러로 보지 않는다 - Generate 버튼은 어차피 경로가 채워지고 실제로 존재해야만
+    열린다(settings_view._update_generate_button_state).
+    """
+    value = str(output_path or "").strip()
+    if not value:
+        return []
+    if not Path(value).is_dir():
+        return [f"Output Path does not exist: {value}"]
+    return []
 
 
 def validate_pin_settings(pins: dict, port_list_file: str) -> list[str]:

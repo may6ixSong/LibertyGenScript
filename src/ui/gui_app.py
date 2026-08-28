@@ -78,9 +78,14 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
 
+        # 창 전체를 덮는 로딩 오버레이 (Step1의 Validate 등에서 바로 쓰이므로 화면들보다
+        # 먼저 만들어 둔다. z-order는 raise_()로 매번 보정하므로 생성 순서와 무관하다.)
+        self.loading_overlay = LoadingOverlay(self)
+
         loaded = config_manager.load_config()
         self.setup_view = SetupView(
             loaded, self._on_config_changed, self._on_next, self._on_config_imported,
+            self._show_loading, self._hide_loading,
         )
         # Step2/3는 지연 생성(위 모듈 docstring 참고) - 앱 시작 시점에는 만들지 않고
         # 처음 그 Step으로 이동할 때 _get_or_create_*_view()가 만든다.
@@ -92,9 +97,6 @@ class MainWindow(QMainWindow):
 
         self.stack.addWidget(self.setup_view)
         self.stack.addWidget(self.generate_view)
-
-        # 창 전체를 덮는 로딩 오버레이 (제일 마지막에 만들어야 다른 위젯들 위로 뜸)
-        self.loading_overlay = LoadingOverlay(self)
 
         # 2026-08 추가: Step1 Port List 파싱, Step3 Output Path 선택(네트워크 폴더
         # 탐색) 등 느린 동기 작업 중 화면이 멈춘 것처럼 보일 때를 대비해, 어느 화면에
@@ -110,6 +112,7 @@ class MainWindow(QMainWindow):
         if self.udc_view is None:
             self.udc_view = UDCView(
                 self._get_pdk_folder, self._get_dbs_folder, self._on_udc_next, self._on_udc_back,
+                self._show_loading, self._hide_loading,
             )
             self.stack.addWidget(self.udc_view)
         return self.udc_view
