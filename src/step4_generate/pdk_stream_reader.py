@@ -15,13 +15,6 @@ lu_table_template(index_1/index_2)을 한 번에 뽑았다. 이제 lu_table_temp
      library 선언 ~ voltage_map ~ input_voltage / output_voltage까지만 필요하다. 이
      값들은 전부 첫 `cell (...)` 선언보다 앞에 있으므로, 첫 cell 선언을 만나는 즉시
      읽기를 멈춘다 - 파일의 압도적인 대부분(cell 본문 수십만 줄)은 아예 읽지 않는다.
-     **`library (...) {` ~ 첫 `voltage_map` 줄 사이는 `define`/`define_group` 줄만
-     골라서 가져오고 나머지는 전부 버린다**(2026-08 변경 - 예전에는 이 구간 전체를
-     그대로 복사했는데, PDK/DK 파일마다 이 구간에 무엇이 있는지가 제각각이라 우리가
-     모르는/불필요한 내용까지 그대로 딸려 들어오는 문제가 있었다. 이 구간에서 우리가
-     실제로 쓰는 건 `{process_prefix}_*` custom attribute의 `define`/`define_group`
-     문뿐이므로 그것만 남긴다 - process_prefix_defines.py가 "PDK가 이미 정의해둔
-     이름은 건너뛴다" 판단에 이 결과를 그대로 쓴다).
 
   2. read_lut_table_sections(pdk_path, dff_cell_name, lut_table_name) - 실행당 한 번
      (block3용, worst case PDK 전용) cell 영역만 보므로 body_lines 같은 건 아예 모으지
@@ -36,9 +29,7 @@ from __future__ import annotations
 
 import re
 
-# library 선언 ~ 첫 voltage_map 줄 사이에서 실제로 가져올 줄의 첫 토큰. 이 두 가지가
-# 아니면(date/revision/comment 포함, PDK마다 뭐가 더 있을지 모르는 그 외 전부) 버린다.
-_BODY_KEEP_TOKENS = {"define", "define_group"}
+_SKIP_TOKENS_IN_BODY = {"date", "revision", "comment"}
 _PAREN_CONTENT_PATTERN = re.compile(r"\(([^)]*)\)")
 
 # index_1/index_2 검색을 무한정 계속하지 않도록 하는 안전장치(비정상적으로 큰
@@ -151,9 +142,9 @@ def new_library_sections() -> dict:
 
 def read_pdk_library_sections(pdk_path: str) -> dict:
     """
-    block2 작성에 필요한 것만 뽑아낸다 (library 선언 / define·define_group 줄 /
-    input_voltage / output_voltage). 이 값들은 전부 첫 `cell (...)` 선언 앞에 있으므로,
-    첫 cell 선언을 만나는 즉시 읽기를 멈춘다.
+    block2 작성에 필요한 것만 뽑아낸다 (library 선언 / 본문 / input_voltage /
+    output_voltage). 이 값들은 전부 첫 `cell (...)` 선언 앞에 있으므로, 첫 cell 선언을
+    만나는 즉시 읽기를 멈춘다.
 
     Returns: 위 new_library_sections()가 정의하는 형태의 dict.
     """
@@ -170,16 +161,16 @@ def read_pdk_library_sections(pdk_path: str) -> dict:
         if not result["found_library_decl"]:
             return result
 
-        # 2단계: voltage_map 직전까지, define/define_group 줄만 골라서 가져온다
-        # (2026-08 변경 - 위 모듈 docstring 참고. 그 외 줄은 date/revision/comment를
-        # 포함해 전부 버린다). indent는 우리가 항상 2칸 기준으로 새로 입힐 것이므로,
-        # PDK 원본의 들여쓰기는 버리고 내용(텍스트)만 strip해서 저장한다.
+        # 2단계: voltage_map 직전까지 본문 복사 (자체 date/revision/comment는 스킵).
+        # 2026-08 수정: indent는 우리가 항상 2칸 기준으로 새로 입힐 것이므로, PDK
+        # 원본의 들여쓰기는 버리고 내용(텍스트)만 strip해서 저장한다. 빈 줄도
+        # "text가 적힌 부분만 가져온다"는 원칙에 따라 그대로 버린다.
         for line in it:
             token = _first_token(line)
             if token == "voltage_map":
                 result["found_voltage_map"] = True
                 break
-            if token not in _BODY_KEEP_TOKENS:
+            if token in _SKIP_TOKENS_IN_BODY:
                 continue
             stripped = line.strip()
             if stripped:

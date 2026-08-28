@@ -2,9 +2,7 @@
 block2_writer.py
 
 Block 2 작성: `library (...) {` 선언부터 시작해서
-  2-(1) library 선언 + 우리 쪽 date/revision/comment + PDK의 define/define_group 줄
-        (그 외 PDK 본문 내용은 가져오지 않음 - 2026-08 변경, pdk_stream_reader.py 참고)
-        + 이 생성기가 스스로 쓰는 나머지 {process_prefix}_* define/define_group
+  2-(1) library 선언 + 우리 쪽 date/revision/comment + PDK 본문(그대로 복사)
   2-(2) voltage_map (power type 개수만큼의 VDD 줄 + VSS 1줄, Step2/Step3 값으로 항상
         전부 작성 - 2026-08 Voltage Map 재설계)
   2-(3) operating_conditions / default_operating_conditions (괄호 안 이름은 PDK가 아니라
@@ -18,10 +16,10 @@ missing_data.py의 규칙대로 `<NOT_FOUND_IN_PDK>` + 안내 주석으로 표�
 던지지 않는다.
 
 2026-08 수정: 들여쓰기를 항상 2칸 단위(INDENT_1/INDENT_2)로 통일했다. PDK/DK 파일에서
-읽어온 body_lines(define/define_group 줄)도 원본 들여쓰기를 버리고 텍스트만 가져와
-INDENT_1로 다시 들여쓴다(pdk_stream_reader.py에서 이미 strip된 텍스트로 넘어옴).
-레거시가 쓰던 tab 기반 정렬(예: "process    \t : ...")도 전부 "key : value ;" 형태의
-단순한 한 칸 공백으로 통일했다.
+읽어온 본문(body_lines)도 원본 들여쓰기를 버리고 텍스트만 가져와 INDENT_1로 다시
+들여쓴다(pdk_stream_reader.py에서 이미 strip된 텍스트로 넘어옴). 레거시가 쓰던 tab
+기반 정렬(예: "process    \t : ...")도 전부 "key : value ;" 형태의 단순한 한 칸
+공백으로 통일했다.
 """
 
 from __future__ import annotations
@@ -83,7 +81,7 @@ def write_block2(f_out, job: dict, sections: dict, header_date_parts: tuple) -> 
     library_name = job["library_name"]
     pdk_filename = job["pdk_filename"]
 
-    # ---- Block 2-(1): library 선언 + 우리 쪽 date/revision/comment + PDK의 define들 ----
+    # ---- Block 2-(1): library 선언 + 우리 쪽 date/revision/comment + PDK 본문 ----
     f_out.write("library (%s) {\n" % library_name)
     f_out.write(f'{INDENT_1}date : "{month}  {date_}  {year}" ;\n')
     f_out.write(f'{INDENT_1}revision : "V1.000 (TECH. FILE : V1.000)" ;\n')
@@ -91,9 +89,6 @@ def write_block2(f_out, job: dict, sections: dict, header_date_parts: tuple) -> 
 
     if not sections["found_library_decl"]:
         write_missing_comment(f_out, "PDK body (library declaration)", pdk_filename)
-    # sections["body_lines"]는 이제 PDK 본문 전체가 아니라 그 안의 define/define_group
-    # 줄만 담고 있다(2026-08 변경, pdk_stream_reader.py 참고) - 그 외 내용은 PDK마다
-    # 제각각이라 우리가 쓸 필요가 없는데 그대로 딸려 들어오는 문제가 있었다.
     for line in sections["body_lines"]:
         f_out.write(f"{INDENT_1}{line}\n")
 
@@ -101,10 +96,11 @@ def write_block2(f_out, job: dict, sections: dict, header_date_parts: tuple) -> 
     # 전부 여기서 스스로 define한다 (process_prefix_defines.py 모듈 docstring 참고 -
     # PDK가 일부만 define해두면 나머지 attribute를 cell{}/pin{}에서 쓰는 순간 Liberty
     # 컴파일러가 "attribute/group name cannot be specified here"로 거부해서 .db 변환이
-    # 실패했다). 위에서 이미 옮겨 쓴 PDK의 define/define_group(sections["body_lines"])과
-    # 이름이 같으면 건너뛰고 없는 것만 새로 쓴다 - PDK가 우리가 모르는 설정으로 이미
-    # 정의해둔 걸 덮어쓰지 않기 위함. PDK의 define들 바로 다음, 우리 쪽 voltage_map보다
-    # 앞에 둔다(PDK 자체의 define들과 한데 모여 있어 비교하기 쉽도록).
+    # 실패했다). PDK 본문(sections["body_lines"])에 이미 같은 이름의 define/
+    # define_group이 있으면 그 이름은 건너뛰고 없는 것만 새로 쓴다 - PDK가 우리가
+    # 모르는 설정으로 이미 정의해둔 걸 덮어쓰지 않기 위함. PDK 본문을 복사한 바로
+    # 다음, 우리 쪽 voltage_map보다 앞에 둔다(2026-08 위치 조정 - PDK를 붙여넣은 뒤에
+    # 오는 게 읽기 자연스럽고, PDK 자체의 define들과도 한데 모여 있어 비교하기 쉽다).
     write_process_prefix_defines(f_out, job["process_prefix"], sections["body_lines"])
 
     # ---- Block 2-(2): voltage_map - pg_pin 존재 여부와 무관하게 항상 전부 작성.
