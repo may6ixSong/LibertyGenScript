@@ -31,16 +31,24 @@ condition을 직접 추가/삭제하고 이름도 정하는 형태로 바뀜, st
   각 pin의 related pin을 입력할 수 있고, 그 다음에야 "2) Validate" 버튼이 열린다.
   DBS output pin 입력을 고치거나 화면을 다시 열면 Check 결과는 무효가 되고 Validate가
   다시 잠긴다. Step4에서 Back으로 돌아온 경우도 마찬가지다(showEvent).
+
+2026-08 변경 - Output Path는 더 이상 Validate에 종속되지 않음:
+  예전에는 Check(1) + Validate(2)를 통과해야만 Output Path 입력칸/Browse가 열렸다.
+  이제 Output Path는 그 순서와 무관하게 언제든 입력·수정할 수 있고, Validate를 누르면
+  (값이 채워져 있는 경우) 그 경로가 실제로 존재하는 폴더인지도 함께 검사한다
+  (settings_validator.validate_output_path). Generate 버튼은 여전히 "Validate 통과"와
+  "Output Path가 실제로 존재"를 모두 요구한다(_update_generate_button_state).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QAbstractItemView, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -56,7 +64,9 @@ from step3_settings.pin_field_defs import (
     VIRTUAL_POWER_PORT_TYPE, VIRTUAL_POWER_SWITCH_FUNCTION_KEY, expand_dbs_output_pins,
     split_pattern_and_range,
 )
-from step3_settings.settings_validator import validate_constants, validate_pin_settings
+from step3_settings.settings_validator import (
+    validate_constants, validate_output_path, validate_pin_settings,
+)
 from ui.theme import (
     ERROR_COLOR, MUTED_TEXT_COLOR, PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR,
     WARNING_BG, WARNING_BORDER, WARNING_TEXT,
@@ -181,10 +191,10 @@ class SettingsView(QWidget):
         # "Check DBS Output Pins"를 눌러 현재 Port List로 pin을 펼친 상태인지 여부.
         # False인 동안에는 Validate 버튼이 잠겨 있다.
         self._dbs_check_done = False
-        # 2) Validate를 통과했는지 여부. Output Path의 Browse를 눌렀는데 아직
-        # 통과하지 못했으면, 그냥 잠긴 버튼으로 두는 대신 눌렀을 때 먼저 Check(1)와
-        # Validate(2)를 진행하라는 안내창을 띄운다 (2026-08 추가 - 사용자들이 버튼이
-        # 왜 안 눌리는지 몰랐다는 피드백 반영).
+        # 2) Validate를 통과했는지 여부. Generate 버튼은 이 값과 Output Path가 실제로
+        # 존재하는 폴더인지에 따라 열린다(_update_generate_button_state). Output Path
+        # 자체는 더 이상 이 값에 의해 잠기지 않는다 - Validate 전에도 자유롭게 미리
+        # 입력/변경할 수 있다(2026-08 변경, 아래 _on_browse_output 참고).
         self._settings_validated = False
 
         self._build_layout()
@@ -535,18 +545,22 @@ class SettingsView(QWidget):
 
         output_row = QHBoxLayout()
         output_row.addWidget(QLabel("Output Path"))
+        # 2026-08 변경: 예전에는 Check(1) + Validate(2)를 통과해야만 이 입력칸이
+        # 열렸다. 이제 Output Path는 Validate와 순서 무관하게 언제든 입력/변경할 수
+        # 있고, 실제로 존재하는 폴더인지는 Validate가 검사한다
+        # (settings_validator.validate_output_path). Generate 버튼만 여전히 "Validate
+        # 통과 + 존재하는 경로"를 함께 요구한다(_update_generate_button_state).
         self.output_path_edit = QLineEdit(self.settings.get("output_path", ""))
-        self.output_path_edit.setEnabled(False)
         self.output_path_edit.textChanged.connect(self._update_generate_button_state)
         output_row.addWidget(self.output_path_edit, stretch=1)
-        # 2026-08 변경: 예전에는 Validate를 통과하기 전엔 이 버튼 자체가 disabled라서,
-        # 사용자가 "왜 안 눌리는지" 모른다는 피드백이 있었다. 이제 버튼은 항상 눌리게
-        # 두고, 클릭했는데 아직 Validate 전이면 그 자리에서 안내창을 띄운다
-        # (self._on_browse_output).
         self.output_browse_btn = QPushButton("Browse...")
         self.output_browse_btn.clicked.connect(self._on_browse_output)
         output_row.addWidget(self.output_browse_btn)
         layout.addLayout(output_row)
+
+        self.output_path_status = QLabel("")
+        self.output_path_status.setStyleSheet(f"color: {MUTED_TEXT_COLOR}; font-size: 11px;")
+        layout.addWidget(self.output_path_status)
 
         self.export_btn = QPushButton("Export Config")
         self.export_btn.clicked.connect(self._on_export_config)
@@ -607,22 +621,24 @@ class SettingsView(QWidget):
         if hasattr(self, "validate_btn"):
             self.validate_btn.setEnabled(False)
             self.validate_btn.setToolTip("Run '1) Check DBS Output Pins' first.")
-        if hasattr(self, "output_path_edit"):
-            self.output_path_edit.setEnabled(False)
-            self.output_browse_btn.setToolTip(
-                "Run '1) Check DBS Output Pins' and '2) Validate' first."
-            )
+        if hasattr(self, "generate_btn"):
             self.generate_btn.setEnabled(False)
 
     def _on_check_dbs_pins(self) -> None:
+        # Check 도중 다시 눌려 중복 실행되지 않도록 잠근다 (2026-08 추가).
+        self.dbs_check_btn.setEnabled(False)
         if self.show_loading:
             self.show_loading("Checking DBS output pins against the Port List...")
 
-        dbs_text = self.dbs_output_edit.text().strip()
-        recognized = expand_dbs_output_pins(self.get_port_list_file(), dbs_text) if dbs_text else []
-
-        if self.hide_loading:
-            self.hide_loading()
+        try:
+            dbs_text = self.dbs_output_edit.text().strip()
+            recognized = (
+                expand_dbs_output_pins(self.get_port_list_file(), dbs_text) if dbs_text else []
+            )
+        finally:
+            self.dbs_check_btn.setEnabled(True)
+            if self.hide_loading:
+                self.hide_loading()
 
         if not dbs_text:
             self._invalidate_dbs_check()
@@ -747,49 +763,60 @@ class SettingsView(QWidget):
             self.result_label.setText("• Run '1) Check DBS Output Pins' before validating.")
             return
 
+        # Validate 도중 다시 눌려 중복 실행되지 않도록 잠근다 (2026-08 추가).
+        self.validate_btn.setEnabled(False)
         if self.show_loading:
             self.show_loading("Validating settings...")
 
-        self._persist()
-        errors = validate_constants(self.settings["scalars"], self.paired_pdk_files())
-        errors += validate_pin_settings(self.settings["pins"], self.get_port_list_file())
-
-        if self.hide_loading:
-            self.hide_loading()
+        try:
+            self._persist()
+            errors = validate_constants(self.settings["scalars"], self.paired_pdk_files())
+            errors += validate_pin_settings(self.settings["pins"], self.get_port_list_file())
+            # 2026-08 추가: Output Path는 이제 Validate 전에도 자유롭게 입력할 수
+            # 있으므로, 채워져 있다면 실제로 존재하는 폴더인지 여기서 확인한다.
+            errors += validate_output_path(self.settings.get("output_path", ""))
+        finally:
+            self.validate_btn.setEnabled(True)
+            if self.hide_loading:
+                self.hide_loading()
 
         if errors:
             self._settings_validated = False
             self.result_label.setStyleSheet(f"color: {ERROR_COLOR};")
             self.result_label.setText("\n".join(f"• {e}" for e in errors))
-            self.output_path_edit.setEnabled(False)
-            self.output_browse_btn.setToolTip(
-                "Run '1) Check DBS Output Pins' and '2) Validate' first."
-            )
-            self.generate_btn.setEnabled(False)
         else:
             self._settings_validated = True
             self.result_label.setStyleSheet(f"color: {SUCCESS_COLOR};")
-            self.result_label.setText("Settings passed validation. Choose an output path to continue.")
-            self.output_path_edit.setEnabled(True)
-            self.output_browse_btn.setToolTip("")
-            self._update_generate_button_state()
+            output_path = self.output_path_edit.text().strip()
+            if output_path and Path(output_path).is_dir():
+                self.result_label.setText("Settings passed validation. Ready to generate.")
+            else:
+                self.result_label.setText(
+                    "Settings passed validation. Choose an output path to continue."
+                )
+        self._update_generate_button_state()
 
     def _update_generate_button_state(self) -> None:
-        can_generate = self.output_path_edit.isEnabled() and bool(self.output_path_edit.text().strip())
-        self.generate_btn.setEnabled(can_generate)
+        # 2026-08 변경: Output Path는 더 이상 Validate로 잠기지 않으므로, Generate는
+        # "Validate 통과" + "Output Path가 실제로 존재하는 폴더"를 함께 요구한다.
+        output_path = self.output_path_edit.text().strip()
+        path_exists = bool(output_path) and Path(output_path).is_dir()
+        self.generate_btn.setEnabled(self._settings_validated and path_exists)
+
+        if hasattr(self, "output_path_status"):
+            if not output_path:
+                self.output_path_status.setText("")
+            elif path_exists:
+                self.output_path_status.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 11px;")
+                self.output_path_status.setText("✓ Path exists.")
+            else:
+                self.output_path_status.setStyleSheet(f"color: {ERROR_COLOR}; font-size: 11px;")
+                self.output_path_status.setText("✗ This path does not exist yet.")
 
     def _on_browse_output(self) -> None:
-        # 2026-08 추가: Validate를 아직 통과하지 못했으면 대화상자를 열지 않고, 먼저
-        # Check(1) + Validate(2)를 진행하라는 안내창을 띄운다 - 예전에는 버튼 자체가
-        # disabled라서 사용자가 왜 안 눌리는지 몰랐다는 피드백을 반영.
-        if not self._settings_validated:
-            QMessageBox.information(
-                self, "Validate First",
-                "Run '1) Check DBS Output Pins' and '2) Validate' before choosing an "
-                "output path.",
-            )
-            return
-
+        # 2026-08 변경: 예전에는 Validate를 통과해야만 대화상자가 열렸지만, 이제
+        # Output Path는 Validate와 순서 무관하게 언제든 고를 수 있다.
+        #
         # DontUseNativeDialog(2026-08 추가): OS 고유 대화상자는 네트워크 폴더를 훑느라
         # 느릴 수 있고, 이 앱의 Ctrl+C 강제 종료 단축키(ui/force_quit.py)가 닿지 않는
         # 별도 창이라 열려 있는 동안은 먹히지 않는다. Qt 자체 대화상자를 쓰면 같은

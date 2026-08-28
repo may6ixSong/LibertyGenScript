@@ -135,7 +135,7 @@ class _StepLine(QFrame):
 class SetupView(QWidget):
     def __init__(
         self, existing_config: dict, on_config_changed, on_next=None,
-        on_config_imported=None, parent=None,
+        on_config_imported=None, show_loading=None, hide_loading=None, parent=None,
     ):
         """
         Args:
@@ -145,15 +145,21 @@ class SetupView(QWidget):
             on_config_imported: Import Config로 config 3종이 통째로 바뀐 뒤 호출되는
                 콜백(선택) - Step2/3 화면이 이미 예전 config로 만들어져 있으므로, 그
                 화면들을 새로 만들어 반영하도록 상위(MainWindow)에 알린다.
+            show_loading / hide_loading: Validate 도중(특히 큰 Port List 파일을 읽는
+                동안) 전역 로딩 오버레이를 보여주고 숨기는 콜백(선택, 2026-08 추가) -
+                Validate 버튼은 그동안 disabled로 바뀌어 중복 실행을 막는다.
         """
         super().__init__(parent)
         self.on_config_changed = on_config_changed
         self.on_next = on_next
         self.on_config_imported = on_config_imported
+        self.show_loading = show_loading
+        self.hide_loading = hide_loading
         self.path_edits: dict[str, QLineEdit] = {}
         self.step_chips: dict[str, _StepChip] = {}
         self.step_lines: list[_StepLine] = []
         self._all_passed = False
+        self._validating = False  # Validate 진행 중에는 Validate 버튼을 다시 못 누르게 잠근다
         self._details_anim = None  # QPropertyAnimation 참조 유지용 (GC 방지)
         # 2026-08 추가: port_list 단계가 백그라운드 스레드로 도는 동안에도 창이
         # 응답하므로, 그 사이 Validate를 다시 누르면(재진입) 이전 실행의 백그라운드
@@ -226,6 +232,7 @@ class SetupView(QWidget):
         btn_row.addWidget(self.export_btn)
 
         self.import_btn = QPushButton("Import Config")
+        self.import_btn.setObjectName("importButton")
         self.import_btn.clicked.connect(self._on_import_config)
         btn_row.addWidget(self.import_btn)
 
@@ -327,6 +334,8 @@ class SetupView(QWidget):
         return ""
 
     def _update_validate_button_state(self) -> None:
+        if self._validating:
+            return  # Validate가 도는 동안에는 입력 변경으로 버튼이 다시 켜지면 안 됨
         values = self._current_values()
         port_list_file = values.get("port_list_file", "")
         valid_extension = is_port_list_filename(port_list_file)
@@ -428,6 +437,13 @@ class SetupView(QWidget):
         self._all_passed = True
         self._validate_run_token += 1
 
+        # Validate가 여러 단계(일부는 백그라운드 스레드)에 걸쳐 도는 동안 다시 눌려
+        # 중복 실행되지 않도록 잠그고, 오래 걸릴 수 있음을 로딩 오버레이로 보여준다.
+        self._validating = True
+        self.validate_btn.setEnabled(False)
+        if self.show_loading:
+            self.show_loading("Validating input paths...")
+
         for chip in self.step_chips.values():
             chip.set_state("pending")
         for line in self.step_lines:
@@ -490,8 +506,12 @@ class SetupView(QWidget):
         self._run_step_at(index + 1, token)
 
     def _finish_validation(self) -> None:
+        self._validating = False
+        if self.hide_loading:
+            self.hide_loading()
         self.next_btn.setEnabled(self._all_passed)
         self.next_btn.setToolTip("" if self._all_passed else "Run Validate first.")
+        self._update_validate_button_state()
         self._animate_details_in()
 
     # ------------------------------------------------------------------

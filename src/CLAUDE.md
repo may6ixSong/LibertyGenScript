@@ -68,15 +68,32 @@ Settings**. 두 열은 `QHBoxLayout`이 아니라 `QSplitter`(`udc_view.UDCView.
 로 나뉘어 있어서, 경계에 마우스를 올리면 커서가 좌우 조절 아이콘으로 바뀌고 드래그로
 폭을 직접 조절할 수 있다. 기본(첫 표시) 폭 비율은 1:1이 아니라 **왼쪽을 1/4 줄인 3:5**
 로 시작한다 - setting이 많아질수록 오른쪽 Liberty Settings에 훨씬 넓은 공간이 필요하다는
-피드백을 반영. 다만 왼쪽 카드(Common Fields + Voltage Map)의 실제 내용이 요구하는
-최소 폭보다 더 줄어들지는 않는다(Qt가 자식 위젯의 `minimumSizeHint`를 존중하므로,
-실측 비율은 화면 크기에 따라 3:5보다 완만할 수 있음). 이 기본 비율은 화면이 실제로
-처음 표시되어 진짜 폭을 알 수 있는 시점(`showEvent` → `_apply_default_column_sizes`)
-에 딱 한 번만 적용되고, 그 뒤 사용자가 드래그로 바꾼 폭은 Step1/3을 오가도 유지된다.
+피드백을 반영. 이 기본 비율은 화면이 실제로 처음 표시되어 진짜 폭을 알 수 있는 시점
+(`showEvent` → `_apply_default_column_sizes`)에 딱 한 번만 적용되고, 그 뒤 사용자가
+드래그로 바꾼 폭은 Step1/3을 오가도 유지된다.
 
-각 Liberty Setting 카드의 **Remove 버튼은 클릭 즉시 지우지 않고 확인창(QMessageBox)
-을 먼저 띄운다**(`_EntryCard._confirm_remove`, 2026-08 추가) - 삭제를 되돌릴 방법이
-없어서 실수로 지우는 것을 막기 위함이며, 기본 선택지는 "No".
+**왼쪽 열 최소 폭 + 가로 스크롤 (2026-08 추가)**: 예전에는 왼쪽 열(Common Fields +
+Voltage Map)이 `QSplitter`에 직접 들어 있어서, 그 실제 내용이 요구하는
+`minimumSizeHint` 밑으로는 전혀 줄일 수 없었다(Qt가 자식 위젯의 최소 크기를 그대로
+splitter의 하한으로 쓰므로). 이제 왼쪽 열은 `QScrollArea`(`UDCView.left_scroll`,
+`widgetResizable=True`, 세로 스크롤은 끔)로 감싸져 있어서, `_apply_default_column_sizes`
+가 첫 showEvent에서 그 내용의 자연스러운 최소 폭을 한 번 측정해 **그 절반을 새 최소
+폭으로 지정**한다. 그 절반보다 더 좁게 드래그하면(폭이 실제 내용보다 좁아지면) 잘리는
+대신 왼쪽 열에 가로 스크롤바가 뜬다.
+
+각 Liberty Setting 카드는 **접기/펴기가 가능**하다(2026-08 추가, 기본은 펼침).
+헤더의 토글 버튼(▶/▼)으로 본문(입력 행들)을 접었다 펼 수 있고, 접으면 헤더에
+`Liberty #N.  {corner}_{beol_inform}_{voltage}_{temperature}` 형태의 한 줄 요약이
+보인다 - voltage/temperature는 파일명 토큰과 같은 규칙(`0p####v`, 음수 온도는 `m##c`,
+`udc_field_defs.format_voltage_token`/`format_temperature_token`)으로 표기해서
+PDK/DBS 파일명과 바로 비교해볼 수 있다(`_EntryCard._refresh_collapsed_label`,
+`_collapsed_summary_text`). 접기/펴기 상태는 setting을 추가/삭제해도 entry_id 기준으로
+유지된다(voltage_map_view._ConditionCard와 같은 패턴).
+
+각 Liberty Setting 카드의 **Remove는 휴지통 아이콘 버튼**(`iconDangerButton`, 2026-08
+아이콘화)이며, 클릭 즉시 지우지 않고 확인창(QMessageBox)을 먼저 띄운다
+(`_EntryCard._confirm_remove`) - 삭제를 되돌릴 방법이 없어서 실수로 지우는 것을 막기
+위함이며, 기본 선택지는 "No".
 
 1. **공통 필드** (전체 조합에 1번만 입력, 1차 재설계 그대로): `area`, `width`, `height`,
    `static_current`, `cell_name`, `MC/HDA/OUT Timing State`
@@ -188,14 +205,15 @@ Port List를 보고 직접 옮겨 적어야 했다. 표에서 바로 값을 고�
 있으면 자동 채움 대신 그 값을 그대로 유지한다 - Check를 다시 눌러도 이미 입력해 둔
 값이 날아가지 않는다.
 
-**Output Path Browse 클릭 시 안내창 (2026-08 추가)**: 예전에는 `1) Check` +
-`2) Validate`를 통과하기 전엔 Output Path의 Browse 버튼 자체가 disabled라서, 사용자가
-왜 그 버튼이 안 눌리는지 몰랐다는 피드백이 있었다. 그래서 이제 Browse 버튼은 항상
-눌리게 두고, 아직 Validate를 통과하지 못한 상태에서 클릭하면 폴더 선택 대화상자
-대신 "1) Check DBS Output Pins와 2) Validate를 먼저 진행하라"는 안내창
-(`QMessageBox.information`)을 띄운다(`SettingsView._on_browse_output`,
-`self._settings_validated` 플래그로 추적). Output Path 입력칸 자체는 예전처럼
-Validate를 통과해야만 편집 가능해진다.
+**Output Path는 Validate와 순서 무관 (2026-08 변경)**: 예전에는 `1) Check` +
+`2) Validate`를 통과해야만 Output Path 입력칸/Browse가 열렸다. 이제 Output Path는
+그 순서와 무관하게 **언제든 직접 입력하거나 Browse로 고를 수 있다**
+(`SettingsView._on_browse_output`이 더 이상 검사를 막지 않음). 대신 `2) Validate`가
+(값이 채워져 있다면) 그 경로가 실제로 존재하는 폴더인지 검사한다
+(`settings_validator.validate_output_path`, 비어 있으면 이 시점에는 에러로 보지
+않음). 입력칸 옆에는 경로 존재 여부를 즉시 보여주는 상태 라벨
+(`output_path_status`, ✓/✗)이 있다. **Generate 버튼은 여전히 "Validate 통과" +
+"Output Path가 실제로 존재"를 모두 요구한다**(`_update_generate_button_state`).
 
 ### Step 3 Validate 검사 항목
 - Constants: `class` / `process_prefix` / `output_prefix` / `DFF Cell Name` /
@@ -213,6 +231,9 @@ Validate를 통과해야만 편집 가능해진다.
   의도적으로 다른 pin으로 고칠 수도 있는 것이 정상 동작이 되면서, 그 자동 채움 값을
   다시 강제하던 이 규칙은 삭제했다 - 이제는 Port List에 실제 존재하는 pin이기만 하면
   자동 채움값이든 사용자가 고친 값이든 통과한다.)
+- Output Path: 값이 채워져 있다면 실제로 존재하는 폴더인지 (`validate_output_path`,
+  2026-08 추가). 비어 있으면 이 시점에는 에러가 아니다 - Generate 버튼이 별도로
+  "채워져 있고 실제로 존재함"을 요구한다.
 
 ## 출력 파일명
 
@@ -503,6 +524,21 @@ Next(또는 Generate)는 그 Step의 Validate를 통과하기 전까지 항상 d
   먼저 눌러야 하는 것이 화면에서도 먼저 보이도록).
 - 카드(흰 배경) 안에 레이아웃용 빈 `QWidget`을 넣을 때는 `setObjectName("transparentRow")`
   를 붙인다 — 전역 `QWidget` 배경색(회색)이 그대로 칠해져 회색 띠처럼 보이는 것을 막는다.
+- **Validate(및 Check) 버튼은 실행 중 disabled + 로딩 오버레이 (2026-08 추가)**: Step1
+  /2/3의 Validate 버튼(Step3의 `1) Check DBS Output Pins`도 동일)은 클릭하면 즉시
+  disabled로 바뀌어 끝날 때까지 다시 눌리지 않고, 그동안 `ui.loading_overlay.LoadingOverlay`
+  가 창 전체를 덮는다. Step1은 다단계(PDK→Port List→DBS, 일부는 백그라운드 스레드)라
+  `_finish_validation`에서, Step2/3은 단일 호출이라 `try/finally`로 항상 재활성화한다.
+  `LoadingOverlay` 자체도 개편했다 - 예전에는 배경이 거의 불투명한 흰색이라 "덮인 느낌"이
+  잘 안 났는데, 이제 어두운 반투명 스크림(`rgba(15,23,42,150)`)으로 뒤쪽 화면을 음영
+  처리하고, 스피너/텍스트는 중앙의 작은 흰 카드 안에 넣어 대비를 준다.
+- **Import Config 버튼 색 (2026-08 추가)**: `objectName="importButton"`, "초록 계열"
+  이되 Validate 결과에 쓰이는 `SUCCESS_COLOR`(순수 녹색)와 나란히 보여도 헷갈리지
+  않도록 청록 쪽으로 튼 `IMPORT_BUTTON_COLOR`(`#0D9488`)를 쓴다.
+- **아이콘 버튼**: 휴지통 아이콘처럼 텍스트 없이 아이콘 하나만 보여주는 버튼은
+  `objectName="iconDangerButton"`(hover 시 빨간 테두리/배경)을 쓴다. 별도 아이콘
+  파일/라이브러리 없이 유니코드 글리프(🗑 등)를 버튼 텍스트로 쓴다 - 이 앱의 다른
+  기호(✓/✗/⚠/▶/▼ 등)와 같은 방식.
 
 ## 실행 환경
 - PyQt5는 Anaconda Python 3.7.6 (`/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7`)에서만

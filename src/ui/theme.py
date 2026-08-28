@@ -11,6 +11,11 @@ PRIMARY_COLOR_DISABLED = "#C7C9F5"
 BACK_BUTTON_COLOR = "#6B7280"
 BACK_BUTTON_COLOR_HOVER = "#4B5563"
 BACK_BUTTON_COLOR_DISABLED = "#D1D5DB"
+
+# Import Config 버튼 색 (2026-08 추가): "초록 계열"이되, Validate 결과에 쓰이는
+# SUCCESS_COLOR(순수 녹색)와 나란히 보여도 헷갈리지 않도록 청록 쪽으로 살짝 튼 색을 쓴다.
+IMPORT_BUTTON_COLOR = "#0D9488"
+IMPORT_BUTTON_COLOR_HOVER = "#0F766E"
 BACKGROUND_COLOR = "#F3F4F8"
 CARD_COLOR = "#FFFFFF"
 BORDER_COLOR = "#E4E6EF"
@@ -143,6 +148,33 @@ QPushButton#backButton:hover {{
 QPushButton#backButton:disabled {{
     background-color: {BACK_BUTTON_COLOR_DISABLED};
     color: #F3F4F6;
+}}
+
+QPushButton#importButton {{
+    background-color: {IMPORT_BUTTON_COLOR};
+    color: white;
+    border: none;
+    font-weight: 600;
+    padding: 7px 16px;
+    border-radius: 8px;
+}}
+
+QPushButton#importButton:hover {{
+    background-color: {IMPORT_BUTTON_COLOR_HOVER};
+}}
+
+QPushButton#iconDangerButton {{
+    background-color: transparent;
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 8px;
+    padding: 0px;
+    font-size: 14px;
+}}
+
+QPushButton#iconDangerButton:hover {{
+    background-color: #FEF2F2;
+    border: 1px solid {ERROR_COLOR};
+    color: {ERROR_COLOR};
 }}
 
 QFrame#noteBanner {{
