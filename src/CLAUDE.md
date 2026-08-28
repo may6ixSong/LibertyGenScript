@@ -323,16 +323,27 @@ forwarding 환경에서 보장할 수 없어서,
 
 ### 처리 순서
 1. **Block 1 (헤더 주석)**: 기존과 동일한 포맷, `GENERATE OPTION` 블록만 완전히 삭제.
-2. **Block 2-(1) (library 선언 + PDK의 define들)**: 우리 쪽 `date`/`revision`/
+2. **Block 2-(1) (library 선언 + PDK의 정해진 줄들)**: 우리 쪽 `date`/`revision`/
    `comment`를 먼저 쓴 뒤, PDK/DK 파일을 줄 단위로 스트리밍하며 `library (...) {`
-   다음부터 `voltage_map` 직전까지의 구간에서 **`define`/`define_group` 줄만** 가져와
-   붙인다 (**그 외 줄은 date/revision/comment를 포함해 전부 버린다** - 2026-08 변경.
-   예전에는 이 구간 전체를 그대로 복사했는데, PDK/DK 파일마다 이 구간에 무엇이 있는지가
-   제각각이라("technology", "delay_model", 벤더별 커스텀 스칼라 attribute 등) 우리가
-   쓸 필요 없는/모르는 내용까지 그대로 딸려 들어오는 문제가 있었다. 이 구간에서 우리가
-   실제로 필요한 건 `{process_prefix}_*` custom attribute의 `define`/`define_group`
-   문뿐이므로 그것만 남긴다 - `pdk_stream_reader.read_pdk_library_sections()`의
-   `_BODY_KEEP_TOKENS`). 그 다음, 우리 쪽 `voltage_map`(Block 2-(2)) 바로 앞에서
+   다음부터 `voltage_map` 직전까지의 구간에서 **정해진 접두어로 시작하는 줄만** 가져와
+   PDK에 있던 순서 그대로 붙인다 (**그 외 줄은 date/revision/comment를 포함해 전부
+   버린다** - 2026-08 변경. 예전에는 이 구간 전체를 그대로 복사했는데, PDK/DK 파일마다
+   이 구간에 무엇이 있는지가 제각각이라("technology", "delay_model", 벤더별 커스텀
+   스칼라 attribute 등) 우리가 쓸 필요 없는/모르는 내용까지 그대로 딸려 들어오는
+   문제가 있었다. 처음엔 `define`/`define_group`만 남기도록 좁혔다가, 그것만으로는
+   부족하다는 실사용 확인을 거쳐 아래 접두어들로 다시 넓혔다 -
+   `pdk_stream_reader.read_pdk_library_sections()`의 `_BODY_KEEP_PREFIXES`,
+   `_should_keep_body_line()`):
+     - `define`(`define_group` 포함) / `default` / `input_` / `output_` / `slew_` /
+       `nom_`
+     - `voltage_unit` / `current_unit` / `leakage_power_unit` /
+       `capacitive_load_unit` / `library_features`
+   전부 **접두어(시작 문자열) 기준**이라 정확히 일치가 아니어도 잡힌다(예: `nom_`은
+   `nom_voltage`/`nom_temperature`/`nom_process`를 모두 잡음). 이 접두어들은 전부
+   한 줄짜리 선언이라는 전제이므로, 그 줄에 `{`가 있으면(그룹을 여는 줄이면) 접두어가
+   맞아도 가져오지 않는다 - 닫는 `}` 없이 남으면 전체 중괄호 균형이 깨지기 때문. 판단은
+   한 줄씩 원본 순서대로 스캔하면서 그 자리에서 가져올지만 정하고, 별도로 재배열하지
+   않는다. 그 다음, 우리 쪽 `voltage_map`(Block 2-(2)) 바로 앞에서
    **이 생성기가 `{process_prefix}_*`로 쓰는 모든 custom attribute/group을
    `define`/`define_group`으로 등록**한다(`process_prefix_defines.py`, 2026-08 추가 -
    아래 단락 참고. PDK의 define들 바로 뒤에 두어 한데 모이게 한 배치다).
