@@ -292,9 +292,30 @@ forwarding 환경에서 보장할 수 없어서,
 ### 처리 순서
 1. **Block 1 (헤더 주석)**: 기존과 동일한 포맷, `GENERATE OPTION` 블록만 완전히 삭제.
 2. **Block 2-(1) (library 선언 + PDK 본문)**: 우리 쪽 `date`/`revision`/`comment`를 먼저
-   쓴 뒤, PDK/DK 파일을 줄 단위로 스트리밍하며 `library (...) {` 다음부터 `voltage_map`
-   직전까지 그대로 복사. **PDK 자체의 `date`/`revision`/`comment` 줄(줄 첫 토큰 기준)은
-   순서/위치에 상관없이 만날 때마다 개별적으로 스킵** (중복 방지, 2026-08 확정).
+   쓴 뒤, **이 생성기가 `{process_prefix}_*`로 쓰는 모든 custom attribute/group을
+   `define`/`define_group`으로 등록**하고(`process_prefix_defines.py`, 2026-08 추가 -
+   아래 단락 참고), 그 다음 PDK/DK 파일을 줄 단위로 스트리밍하며 `library (...) {`
+   다음부터 `voltage_map` 직전까지 그대로 복사. **PDK 자체의 `date`/`revision`/
+   `comment` 줄(줄 첫 토큰 기준)은 순서/위치에 상관없이 만날 때마다 개별적으로 스킵**
+   (중복 방지, 2026-08 확정).
+
+   **`{process_prefix}_*` custom attribute를 이 생성기가 직접 define하는 이유
+   (2026-08 확정)**: 예전에는 PDK/DK 파일이 이 attribute들을 이미 define해뒀다고
+   그냥 가정했다(block1~5 어디도 define을 직접 안 씀). 그런데 실제로는 PDK마다 어떤
+   `{process_prefix}_*`를 define해뒀는지가 다르다 - 예를 들어
+   `{process_prefix}_class`/`{process_prefix}_cell_type`은 define해둔 PDK가
+   `{process_prefix}_width`/`{process_prefix}_height`/`{process_prefix}_pin_type`/
+   `{process_prefix}_input_signal_level`은 define해두지 않은 경우가 실제로 있었다.
+   정의되지 않은 채로 cell{}/pin{}에서 쓰면 Liberty 컴파일러가 "The
+   '{process_prefix}_width' attribute/group name cannot be specified here."로
+   거부해서 .db 변환이 실패했다. `process_prefix_defines.py`가 block4_writer.py/
+   block5_writer.py가 실제로 쓰는 attribute/group 전부를(이름·소속 그룹·타입까지
+   정확히) 목록으로 갖고 있다가, 그 job의 process_prefix로 채워 library 헤더
+   맨 앞(PDK 본문 복사보다도 먼저)에 써준다. PDK가 같은 이름/그룹을 이미 정의해뒀어도
+   완전히 같은 내용의 재정의라 Liberty 컴파일러가 그대로 허용한다. **block4/block5에서
+   `{process_prefix}_` 로 시작하는 줄을 추가/삭제/이름변경하면 반드시
+   `process_prefix_defines.py`의 목록도 같이 맞춰야 한다** - 둘이 어긋나면 이 문제가
+   똑같이 재발한다.
 3. **Block 2-(2) (voltage_map)** (2026-08 Voltage Map 재설계): Step2에서 이 liberty에
    선택된 voltage condition 이름으로 Voltage Map에서 그 condition을 찾아(대소문자 무시)
    Power Type1..N 값을 가져와, **power type 개수만큼의 VDD 줄 + VSS 1줄**을 항상 전부 작성한다.
