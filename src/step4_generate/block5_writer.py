@@ -218,7 +218,13 @@ def _write_pin_body(
     related_ground = _text_or_missing(
         f_out, pin["related_ground"], f"Related ground for pin '{pin_name}' (Port List)", pdk_filename,
     )
-    volts_text = _volts_text(pin["volts"])
+    # 2026-08 변경: 예전에는 Port List 'Volts' 컬럼 값(핀별, 이번 실행에서 생성하는
+    # 모든 liberty가 같은 Port List를 공유하므로 파일마다 똑같이 나옴)을 그대로 썼다.
+    # 이제 이 liberty(=이 job)가 Step2에서 설정된 자신의 nom_voltage를 쓴다 - 그래야
+    # 같은 실행에서 생성되는 여러 liberty(서로 다른 voltage corner)마다
+    # input_signal_level이 실제로 달라진다. block2의 voltage 줄(job["nom_voltage"],
+    # %0.5f)과 자리수를 맞춘다.
+    volts_text = _volts_text(job["nom_voltage"])
 
     f_out.write(f"{body_indent}{process_prefix}_pin_type : {pin_type_value} ;\n")
     f_out.write(f"{body_indent}direction : {direction} ;\n")
