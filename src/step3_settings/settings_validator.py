@@ -41,8 +41,9 @@ from pathlib import Path
 
 from step1_setup.port_list_reader import list_all_pin_names, list_pins_by_port_type
 from step3_settings.constants_field_defs import (
-    CONDITION_NAME_KEY, CONDITION_VALUES_KEY, VOLTAGE_CONDITIONS_KEY, condition_value_key,
-    power_type_count_of, power_type_label, voltage_map_name_key,
+    CONDITION_NAME_KEY, CONDITION_VALUES_KEY, VOLTAGE_CONDITIONS_KEY, VOLTAGE_MATCH_TOLERANCE,
+    condition_value_key, power_type_count_of, power_type_label, voltage_map_digital_voltage_key,
+    voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
     DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
@@ -116,7 +117,8 @@ def validate_constants(scalars: dict, paired_pdk_files: list[str] | None = None)
 
 def validate_voltage_map(voltage_map: dict) -> list[str]:
     """
-    Voltage Map 검사 (2026-08: 화면이 Step 2 왼쪽 열로 옮겨져 Step 2 Validate에서 호출됨).
+    Voltage Map 검사 (2026-08: 화면이 Step 2 왼쪽 열로 옮겨져 Step 2 Validate에서 호출됨
+    → 2026-08 Power Type 개수 무제한 + voltage(digital) 필드 추가).
 
       - voltage condition이 최소 1개는 있어야 하고,
       - condition 이름이 비어 있으면 안 되며 서로 중복되어도 안 된다
@@ -124,7 +126,10 @@ def validate_voltage_map(voltage_map: dict) -> list[str]:
         이름도 같은 이름으로 본다),
       - 각 condition의 Power Type1..N(현재 Power Type 개수만큼) 값이 전부 채워진
         숫자여야 하고,
-      - 그 개수만큼의 Power Type voltage name이 전부 채워져 있어야 한다.
+      - 그 개수만큼의 Power Type name이 전부 채워져 있어야 하고,
+      - 그 개수만큼의 Power Type voltage(digital)이 전부 채워진 숫자여야 하며, 서로
+        VOLTAGE_MATCH_TOLERANCE 이내로 겹치면 안 된다(겹치면 Port List Volts 값이
+        어느 Power Type에 매칭되는지 모호해진다).
     """
     errors: list[str] = []
 
@@ -168,7 +173,33 @@ def validate_voltage_map(voltage_map: dict) -> list[str]:
     for type_index in range(1, power_type_count + 1):
         value = str(names.get(voltage_map_name_key(type_index), "")).strip()
         if not value:
-            errors.append(f"Voltage Map {power_type_label(type_index)} voltage name is empty.")
+            errors.append(f"Voltage Map {power_type_label(type_index)} name is empty.")
+
+    # 2026-08 추가: Power Type별 voltage(digital) - Port List Volts 값을 Power Type에
+    # 매칭시키는 임계값. 서로 겹치면(오차 범위 안에 들어오면) 어느 Power Type으로
+    # 매칭될지 모호해지므로 중복도 함께 막는다.
+    digital_voltages = voltage_map.get("digital_voltages", {}) or {}
+    seen_digital: list[tuple[int, float]] = []
+    for type_index in range(1, power_type_count + 1):
+        text = str(digital_voltages.get(voltage_map_digital_voltage_key(type_index), "")).strip()
+        label = f"Voltage Map {power_type_label(type_index)} voltage (digital)"
+        if not text:
+            errors.append(f"{label} is empty.")
+            continue
+        try:
+            value = float(text)
+        except ValueError:
+            errors.append(f"{label} is not a valid number: {text!r}")
+            continue
+        for other_index, other_value in seen_digital:
+            if abs(value - other_value) < VOLTAGE_MATCH_TOLERANCE:
+                errors.append(
+                    f"{label} ({value}) is too close to "
+                    f"{power_type_label(other_index)} voltage (digital) ({other_value}) - "
+                    "each Power Type's voltage (digital) must be distinguishable so a Port "
+                    "List Volts value matches exactly one Power Type."
+                )
+        seen_digital.append((type_index, value))
 
     return errors
 

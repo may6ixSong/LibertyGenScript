@@ -50,12 +50,27 @@ PDK/DK 파일의 DFF/primitive cell 검색 결과(sections)에 대한 의존을 
 표의 행/열 크기는 이제 순전히 DBS output(.mt0) 파일 자체에서
 derive_table_shape()로 추론한다. 이에 따라 이 파일 전체에서 더 이상 `sections`
 파라미터를 받지 않는다.
+
+2026-08 재설계 (input_signal_level): 예전에는 Port List 'Volts' 컬럼 값(핀별)을 그대로
+포맷해서 썼다. 그런데 한 번의 실행에서 생성하는 여러 liberty가 같은 Port List를
+공유하다 보니, 서로 다른 voltage corner로 생성되는 liberty들끼리도 이 값이 항상
+똑같이 나오는 문제가 있었다. 이제 block4의 pg_pin voltage_name 치환과 같은 방식으로
+Power Type의 voltage(digital) 값에 매칭시키되, 치환 결과는 다르다:
+  - Port List Volts 값이 이 job의 어느 Power Type 'voltage(digital)' 값과 일치하면,
+    **이 job이 선택한 voltage condition**의 같은 Power Type Type[N] 값(사용자가
+    Voltage Map의 condition 표에 입력한 실제 숫자, 예: worst case로 올린 0.85)으로
+    치환해서 쓴다(job["input_signal_level_thresholds"], liberty_assembler.build_job
+    참고) - block4처럼 이름으로 바꾸는 게 아니라 값 자체를 그 condition의 값으로
+    바꾼다는 점이 다르다.
+  - 일치하는 Power Type이 없으면 기존처럼 Port List Volts 값을 그대로 쓴다.
+  자리수는 그대로 %0.5f.
 """
 
 from __future__ import annotations
 
 import fnmatch
 
+from step3_settings.constants_field_defs import VOLTAGE_MATCH_TOLERANCE
 from step4_generate.missing_data import (
     INDENT_2, INDENT_3, INDENT_4, PORT_LIST_NOT_FOUND_TOKEN, write_missing_comment,
 )
@@ -100,6 +115,20 @@ def _cap_text(value: float | None) -> str:
 
 def _volts_text(value: float | None) -> str:
     return PORT_LIST_NOT_FOUND_TOKEN if value is None else "%0.5f" % value
+
+
+def _input_signal_level_text(pin_volts: float | None, job: dict) -> str:
+    """
+    input_signal_level 값 (모듈 docstring "2026-08 재설계 (input_signal_level)" 참고).
+    Port List Volts 값이 이 job의 어느 Power Type voltage(digital)과 일치하면 이
+    job이 선택한 voltage condition의 같은 Power Type Type[N] 값으로, 일치하지 않으면
+    Port List Volts 값 그대로 (둘 다 %0.5f).
+    """
+    if pin_volts is not None:
+        for threshold, condition_value in (job.get("input_signal_level_thresholds") or {}).items():
+            if abs(pin_volts - threshold) < VOLTAGE_MATCH_TOLERANCE:
+                return _volts_text(condition_value)
+    return _volts_text(pin_volts)
 
 
 def _direction_text(f_out, pin: dict, pdk_filename: str) -> str:
@@ -218,13 +247,8 @@ def _write_pin_body(
     related_ground = _text_or_missing(
         f_out, pin["related_ground"], f"Related ground for pin '{pin_name}' (Port List)", pdk_filename,
     )
-    # 2026-08 변경: 예전에는 Port List 'Volts' 컬럼 값(핀별, 이번 실행에서 생성하는
-    # 모든 liberty가 같은 Port List를 공유하므로 파일마다 똑같이 나옴)을 그대로 썼다.
-    # 이제 이 liberty(=이 job)가 Step2에서 설정된 자신의 nom_voltage를 쓴다 - 그래야
-    # 같은 실행에서 생성되는 여러 liberty(서로 다른 voltage corner)마다
-    # input_signal_level이 실제로 달라진다. block2의 voltage 줄(job["nom_voltage"],
-    # %0.5f)과 자리수를 맞춘다.
-    volts_text = _volts_text(job["nom_voltage"])
+    # 모듈 docstring "2026-08 재설계 (input_signal_level)" 참고.
+    volts_text = _input_signal_level_text(pin["volts"], job)
 
     f_out.write(f"{body_indent}{process_prefix}_pin_type : {pin_type_value} ;\n")
     f_out.write(f"{body_indent}direction : {direction} ;\n")

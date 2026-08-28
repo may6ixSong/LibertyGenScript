@@ -1,7 +1,8 @@
 """
 voltage_map_view.py
 
-Voltage Map 입력 패널 (2026-08: Step 3 -> **Step 2 왼쪽 열**로 이동).
+Voltage Map 입력 패널 (2026-08: Step 3 -> **Step 2 왼쪽 열**로 이동 → 2026-08 Power
+Type 개수 무제한 + voltage(digital) 필드 추가).
 
 예전에는 BST/WST/TIV 세 그룹이 코드에 고정되어 Step 3 Constants 카드 안에 있었지만,
 이제는 **사용자가 voltage condition을 원하는 만큼 추가/삭제하고 이름도 직접 정한다**
@@ -13,9 +14,15 @@ Step 2의 각 liberty setting은 여기서 정의한 condition 중 하나를 이
 condition을 추가/삭제하면 즉시 on_conditions_changed 콜백으로 Step 2 화면에 알려서
 liberty setting의 Condition 드롭다운을 다시 채우게 한다.
 
-Power Type 정책은 기존 유지: 개수는 2~3 사이 조절(기본 3), 대표 전압(0.8V/2.2V/1.8V)은
-block4의 Port List Volts 매칭 임계값으로 그대로 쓰이고, Power Type별 voltage name은
-condition 구분 없이 Power Type당 하나씩이다.
+Power Type 정책 (2026-08 재설계): 개수는 **최소 1, 상한 없음**(예전엔 2~3으로 고정).
+Power Type마다 **Name**(기존)뿐 아니라 **Voltage (digital)** 값도 입력한다 - Port List
+Volts 값을 Power Type에 매칭시키는 임계값으로, 예전에 코드에 고정되어 있던 대표 전압
+(0.8V/2.2V/1.8V)을 대신한다. 이 값이 일치하면 block4는 Name으로, block5는 이 liberty가
+선택한 voltage condition의 같은 Power Type 값으로 치환한다 (block4_writer.py /
+block5_writer.py / liberty_assembler.py 참고). Power Type 개수에 상한이 없으므로, 이
+화면의 입력 행들(Power Type Name/Voltage(digital) 행, condition마다의 Type 값 행)은
+필요한 만큼만 그때그때 만들고(_ensure_*_row), 개수를 줄였다 늘려도 이미 만들어 둔
+행/입력값은 숨겨질 뿐 사라지지 않는다.
 
 저장 위치는 예전 그대로 config/step3_settings.json의 voltage_map key다
 (step3_settings.settings_manager.load_voltage_map / save_voltage_map).
@@ -25,7 +32,8 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QRegExp, Qt
+from PyQt5.QtGui import QRegExpValidator
 from PyQt5.QtWidgets import (
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
@@ -33,28 +41,43 @@ from PyQt5.QtWidgets import (
 
 from step3_settings.constants_field_defs import (
     CONDITION_ID_KEY, CONDITION_NAME_KEY, CONDITION_VALUES_KEY, POWER_TYPE_COUNT_KEY,
-    POWER_TYPE_COUNT_MAX, POWER_TYPE_COUNT_MIN, VOLTAGE_CONDITIONS_KEY, condition_value_key,
-    new_condition, power_type_count_of, power_type_label, voltage_map_name_key,
+    POWER_TYPE_COUNT_MIN, POWER_TYPE_COUNT_UI_MAX, VOLTAGE_CONDITIONS_KEY, condition_value_key,
+    new_condition, power_type_count_of, power_type_label, voltage_map_digital_voltage_key,
+    voltage_map_name_key,
 )
 from ui.theme import MUTED_TEXT_COLOR, TEXT_COLOR
 from ui.ui_common import add_shadow, build_hint, build_section_header
 
 _HINT_STYLE = f"color: {MUTED_TEXT_COLOR}; font-size: 11px;"
 
+_NUMBER_REGEX = QRegExp(r"^-?\d*\.?\d*$")
+
+
+def _apply_number_validator(edit: QLineEdit) -> None:
+    edit.setValidator(QRegExpValidator(_NUMBER_REGEX, edit))
+
+
 _VOLTAGE_MAP_INFO = (
     "Add one voltage condition per set of voltage_map values you need, and name it "
     "yourself (BST / WST / TIV are only the defaults).\n\n"
     "Each liberty setting on the right selects one of these conditions, and its "
     "voltage_map values are taken from that condition's Power Type1..N values.\n\n"
-    "Enter numeric values only (no unit suffix). Power Type Count can be lowered to 2 "
-    "when a project has only two power types; the Power Type3 row is then hidden and "
-    "excluded from validation, but any value already entered there is kept."
+    "Enter numeric values only (no unit suffix). Power Type Count has no upper limit "
+    "(minimum 1) - lowering it hides the extra rows without discarding any value "
+    "already entered there."
 )
 
 _VOLTAGE_NAME_INFO = (
-    "One voltage name per Power Type, shared by every voltage condition.\n\n"
-    "It is written as voltage_map (VDD_{name}, {value}) in block2 and must match block4's "
-    "pg_pin voltage_name exactly."
+    "One Name + one Voltage (digital) per Power Type, shared by every voltage condition.\n\n"
+    "Name is written as voltage_map (VDD_{name}, {value}) in block2 and must match "
+    "block4's pg_pin voltage_name exactly.\n\n"
+    "Voltage (digital) is the threshold a Port List Volts value is matched against: "
+    "when a pin's Volts value equals a Power Type's Voltage (digital), block4 writes that "
+    "Power Type's Name instead of the raw value, and block5's input_signal_level is "
+    "written as this liberty's selected voltage condition's value for that same Power "
+    "Type instead of the raw Volts value.\n\n"
+    "Each Power Type's Voltage (digital) must be distinguishable from every other "
+    "Power Type's - otherwise a Port List Volts value could match more than one."
 )
 
 _COLLAPSED_SYMBOL = "▶"  # ▶
@@ -65,6 +88,10 @@ class _ConditionCard(QFrame):
     """
     voltage condition 하나. 헤더(접기/펴기 버튼 + 이름 입력 + Remove)와 본문(Power
     Type1..N 값 입력)으로 이루어지며, 헤더의 버튼으로 본문을 접었다 펼 수 있다.
+
+    Power Type 개수에 상한이 없으므로(2026-08), 본문의 Type 값 입력 행은 필요한 만큼만
+    그때그때 만든다(_ensure_value_row) - 한 번 만든 행은 개수가 줄어도 지우지 않고
+    숨기기만 해서, 다시 늘렸을 때 값이 그대로 남아 있게 한다.
     """
 
     def __init__(
@@ -83,14 +110,16 @@ class _ConditionCard(QFrame):
         self.condition_id = condition.get(CONDITION_ID_KEY, "")
         self._on_name_changed = on_name_changed
         self._on_remove = on_remove
+        self._condition_values = condition.get(CONDITION_VALUES_KEY) or {}
         self.value_edits: dict[str, QLineEdit] = {}
         self._value_rows: dict[int, tuple[QLabel, QLineEdit]] = {}
+        self._power_type_count = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
         layout.addLayout(self._build_header_row(condition, index))
-        layout.addWidget(self._build_body(condition))
+        layout.addWidget(self._build_body())
 
         self.apply_power_type_count(power_type_count)
 
@@ -125,30 +154,31 @@ class _ConditionCard(QFrame):
         row.addWidget(remove_btn)
         return row
 
-    def _build_body(self, condition: dict) -> QWidget:
+    def _build_body(self) -> QWidget:
         self.body = QWidget()
         self.body.setObjectName("transparentRow")
-        grid = QGridLayout(self.body)
-        grid.setContentsMargins(38, 0, 0, 0)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(6)
-
-        values = condition.get(CONDITION_VALUES_KEY) or {}
-        for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
-            key = condition_value_key(type_index)
-            row_label = QLabel(f"Type{type_index}")
-            row_label.setStyleSheet(_HINT_STYLE)
-            row_label.setToolTip(power_type_label(type_index))
-            edit = QLineEdit(str(values.get(key, "")))
-            edit.setMinimumWidth(60)
-            edit.textChanged.connect(lambda _t: self._refresh_summary())
-            self.value_edits[key] = edit
-            self._value_rows[type_index] = (row_label, edit)
-            column = (type_index - 1) * 2
-            grid.addWidget(row_label, 0, column)
-            grid.addWidget(edit, 0, column + 1)
-            grid.setColumnStretch(column + 1, 1)
+        self.body_grid = QGridLayout(self.body)
+        self.body_grid.setContentsMargins(38, 0, 0, 0)
+        self.body_grid.setHorizontalSpacing(8)
+        self.body_grid.setVerticalSpacing(6)
         return self.body
+
+    def _ensure_value_row(self, type_index: int) -> None:
+        if type_index in self._value_rows:
+            return
+        key = condition_value_key(type_index)
+        row_label = QLabel(f"Type{type_index}")
+        row_label.setStyleSheet(_HINT_STYLE)
+        row_label.setToolTip(power_type_label(type_index))
+        edit = QLineEdit(str(self._condition_values.get(key, "")))
+        edit.setMinimumWidth(60)
+        edit.textChanged.connect(lambda _t: self._refresh_summary())
+        self.value_edits[key] = edit
+        self._value_rows[type_index] = (row_label, edit)
+        column = (type_index - 1) * 2
+        self.body_grid.addWidget(row_label, 0, column)
+        self.body_grid.addWidget(edit, 0, column + 1)
+        self.body_grid.setColumnStretch(column + 1, 1)
 
     # -- 동작 ---------------------------------------------------------------
     def _toggle_body(self) -> None:
@@ -166,7 +196,9 @@ class _ConditionCard(QFrame):
         self.index_label.setText(f"#{index + 1}")
 
     def apply_power_type_count(self, count: int) -> None:
-        """Power Type 개수에 따라 Type3 입력칸을 보이거나 숨긴다(값 자체는 유지)."""
+        """Power Type 개수만큼 값 입력 행을 보장해서 만들고, 그 개수까지만 보여준다."""
+        for type_index in range(1, count + 1):
+            self._ensure_value_row(type_index)
         for type_index, (row_label, edit) in self._value_rows.items():
             visible = type_index <= count
             row_label.setVisible(visible)
@@ -176,10 +208,9 @@ class _ConditionCard(QFrame):
 
     def _refresh_summary(self) -> None:
         """접었을 때도 값이 보이도록 헤더 오른쪽에 짧은 요약을 띄운다."""
-        count = getattr(self, "_power_type_count", POWER_TYPE_COUNT_MAX)
         values = [
             self.value_edits[condition_value_key(i)].text().strip() or "-"
-            for i in range(1, count + 1)
+            for i in range(1, self._power_type_count + 1)
         ]
         self.summary_label.setText(" / ".join(values) if not self.is_expanded() else "")
 
@@ -195,7 +226,7 @@ class _ConditionCard(QFrame):
 
 class VoltageMapPanel(QWidget):
     """
-    Voltage Map 카드 전체 (Power Type Count + Power Type별 voltage name + condition 목록).
+    Voltage Map 카드 전체 (Power Type Count + Power Type별 Name/Voltage(digital) + condition 목록).
 
     Args:
         voltage_map: settings_manager.load_voltage_map() 결과
@@ -214,6 +245,7 @@ class VoltageMapPanel(QWidget):
         self.on_conditions_changed = on_conditions_changed
         self.condition_cards: list[_ConditionCard] = []
         self.name_edits: dict[str, QLineEdit] = {}
+        self.digital_voltage_edits: dict[str, QLineEdit] = {}
         self._known_names: dict[str, str] = {}
 
         layout = QVBoxLayout(self)
@@ -239,13 +271,15 @@ class VoltageMapPanel(QWidget):
         header.addStretch()
         header.addWidget(QLabel("Power Type Count"))
         self.power_type_count_spin = QSpinBox()
-        self.power_type_count_spin.setRange(POWER_TYPE_COUNT_MIN, POWER_TYPE_COUNT_MAX)
+        self.power_type_count_spin.setRange(POWER_TYPE_COUNT_MIN, POWER_TYPE_COUNT_UI_MAX)
         self.power_type_count_spin.setValue(power_type_count_of(voltage_map))
         self.power_type_count_spin.valueChanged.connect(self._on_power_type_count_changed)
         header.addWidget(self.power_type_count_spin)
         layout.addLayout(header)
 
-        layout.addWidget(self._build_voltage_name_frame(voltage_map.get("names", {}) or {}))
+        layout.addWidget(self._build_voltage_name_frame(
+            voltage_map.get("names", {}) or {}, voltage_map.get("digital_voltages", {}) or {},
+        ))
 
         conditions_header = QHBoxLayout()
         conditions_header.addWidget(build_section_header("Voltage Conditions"))
@@ -281,28 +315,58 @@ class VoltageMapPanel(QWidget):
         layout.addWidget(self.conditions_empty_label)
         return card
 
-    def _build_voltage_name_frame(self, saved_names: dict) -> QFrame:
+    def _build_voltage_name_frame(self, saved_names: dict, saved_digital_voltages: dict) -> QFrame:
         frame = QFrame()
         frame.setObjectName("card")
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(4)
-        layout.addWidget(build_section_header("Voltage Name", _VOLTAGE_NAME_INFO))
+        layout.addWidget(build_section_header("Power Type Name / Voltage (digital)", _VOLTAGE_NAME_INFO))
 
-        form = QFormLayout()
-        form.setSpacing(6)
-        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        self._name_rows: dict[int, tuple[QLabel, QLineEdit]] = {}
-        for type_index in range(1, POWER_TYPE_COUNT_MAX + 1):
-            key = voltage_map_name_key(type_index)
-            edit = QLineEdit(str(saved_names.get(key, "")))
-            self.name_edits[key] = edit
-            row_label = QLabel(power_type_label(type_index))
-            form.addRow(row_label, edit)
-            self._name_rows[type_index] = (row_label, edit)
-        layout.addLayout(form)
+        self._saved_names = dict(saved_names)
+        self._saved_digital_voltages = dict(saved_digital_voltages)
+        self.name_form = QFormLayout()
+        self.name_form.setSpacing(6)
+        self.name_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self.name_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self._name_rows: dict[int, tuple[QLabel, QWidget]] = {}
+        layout.addLayout(self.name_form)
+
+        for type_index in range(1, self.power_type_count_spin.value() + 1):
+            self._ensure_name_row(type_index)
         return frame
+
+    def _ensure_name_row(self, type_index: int) -> None:
+        """
+        Power Type 하나의 Name + Voltage (digital) 입력 행. 기존에는 이름 입력칸 하나가
+        그 행의 전체 폭을 썼는데, 이제 그 칸을 반으로 나눠 Name(왼쪽) + Voltage
+        (digital)(오른쪽)을 나란히 둔다(2026-08 추가).
+        """
+        if type_index in self._name_rows:
+            return
+        name_key = voltage_map_name_key(type_index)
+        digital_key = voltage_map_digital_voltage_key(type_index)
+
+        name_edit = QLineEdit(str(self._saved_names.get(name_key, "")))
+        name_edit.setPlaceholderText("Name")
+        self.name_edits[name_key] = name_edit
+
+        digital_edit = QLineEdit(str(self._saved_digital_voltages.get(digital_key, "")))
+        digital_edit.setPlaceholderText("Voltage (digital)")
+        _apply_number_validator(digital_edit)
+        self.digital_voltage_edits[digital_key] = digital_edit
+
+        row_widget = QWidget()
+        row_widget.setObjectName("transparentRow")
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+        row_layout.addWidget(name_edit, stretch=1)
+        row_layout.addWidget(digital_edit, stretch=1)
+
+        row_label = QLabel(power_type_label(type_index))
+        self.name_form.addRow(row_label, row_widget)
+        self._name_rows[type_index] = (row_label, row_widget)
 
     # ------------------------------------------------------------------
     # condition 카드 관리
@@ -368,10 +432,12 @@ class VoltageMapPanel(QWidget):
         self.collapse_all_btn.setText("Expand all" if collapse else "Collapse all")
 
     def _on_power_type_count_changed(self, value: int) -> None:
-        for type_index, (row_label, edit) in self._name_rows.items():
+        for type_index in range(1, value + 1):
+            self._ensure_name_row(type_index)
+        for type_index, (row_label, row_widget) in self._name_rows.items():
             visible = type_index <= value
             row_label.setVisible(visible)
-            edit.setVisible(visible)
+            row_widget.setVisible(visible)
         for card in self.condition_cards:
             card.apply_power_type_count(value)
 
@@ -390,6 +456,9 @@ class VoltageMapPanel(QWidget):
             POWER_TYPE_COUNT_KEY: self.power_type_count_spin.value(),
             VOLTAGE_CONDITIONS_KEY: self._collect_conditions(),
             "names": {key: edit.text().strip() for key, edit in self.name_edits.items()},
+            "digital_voltages": {
+                key: edit.text().strip() for key, edit in self.digital_voltage_edits.items()
+            },
         }
 
     def condition_names(self) -> list[str]:

@@ -22,20 +22,23 @@ liberty_writter.py에서 처리한다.
 그대로 쓴다 (둘 다 와일드카드 불가, Step3 Validate에서 빈 값/와일드카드를 거른다).
 
 2026-08 Voltage Map 재설계: pg_pin의 voltage_name은 더 이상 항상 Port List Volts 값을
-그대로 포맷해서 쓰지 않는다. 그 Volts 값이 Power Type 대표 전압(0.8V/2.2V/1.8V, power
-type 개수가 2면 1.8V는 제외)과 일치하면 Step3 Voltage Map에서 그 Power Type에 입력한
-voltage name을 대신 쓰고(block2가 쓰는 voltage_map 이름과 정확히 같아야 리버티 문법상
-유효하므로 둘 다 이름만 사용), 일치하는 Power Type이 없으면 기존처럼 Volts 값을 그대로
-포맷해서 쓴다 (job["voltage_name_thresholds"], liberty_assembler.build_job 참고).
+그대로 포맷해서 쓰지 않는다. 그 Volts 값이 Step3 Voltage Map에서 Power Type마다 사용자가
+직접 입력한 voltage(digital) 값과 일치하면 그 Power Type에 입력한 voltage name을 대신
+쓰고(block2가 쓰는 voltage_map 이름과 정확히 같아야 리버티 문법상 유효하므로 둘 다 이름만
+사용), 일치하는 Power Type이 없으면 기존처럼 Volts 값을 그대로 포맷해서 쓴다
+(job["voltage_name_thresholds"], liberty_assembler.build_job 참고).
+
+2026-08 추가: Power Type 개수 제한이 없어지고 voltage(digital)이 사용자 입력 필드가
+되면서(예전에는 0.8V/2.2V/1.8V로 코드에 고정), 이 매칭 임계값(VOLTAGE_MATCH_TOLERANCE)
+은 constants_field_defs.py로 옮겨 block5_writer.py의 input_signal_level 치환과
+공유한다 - 둘 다 "Port List Volts 값이 어느 Power Type과 같다고 볼지"를 판단하는
+같은 기준을 써야 하므로.
 """
 
 from __future__ import annotations
 
+from step3_settings.constants_field_defs import VOLTAGE_MATCH_TOLERANCE
 from step4_generate.missing_data import INDENT_1, INDENT_2, INDENT_3, PORT_LIST_NOT_FOUND_TOKEN, write_missing_comment
-
-# Port List Volts 값을 Power Type 대표 전압과 매칭시킬 때 쓰는 허용 오차. 대표 전압들이
-# 서로 최소 0.6V 이상 떨어져 있으므로(0.8/1.8/2.2) 넉넉히 잡아도 오검출 위험이 없다.
-_VOLTAGE_MATCH_TOLERANCE = 1e-3
 
 
 def _voltage_name_text(
@@ -44,7 +47,7 @@ def _voltage_name_text(
     if voltage_value is None:
         return f"{voltage_prefix}_{PORT_LIST_NOT_FOUND_TOKEN}"
     for threshold, name in voltage_name_thresholds.items():
-        if name and abs(voltage_value - threshold) < _VOLTAGE_MATCH_TOLERANCE:
+        if name and abs(voltage_value - threshold) < VOLTAGE_MATCH_TOLERANCE:
             return f"{voltage_prefix}_{name}"
     return "%s_%0.5f" % (voltage_prefix, voltage_value)
 
