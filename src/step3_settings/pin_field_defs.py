@@ -48,9 +48,23 @@ DBS_TIMING_TYPE_KEY = "dbs_timing_type"
 DBS_RELATED_PINS_KEY = "dbs_related_pins"
 # {인식된 DBS output pin name: str(bit 수)} - 2026-08 추가. 이 DBS output pin의 총
 # Bits를 몇 bit씩 쪼개 block5에 여러 pin() 범위로 나눠 쓸지(quotient = 총 bits /
-# 이 값). Related Pin이 그 quotient로 다시 나뉜 bit 수는 자동 계산이며 사용자가
-# 직접 입력하지 않는다(settings_validator._validate_dbs_related_pins).
+# 이 값 = cluster 개수). Related Pin이 그 quotient로 다시 나뉜 bit 수(Bit Depth)는
+# 자동 계산이며 사용자가 직접 입력하지 않는다
+# (settings_validator._validate_dbs_related_pins). Data Transfer Type이 Parallel일
+# 때만 쓰인다 - 화면 라벨은 "Bit Depth"(옛 "Split into (bits)").
 DBS_BIT_SPLIT_KEY = "dbs_output_bit_split"
+
+# 2026-08 추가 - Data Transfer Type: DBS output pin을 block5에 어떻게 쓸지 결정하는
+# 전역 선택(인식된 pin 전체 공통, pin마다 다르지 않음).
+#   - Parallel (DTBUS): 위 DBS_BIT_SPLIT_KEY로 쪼개서 pin()을 여러 개(cluster 개수만큼)
+#     쓴다(2026-08 DBS output pin bit 분할 기능 그대로).
+#   - Serial (ADBUS): quotient가 항상 1 - 이 기능이 생기기 전과 동일하게 pin() 하나만
+#     쓴다. Bit Depth 입력 자체가 없고, Related Pin만 그대로 보여준다.
+DBS_TRANSFER_TYPE_KEY = "dbs_data_transfer_type"
+DBS_TRANSFER_TYPE_PARALLEL = "parallel"
+DBS_TRANSFER_TYPE_SERIAL = "serial"
+# 기본값은 Serial - 이 기능이 없던 예전과 같은 동작(quotient=1)이 기본이 되도록.
+DBS_TRANSFER_TYPE_DEFAULT = DBS_TRANSFER_TYPE_SERIAL
 
 # 기본값: 2026-08 이전에 block5_writer.py / block5 timing{}에 하드코딩되어 있던 값들.
 # 이제는 전부 사용자 입력이고, 아래 값들은 그 입력의 초기값(default)으로만 쓰인다.

@@ -82,6 +82,14 @@ timing_type/cell_fall/cell_rise/rise_transition/fall_transition 표 전부)는 �
 하나이기 때문(job["dbs_bit_split"]/job["pin_bit_info"], liberty_assembler.build_job
 참고). Bits==1인 DBS output pin(bus가 아니라 pin() 하나만 쓰는 경우)은 애초에 쪼갤
 대상이 아니므로 이 분할 로직이 적용되지 않는다.
+
+2026-08 추가 (Data Transfer Type - Parallel/Serial): 위 분할은 Step3에서 Data
+Transfer Type을 **Parallel(DTBUS)**로 선택했을 때만 적용된다
+(`job["dbs_data_transfer_type"]`, pin_field_defs.DBS_TRANSFER_TYPE_PARALLEL).
+**Serial(ADBUS)**을 선택하면(기본값) `_dbs_bit_split_groups()`가 항상 "쪼개지 않은
+1개짜리" 폴백을 반환해서, 이 DBS output pin bit 분할 기능이 생기기 전과 완전히 동일한
+결과(pin() 하나, related_bus_pins는 Related Pin 전체)를 쓴다 - Step3 화면의 라벨은
+"Bit Depth"(옛 "Split into (bits)"), 몫은 "cluster 개수"로 부른다.
 """
 
 from __future__ import annotations
@@ -90,6 +98,7 @@ import fnmatch
 
 from step1_setup.port_list_reader import parse_bit_range, strip_bit_range_suffix
 from step3_settings.constants_field_defs import VOLTAGE_MATCH_TOLERANCE
+from step3_settings.pin_field_defs import DBS_TRANSFER_TYPE_PARALLEL
 from step4_generate.missing_data import (
     INDENT_2, INDENT_3, INDENT_4, PORT_LIST_NOT_FOUND_TOKEN, write_missing_comment,
 )
@@ -337,16 +346,20 @@ def _write_pin_block(
 
 def _dbs_bit_split_groups(pin: dict, job: dict) -> list[tuple[str, str]]:
     """
-    DBS output pin(bus, bits > 1)을 Step3의 "Split into (bits)" 설정만큼 쪼갠
-    (pin() 선언용 이름, related_bus_pins 값) 쌍의 목록을 만든다.
+    DBS output pin(bus, bits > 1)을 Step3의 "Bit Depth"(Data Transfer Type이
+    Parallel일 때만 입력받는 값, 옛 "Split into (bits)") 설정만큼 쪼갠 (pin() 선언용
+    이름, related_bus_pins 값) 쌍의 목록을 만든다.
 
-    - DBS output pin의 총 Bits를 split 값으로 나눈 몫이 그룹 개수.
-    - Related Pin의 총 Bits를 그 그룹 개수로 나눈 몫이 그룹당 related_bus_pins bit 수
-      (사용자가 입력하지 않고 자동 계산 - 모듈 docstring 참고).
-    - 이 조합이 나눠떨어지지 않는 경우는 Step3 Validate가 이미 막아야 하지만, 방어적
-      으로 여기서도 다시 계산해서 실패하면 쪼개지 않고 원래 pin 이름 + related pin
-      전체 1개짜리 목록으로 폴백한다(missing_data 정책과 동일하게, 값을 지어내지
-      않고 그대로 통과시켜 사람이 알아볼 수 있게 남긴다).
+    - DBS output pin의 총 Bits를 Bit Depth로 나눈 몫이 cluster 개수.
+    - Related Pin의 총 Bits를 그 cluster 개수로 나눈 몫이 cluster당 related_bus_pins
+      bit 수(Related Pin의 Bit Depth, 사용자가 입력하지 않고 자동 계산 - 모듈
+      docstring 참고).
+    - Data Transfer Type이 Serial(ADBUS)이면 이 함수는 항상 쪼개지 않는다(cluster 1개,
+      quotient 1) - 이 DBS output pin bit 분할 기능이 생기기 전과 동일한 동작이다.
+    - (Parallel일 때) 이 조합이 나눠떨어지지 않는 경우는 Step3 Validate가 이미 막아야
+      하지만, 방어적으로 여기서도 다시 계산해서 실패하면 쪼개지 않고 원래 pin 이름 +
+      related pin 전체 1개짜리 목록으로 폴백한다(missing_data 정책과 동일하게, 값을
+      지어내지 않고 그대로 통과시켜 사람이 알아볼 수 있게 남긴다).
     """
     pin_name = pin["pin_name"]
     total_bits = pin["bits"]
@@ -359,6 +372,9 @@ def _dbs_bit_split_groups(pin: dict, job: dict) -> list[tuple[str, str]]:
     related_raw = str(related_raw).strip()
 
     fallback = [(pin_name, related_raw)]
+
+    if job.get("dbs_data_transfer_type") != DBS_TRANSFER_TYPE_PARALLEL:
+        return fallback
     if not related_raw:
         return fallback
 
