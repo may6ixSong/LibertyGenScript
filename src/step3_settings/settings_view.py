@@ -42,14 +42,18 @@ condition을 직접 추가/삭제하고 이름도 정하는 형태로 바뀜, st
   지지 않으면 Validate가 막는다(settings_validator._validate_dbs_related_pins,
   block5_writer._dbs_bit_split_groups).
 
-2026-08 변경 - DBS output pin 목록을 표(QTableWidget)에서 카드 목록으로:
+2026-08 변경 - DBS output pin 표시: 표(QTableWidget) -> 카드 -> 일반 폼:
   컬럼이 6개(DBS Output Pin/Bits/Related Pin/Related Bits/Split into (bits)/Result)로
-  늘어나면서 표 칸이 너무 좁아 값이 잘려 보인다는 피드백을 반영해, 인식된 pin마다
-  한 행짜리 표 대신 **pin마다 세로로 늘어선 카드**(`_build_dbs_pin_card`, Step2
-  Voltage Map의 `_ConditionCard`와 같은 `entryCard` 스타일)로 바꿨다. 각 필드가 자기
-  줄을 온전히 쓰므로 긴 pin 이름도 잘리지 않고, Split into (bits) 입력칸과 Result
-  문구도 넉넉하게 보인다. 카드 목록 전체는 `QScrollArea`로 감싸 높이를 제한한다
-  (`_DBS_PIN_LIST_MAX_HEIGHT`) - pin이 많아도 화면이 한없이 길어지지 않는다.
+  늘어나면서 표 칸이 너무 좁아 값이 잘려 보인다는 피드백을 받아, 1차로 pin마다
+  entryCard 스타일 박스 목록으로 바꿨다. 그런데 박스+스크롤 구성도 여전히 "표 같다"는
+  피드백을 다시 받았고, 실제로 인식되는 DBS output pin은 보통 1~2개뿐이라 스크롤이나
+  박스로 감쌀 이유가 없었다. 그래서 2차로 **박스/스크롤을 걷어내고, 화면의 다른
+  입력들과 똑같은 `QFormLayout` 흐름**으로 더 단순화했다(`_build_dbs_pin_section`):
+  pin마다 굵은 제목 줄(이름 + Bits) 하나, 그 아래 `QFormLayout` 두 행("Related Pin"은
+  읽기 전용 텍스트, "Split into (bits)"는 입력칸 + 그 바로 아래 계산 결과 문구) -
+  Split into (bits)를 뺀 나머지는 전부 시스템이 채워주는 값이므로 굳이 표/카드처럼
+  별도 시각 단위로 감싸지 않고, 이 화면의 timing_sense/timing_type 같은 다른 입력
+  행과 같은 방식으로 보여준다. pin이 둘 이상이면 사이에 얇은 구분선만 넣는다.
 
 2026-08 변경 - Output Path는 더 이상 Validate에 종속되지 않음:
   예전에는 Check(1) + Validate(2)를 통과해야만 Output Path 입력칸/Browse가 열렸다.
@@ -89,8 +93,8 @@ from step3_settings.settings_validator import (
     validate_constants, validate_output_path, validate_pin_settings,
 )
 from ui.theme import (
-    BACKGROUND_COLOR, BORDER_COLOR, ERROR_COLOR, MUTED_TEXT_COLOR, PRIMARY_COLOR,
-    SUCCESS_COLOR, TEXT_COLOR, WARNING_BG, WARNING_BORDER, WARNING_TEXT,
+    BORDER_COLOR, ERROR_COLOR, MUTED_TEXT_COLOR, PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR,
+    WARNING_BG, WARNING_BORDER, WARNING_TEXT,
 )
 from ui.ui_common import (
     NoWheelComboBox, add_shadow, build_back_button, build_bottom_button_row,
@@ -98,15 +102,10 @@ from ui.ui_common import (
 )
 
 _HINT_STYLE = f"color: {MUTED_TEXT_COLOR}; font-size: 11px;"
-# 2026-08: 인식된 DBS output pin 카드 목록 전체 높이 상한 - pin이 많아도 화면이
-# 한없이 길어지지 않도록 이 안에서만 스크롤한다(예전 표의 setMaximumHeight와 같은 역할).
-_DBS_PIN_LIST_MAX_HEIGHT = 420
+# 2026-08 2차 변경 - 카드(entryCard 박스) 목록도 "표처럼 보인다"는 피드백을 받아,
+# 인식된 pin이 보통 1~2개뿐이라는 점을 반영해 박스/스크롤 없이 나머지 입력들과 같은
+# QFormLayout 흐름으로 더 단순화했다(아래 "DBS output pin 표시" 절 참고).
 _DBS_PIN_NAME_STYLE = f"color: {TEXT_COLOR}; font-size: 13px; font-weight: 700;"
-_DBS_BITS_BADGE_STYLE = (
-    f"color: {MUTED_TEXT_COLOR}; font-size: 11px; font-weight: 600; "
-    f"background-color: {BACKGROUND_COLOR}; border: 1px solid {BORDER_COLOR}; "
-    f"border-radius: 4px; padding: 1px 6px;"
-)
 _DBS_RELATED_VALUE_STYLE = f"color: {TEXT_COLOR}; font-size: 12px;"
 
 # 2026-08: Pin Settings의 상위 pin 3개(DBS output pin / Virtual Power / Power down
@@ -393,20 +392,17 @@ class SettingsView(QWidget):
         check_row.addWidget(self.dbs_check_status, stretch=1)
         group.addLayout(check_row)
 
-        self.dbs_pins_scroll = QScrollArea()
-        self.dbs_pins_scroll.setWidgetResizable(True)
-        self.dbs_pins_scroll.setFrameShape(QFrame.NoFrame)
-        self.dbs_pins_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.dbs_pins_scroll.setMaximumHeight(_DBS_PIN_LIST_MAX_HEIGHT)
-        self.dbs_pins_scroll.setVisible(False)
-        dbs_pins_container = QWidget()
-        dbs_pins_container.setObjectName("transparentRow")
-        self.dbs_pins_layout = QVBoxLayout(dbs_pins_container)
-        self.dbs_pins_layout.setContentsMargins(0, 0, 6, 0)
+        # 2026-08 2차 변경: 인식되는 DBS output pin은 보통 1~2개뿐이라 표/카드/스크롤로
+        # 감쌀 이유가 없다 - 화면의 다른 입력들과 같은 QFormLayout 흐름으로 그냥
+        # 이어서 보여준다(모듈 docstring "DBS output pin 표시" 절 참고).
+        self.dbs_pins_container = QWidget()
+        self.dbs_pins_container.setObjectName("transparentRow")
+        self.dbs_pins_container.setVisible(False)
+        self.dbs_pins_layout = QVBoxLayout(self.dbs_pins_container)
+        self.dbs_pins_layout.setContentsMargins(0, 0, 0, 0)
         self.dbs_pins_layout.setSpacing(8)
         self.dbs_pins_layout.addStretch()
-        self.dbs_pins_scroll.setWidget(dbs_pins_container)
-        group.addWidget(self.dbs_pins_scroll)
+        group.addWidget(self.dbs_pins_container)
 
         inner_form = self._add_form(group)
         self.dbs_timing_sense_edit = QLineEdit(str(pins.get(DBS_TIMING_SENSE_KEY, "")))
@@ -654,9 +650,9 @@ class SettingsView(QWidget):
         self._dbs_check_done = False
         self._settings_validated = False
         self._dbs_row_info = []
-        if hasattr(self, "dbs_pins_scroll"):
-            self._clear_dbs_pin_cards()
-            self.dbs_pins_scroll.setVisible(False)
+        if hasattr(self, "dbs_pins_container"):
+            self._clear_dbs_pin_sections()
+            self.dbs_pins_container.setVisible(False)
         if hasattr(self, "dbs_check_status"):
             self.dbs_check_status.setStyleSheet(f"color: {MUTED_TEXT_COLOR}; font-size: 11px;")
             self.dbs_check_status.setText("Not checked yet - Validate is locked.")
@@ -696,18 +692,18 @@ class SettingsView(QWidget):
             )
             return
 
-        self._rebuild_dbs_pin_cards(recognized)
+        self._rebuild_dbs_pin_sections(recognized)
         self._dbs_check_done = True
         self.dbs_check_status.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 11px;")
         self.dbs_check_status.setText(
             f"✓ {len(recognized)} DBS output pin(s) recognized. Related Pin is fixed from "
-            "the Port List - set 'Split into (bits)' for each card (Related Pin's bit count "
-            "per group is derived automatically), then Validate."
+            "the Port List - set 'Split into (bits)' below (Related Pin's bit count per "
+            "group is derived automatically), then Validate."
         )
         self.validate_btn.setEnabled(True)
         self.validate_btn.setToolTip("")
 
-    def _clear_dbs_pin_cards(self) -> None:
+    def _clear_dbs_pin_sections(self) -> None:
         while self.dbs_pins_layout.count():
             item = self.dbs_pins_layout.takeAt(0)
             widget = item.widget()
@@ -715,14 +711,23 @@ class SettingsView(QWidget):
                 widget.deleteLater()
         self.dbs_pins_layout.addStretch()
 
-    def _rebuild_dbs_pin_cards(self, recognized: list[str]) -> None:
+    @staticmethod
+    def _build_separator() -> QFrame:
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet(f"color: {BORDER_COLOR};")
+        return line
+
+    def _rebuild_dbs_pin_sections(self, recognized: list[str]) -> None:
         """
-        인식된 pin마다 카드 하나씩 만든다(2026-08 표 -> 카드 목록 변경 - 모듈
-        docstring 참고). DBS Output Pin / Bits / Related Pin / Related Bits는 전부
-        Port List에서 읽어와 **고정**된다(2026-08 변경 - 예전엔 Related Pin을 표에서
-        직접 고칠 수 있었다). 사용자가 실제로 입력하는 건 카드 안의 "Split into
-        (bits)" 한 칸뿐이고, Result 줄은 그 값으로 몇 그룹이 나오고 Related Pin이
-        그룹당 몇 bit를 쓰게 되는지를 즉시 보여준다(_update_dbs_row_result).
+        인식된 pin마다 한 섹션씩 만든다(2026-08 2차 변경 - 표/카드 대신 이 화면의
+        다른 입력들과 같은 QFormLayout 흐름, 모듈 docstring "DBS output pin 표시"
+        절 참고). DBS Output Pin / Bits / Related Pin / Related Bits는 전부 Port
+        List에서 읽어와 **고정**된다(수정 불가). 사용자가 실제로 입력하는 건 "Split
+        into (bits)" 한 칸뿐이고, 그 바로 아래 문구가 몇 그룹이 나오고 Related Pin이
+        그룹당 몇 bit를 쓰게 되는지를 즉시 보여준다(_update_dbs_row_result). 인식된
+        pin이 보통 1~2개뿐이라 pin이 많을 때를 위한 스크롤/높이 제한은 두지 않는다 -
+        pin 사이에는 구분선만 넣는다.
         """
         port_list_file = self.get_port_list_file()
         detailed_by_name = {
@@ -731,7 +736,7 @@ class SettingsView(QWidget):
         pin_bit_info = list_all_pin_bit_info(port_list_file)
         saved_split = self.settings["pins"].get(DBS_BIT_SPLIT_KEY) or {}
 
-        self._clear_dbs_pin_cards()
+        self._clear_dbs_pin_sections()
         self._dbs_row_info = []
         for row, pin_name in enumerate(recognized):
             detail = detailed_by_name.get(pin_name)
@@ -748,10 +753,13 @@ class SettingsView(QWidget):
                 # 동일하게 pin() 하나만 쓰는 동작이 유지된다.
                 default_split = str(dbs_bits) if dbs_bits else "1"
 
-            card, split_edit, result_label = self._build_dbs_pin_card(
+            if row > 0:
+                self.dbs_pins_layout.insertWidget(self.dbs_pins_layout.count() - 1, self._build_separator())
+
+            section, split_edit, result_label = self._build_dbs_pin_section(
                 pin_name, dbs_bits, related_pin, related_bits, default_split, can_split,
             )
-            self.dbs_pins_layout.insertWidget(self.dbs_pins_layout.count() - 1, card)
+            self.dbs_pins_layout.insertWidget(self.dbs_pins_layout.count() - 1, section)
 
             row_info = {
                 "pin_name": pin_name, "dbs_bits": dbs_bits,
@@ -763,66 +771,63 @@ class SettingsView(QWidget):
 
         for row in range(len(self._dbs_row_info)):
             self._update_dbs_row_result(row)
-        self.dbs_pins_scroll.setVisible(True)
+        self.dbs_pins_container.setVisible(True)
 
-    def _build_dbs_pin_card(
+    def _build_dbs_pin_section(
         self, pin_name: str, dbs_bits: int | None, related_pin: str, related_bits: int | None,
         default_split: str, can_split: bool,
-    ) -> tuple[QFrame, QLineEdit, QLabel]:
+    ) -> tuple[QWidget, QLineEdit, QLabel]:
         """
-        인식된 DBS output pin 하나를 위한 카드. 표 칸 대신 각 필드가 자기 줄을 온전히
-        쓰도록 세로로 늘어놓는다 - 긴 pin 이름/related pin 이름이 잘리지 않고, Split
-        into (bits) 입력칸과 Result 문구도 넉넉하게 보인다(Step2 Voltage Map의
-        _ConditionCard와 같은 entryCard 스타일).
+        인식된 DBS output pin 하나: 굵은 제목 줄(이름 + Bits) 아래에 이 화면의 다른
+        입력들과 같은 QFormLayout 두 행("Related Pin"은 읽기 전용 텍스트, "Split
+        into (bits)"는 입력칸 + 그 바로 아래 계산 결과 문구). Split into (bits)를 뺀
+        나머지는 전부 시스템이 채워주는 값이므로 표/카드처럼 별도 박스로 감싸지 않는다.
         """
-        card = QFrame()
-        card.setObjectName("entryCard")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(6)
+        section = QWidget()
+        section.setObjectName("transparentRow")
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(4)
 
-        name_row = QHBoxLayout()
-        name_row.setSpacing(8)
-        name_label = QLabel(pin_name)
+        bits_text = f"{dbs_bits} bit" if dbs_bits is not None else "? bit"
+        name_label = QLabel(f"{pin_name}   ·   {bits_text}")
         name_label.setStyleSheet(_DBS_PIN_NAME_STYLE)
         name_label.setWordWrap(True)
-        name_row.addWidget(name_label, stretch=1)
-        bits_badge = QLabel(f"{dbs_bits} bit" if dbs_bits is not None else "? bit")
-        bits_badge.setStyleSheet(_DBS_BITS_BADGE_STYLE)
-        name_row.addWidget(bits_badge)
-        layout.addLayout(name_row)
+        section_layout.addWidget(name_label)
 
-        related_row = QHBoxLayout()
-        related_row.setSpacing(8)
-        related_caption = QLabel("↳ Related Pin")
-        related_caption.setStyleSheet(_HINT_STYLE)
-        related_row.addWidget(related_caption)
-        related_value = QLabel(related_pin or "(none - Port List Related Pin is empty)")
-        related_value.setStyleSheet(_DBS_RELATED_VALUE_STYLE)
-        related_value.setWordWrap(True)
-        related_row.addWidget(related_value, stretch=1)
-        related_bits_badge = QLabel(f"{related_bits} bit" if related_bits is not None else "? bit")
-        related_bits_badge.setStyleSheet(_DBS_BITS_BADGE_STYLE)
-        related_row.addWidget(related_bits_badge)
-        layout.addLayout(related_row)
+        form = QFormLayout()
+        form.setSpacing(6)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
-        split_row = QHBoxLayout()
-        split_row.setSpacing(8)
-        split_row.addWidget(QLabel("Split into (bits)"))
+        related_bits_text = f"{related_bits} bit" if related_bits is not None else "? bit"
+        related_label = QLabel(
+            f"{related_pin}   ·   {related_bits_text}" if related_pin
+            else "(none - Port List Related Pin is empty)"
+        )
+        related_label.setStyleSheet(_DBS_RELATED_VALUE_STYLE)
+        related_label.setWordWrap(True)
+        form.addRow("Related Pin", related_label)
+
+        split_container = QWidget()
+        split_container.setObjectName("transparentRow")
+        split_layout = QVBoxLayout(split_container)
+        split_layout.setContentsMargins(0, 0, 0, 0)
+        split_layout.setSpacing(2)
         split_edit = QLineEdit(default_split)
-        split_edit.setFixedWidth(90)
+        split_edit.setMaximumWidth(120)
         split_edit.setEnabled(can_split)
         if not can_split:
             split_edit.setToolTip("1 bit - cannot be split.")
-        split_row.addWidget(split_edit)
-        split_row.addStretch()
-        layout.addLayout(split_row)
-
         result_label = QLabel("")
         result_label.setWordWrap(True)
-        layout.addWidget(result_label)
+        result_label.setStyleSheet("font-size: 11px;")
+        split_layout.addWidget(split_edit)
+        split_layout.addWidget(result_label)
+        form.addRow("Split into (bits)", split_container)
 
-        return card, split_edit, result_label
+        section_layout.addLayout(form)
+        return section, split_edit, result_label
 
     def _update_dbs_row_result(self, row: int) -> None:
         """
