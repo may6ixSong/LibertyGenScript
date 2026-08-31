@@ -56,7 +56,7 @@ from PyQt5.QtWidgets import (
 )
 
 from step1_setup.port_list_reader import (
-    list_port_bit_values, list_port_pins_detailed, list_power_ground_pins,
+    list_all_pin_bit_info, list_port_bit_values, list_port_pins_detailed, list_power_ground_pins,
 )
 from step2_udc import udc_manager
 from step3_settings import settings_manager
@@ -391,11 +391,14 @@ class GenerateView(QWidget):
         port_bit_values = list_port_bit_values(port_list_file)
         power_ground_pins = list_power_ground_pins(port_list_file)
         port_pins = list_port_pins_detailed(port_list_file)
+        # DBS output pin bit 분할(2026-08 추가)이 Related Pin의 Bits/범위를 찾는 데
+        # 쓴다 - Port 타입 무관 전체 pin을 본다(list_port_pins_detailed는 PORT만).
+        pin_bit_info = list_all_pin_bit_info(port_list_file)
 
         self._jobs, self._prep_errors = liberty_assembler.build_jobs(
             udc_manager.get_entries(udc_state), udc_state["common"],
             pdk_folder, dbs_folder, settings["scalars"], settings["voltage_map"], port_bit_values,
-            power_ground_pins, settings["pins"], port_pins,
+            power_ground_pins, settings["pins"], port_pins, pin_bit_info,
         )
         self._total = len(self._jobs)
 

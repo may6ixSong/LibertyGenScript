@@ -241,7 +241,12 @@ Type 개수 무제한 + voltage(digital) 필드 추가)
    - `timing_sense` / `timing_type` — 인식된 DBS output pin **전체 공통 1쌍**,
      block5의 `timing()` 블록에 들어감. 기본값은 예전 하드코딩 값
      (`non_unate` / `combinational`).
-   - 인식된 pin마다 `related pin` 하나씩 — block5 `timing()`의 `related_bus_pins`.
+   - 인식된 pin마다 `related pin` 하나씩 — Port List의 'Related Pin' 컬럼 값으로
+     **고정**(수정 불가, 아래 "Related Pin은 Port List 값으로 고정" 참고), block5
+     `timing()`의 `related_bus_pins`.
+   - 인식된 pin마다 `Split into (bits)` 하나씩(2026-08 추가) — 이 DBS output pin의
+     총 Bits를 몇 bit씩 쪼개 block5에 여러 `pin()` 범위로 나눠 쓸지(아래 "DBS output
+     pin bit 분할" 참고).
 
 **Check가 Validate보다 항상 먼저 (2026-08 확정)**: Port List 파일이 바뀌면 같은
 와일드카드라도 인식되는 DBS output pin 집합이 달라진다. 그래서 화면에
@@ -251,14 +256,30 @@ output pin 입력을 고치거나 화면을 다시 열면(Step1에서 Port List�
 Check 결과는 무효가 되고 Validate가 다시 잠긴다. 와일드카드가 인식하는 대상은
 block5에서 실제로 `pin()`/`bus()`로 쓰이는 행들과 동일하게 `Port == "PORT"`인 행뿐이다.
 
-**Related Pin 자동 채움 (2026-08 변경)**: `1) Check DBS Output Pins`를 누르면 인식된
-DBS output pin마다 Related Pin 칸이 **Port List의 'Related Pin' 컬럼 값으로 자동
-채워진다**(`SettingsView._fill_related_pin_table`, `port_list_reader.list_port_pins_detailed`
-로 pin 이름 → Related Pin 매핑을 가져옴). 예전에는 이 칸이 빈 채로 시작해서 사용자가
-Port List를 보고 직접 옮겨 적어야 했다. 표에서 바로 값을 고칠 수 있고(Port List와
-다른 pin을 쓰고 싶은 경우), 이미 그 pin에 대해 저장해 둔 값(직접 고쳤던 값 포함)이
-있으면 자동 채움 대신 그 값을 그대로 유지한다 - Check를 다시 눌러도 이미 입력해 둔
-값이 날아가지 않는다.
+**Related Pin은 Port List 값으로 고정 (2026-08 자동 채움 도입 → 2026-08 bit 분할
+추가로 수정불가 고정)**: `1) Check DBS Output Pins`를 누르면 인식된 DBS output
+pin마다 Related Pin 칸이 **Port List의 'Related Pin' 컬럼 값으로 채워지고, 더 이상
+표에서 고칠 수 없다**(`SettingsView._fill_related_pin_table`,
+`port_list_reader.list_port_pins_detailed`로 pin 이름 → Related Pin 매핑을 가져옴).
+(변경 이력) 한때는 이 칸을 표에서 직접 다른 pin으로 고쳐 쓸 수 있었으나, DBS output
+pin bit 분할(아래 절)이 Related Pin의 실제 Bits 값을 알아야 그룹당 bit 수를 계산할 수
+있으므로, Related Pin은 다시 Port List가 정한 값으로 고정되었다.
+
+**DBS output pin bit 분할 (2026-08 추가)**: `1) Check DBS Output Pins`를 누르면
+표에 각 DBS output pin의 `Bits`(Port List의 'Bits' 컬럼 — pin명의 `[N:0]` 표기를
+파싱하는 것보다 정확하므로 이 컬럼을 그대로 읽는다)와 Related Pin의 `Bits`(Related
+Pin 이름으로 Port List 전체(Port 타입 무관)를 다시 찾아 그 행의 Bits를 읽음,
+`port_list_reader.list_all_pin_bit_info`)를 함께 보여준다. 사용자가 입력하는 건
+`Split into (bits)` 한 칸뿐 — 이 DBS output pin의 총 Bits를 몇 bit씩 쪼갤지다. 그
+값으로 나온 몫(총 Bits / Split into (bits) = 그룹 개수)만큼 Related Pin의 총 Bits를
+다시 나눠, 그룹당 related_bus_pins bit 수를 **자동 계산**한다(사용자가 직접 입력하지
+않음) — 어느 한쪽이든 나누어떨어지지 않으면 Validate가 에러로 막는다(아래 "Step 3
+Validate 검사 항목" 참고). `Split into (bits)`를 건드리지 않으면 기본값이 전체 Bits
+그대로(=1 그룹)라서 예전과 동일하게 pin() 하나만 쓰는 동작이 유지된다. 표의 Result
+칸이 계산된 그룹 개수와 그룹당 Related Pin bit 수를 즉시 보여준다
+(`SettingsView._update_dbs_row_result`). Bits가 1인 DBS output pin(block5에서
+bus가 아니라 pin() 하나로 쓰이는 경우)은 쪼갤 대상이 아니므로 이 칸이 잠겨 있다.
+block5가 실제로 여러 `pin()` 범위를 쓰는 방식은 아래 "Step 4 — Block 5" 절 참고.
 
 **Output Path는 Validate와 순서 무관 (2026-08 변경)**: 예전에는 `1) Check` +
 `2) Validate`를 통과해야만 Output Path 입력칸/Browse가 열렸다. 이제 Output Path는
@@ -278,14 +299,18 @@ Port List를 보고 직접 옮겨 적어야 했다. 표에서 바로 값을 고�
 - Pin: 위의 모든 하위 필드가 비어있지 않은지(rise/fall power는 숫자인지), 와일드카드
   불가 필드에 `*`가 없는지, Virtual Power가 PWR pin인지, Enable/Power down 패턴이 실제
   pin과 매치되는지.
-- DBS output pin의 related pin: **① Check로 인식해 둔 pin 집합이 지금 Port List로 다시
-  펼친 결과와 같은지** (다르면 "다시 Check" 에러), ② 각 related pin이 비어있지 않은지,
-  ③ Port List에 실제 존재하는 Pin name인지. (변경 이력 - 2026-08: 예전에는 여기에
-  "그 DBS output pin이 있는 Port List 행의 `Related Pin` 컬럼 값과 정확히 일치해야
-  한다"는 ④번 규칙이 있었다. Check 시점에 이미 그 컬럼 값으로 자동 채워지고 사용자가
-  의도적으로 다른 pin으로 고칠 수도 있는 것이 정상 동작이 되면서, 그 자동 채움 값을
-  다시 강제하던 이 규칙은 삭제했다 - 이제는 Port List에 실제 존재하는 pin이기만 하면
-  자동 채움값이든 사용자가 고친 값이든 통과한다.)
+- DBS output pin의 related pin + bit 분할(2026-08 bit 분할 추가로 확장): **① Check로
+  인식해 둔 pin 집합이 지금 Port List로 다시 펼친 결과와 같은지** (다르면 "다시 Check"
+  에러), ② 각 related pin이 비어있지 않은지, ③ Port List에 실제 존재하는 Pin name인지,
+  ④ (Bits > 1인 pin만) `Split into (bits)`가 1 이상 Bits 이하의 정수이고 Bits가 그
+  값으로 정확히 나누어떨어지는지(몫 = block5가 쓸 pin() 그룹 개수), ⑤ Related Pin의
+  Bits가 그 몫으로 정확히 나누어떨어지는지(그룹당 related_bus_pins bit 수 - 자동
+  계산값이라 사용자가 직접 틀릴 수는 없지만, Related Pin 자체의 Bits와 몫의 조합이
+  안 맞으면 여전히 에러). (변경 이력 - 2026-08: 한때 "그 DBS output pin이 있는 Port
+  List 행의 `Related Pin` 컬럼 값과 정확히 일치해야 한다"는 규칙이 있었다가, Related
+  Pin을 표에서 직접 고칠 수 있게 되며 삭제되었고, bit 분할 추가와 함께 Related Pin이
+  다시 Port List 값으로 고정되면서 지금은 사실상 Port List 데이터 자체의 무결성
+  검사가 되었다.)
 - Output Path: 값이 채워져 있다면 실제로 존재하는 폴더인지 (`validate_output_path`,
   2026-08 추가). 비어 있으면 이 시점에는 에러가 아니다 - Generate 버튼이 별도로
   "채워져 있고 실제로 존재함"을 요구한다.
@@ -386,6 +411,25 @@ forwarding 환경에서 보장할 수 없어서,
    Port List Volts 값을 그대로 쓴다(소수점 5자리, `%0.5f`).
    (`block5_writer.py`의 `_input_signal_level_text`,
    `liberty_assembler.build_job`의 `input_signal_level_thresholds`)
+7. **Block 5 DBS output pin bit 분할** (2026-08 추가, 위 "Step 3 — DBS output pin bit
+   분할" 절 참고): DBS output signal과 매치되고 Bits > 1인 pin(=bus로 쓰임)은 Step3에서
+   설정한 `Split into (bits)` 값으로 총 Bits를 쪼개, `bus() { ... }` 안에 pin() 범위를
+   그 몫(그룹 개수)만큼 이어서 쓴다(예: `pin(BUS[12:0]) { ... }` 다음
+   `pin(BUS[25:13]) { ... }`, ...). 각 그룹의 `pin()` 안에서 pin_name과 `timing()`의
+   `related_bus_pins`(Related Pin의 총 Bits를 같은 몫으로 나눈 범위)만 그룹마다
+   달라지고, 나머지 전부(`capacitance`/`max_capacitance`/`related_power_pin`/
+   `related_ground_pin`/`input_signal_level`, 그리고 `timing()` 안의
+   `timing_sense`/`timing_type`과 `cell_fall`/`cell_rise`/`rise_transition`/
+   `fall_transition` 표 전부)는 **동일하게 반복**해서 쓴다 - 이 job의 DBS
+   output(.mt0) 파일에서 읽는 값 자체가 그룹과 무관하게 하나이기 때문이다. 나눠
+   떨어지지 않는 조합은 Step3 Validate가 이미 막지만, `block5_writer.py`의
+   `_dbs_bit_split_groups()`가 방어적으로 다시 계산해서 실패하면 쪼개지 않고 원래
+   범위 1개로 폴백한다(값을 지어내지 않는 이 프로젝트의 결측 처리 원칙과 동일).
+   Bits == 1인 DBS output pin(bus가 아니라 pin() 하나만 쓰는 경우)은 이 분할 로직이
+   적용되지 않는다. Related Pin의 Bits/범위는
+   `liberty_assembler.build_job`이 `port_list_reader.list_all_pin_bit_info()`
+   결과를 `job["pin_bit_info"]`로 실어 보내고, `job["dbs_bit_split"]`이 Step3에서
+   pin마다 설정한 `Split into (bits)` 값을 담는다.
 
 ### 결측 데이터 처리
 하드코딩되는 부분(예: `vmin: 0.00`, `process: 1.000`)을 제외하고, PDK 파일에서 기대한
