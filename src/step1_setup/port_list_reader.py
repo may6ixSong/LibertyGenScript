@@ -649,3 +649,69 @@ def list_all_pin_names(file_path: str) -> list[str]:
             if name:
                 result.append(name)
     return result
+
+
+# ---------------------------------------------------------------------------
+# 2026-08 추가 - DBS output pin bit 분할: 'Pin name'의 '[MSB:LSB]' 범위 표기를
+# 다루는 공용 헬퍼. block5_writer.py(step4)와 pin_field_defs.py/settings_validator.py
+# (step3)가 둘 다 이 모듈(step1)에서 가져다 쓴다 - step1은 그 위 step을 참조하지
+# 않으므로 순환 import 없이 공유할 수 있는 유일한 위치다.
+# ---------------------------------------------------------------------------
+_BIT_RANGE_SUFFIX_RE = re.compile(r"\[(\d+):(\d+)\]\s*$")
+
+
+def strip_bit_range_suffix(pin_name: str) -> str:
+    """'BUS0[3:0]' -> 'BUS0'. 대괄호가 없으면 그대로 반환."""
+    idx = pin_name.find("[")
+    return pin_name if idx == -1 else pin_name[:idx]
+
+
+def parse_bit_range(pin_name: str, bits: int) -> tuple[int, int]:
+    """
+    'BUS0[15:0]' -> (15, 0) (MSB, LSB). pin_name 끝에 '[MSB:LSB]'가 없으면, Port
+    List가 0-based로 선언했다고 가정하고 (bits-1, 0)을 기본값으로 돌려준다.
+    """
+    match = _BIT_RANGE_SUFFIX_RE.search((pin_name or "").strip())
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return bits - 1, 0
+
+
+def list_all_pin_bit_info(file_path: str) -> dict[str, dict]:
+    """
+    Port List 전체 행(Port 컬럼 값이 PORT/PWR/GND/그 외 무엇이든 전부)에서, 대괄호
+    범위를 뺀 base pin name -> {"bits": int, "msb": int, "lsb": int, "full_name": str}
+    매핑을 만든다.
+
+    2026-08 DBS output pin bit 분할 추가: Step3 "Check DBS Output Pins"로 인식한 DBS
+    output pin마다 Port List의 'Related Pin' 컬럼이 가리키는 pin은 Port=="PORT"가
+    아닐 수도 있으므로(보장되지 않음), Port=="PORT"만 보는 list_port_pins_detailed와
+    달리 이 함수는 전체 행을 본다 - 그 pin의 Bits 값을 찾아 DBS output pin과 같은
+    quotient(그룹 개수)로 나눈 related_bus_pins 범위를 계산하는 데 쓰인다
+    (block5_writer.py, settings_validator.py, settings_view.py 공용).
+
+    Bits가 정수로 읽히지 않는 행은 건너뛴다. 같은 base name이 여러 행에 나오면
+    처음 나온 행을 쓴다.
+    """
+    parsed = _parse_port_list_cached(file_path)
+    column_map = parsed["column_map"]
+    if "Pin name" not in column_map or "Bits" not in column_map:
+        return {}
+
+    pin_col = column_map["Pin name"]
+    bits_col = column_map["Bits"]
+    result: dict[str, dict] = {}
+    for _row_idx, row in parsed["rows"]:
+        pin_val = row[pin_col - 1] if pin_col - 1 < len(row) else None
+        bits_val = row[bits_col - 1] if bits_col - 1 < len(row) else None
+        if pin_val is None or not _is_valid_int(bits_val):
+            continue
+        name = str(pin_val).strip()
+        if not name:
+            continue
+        bits = _to_int(bits_val)
+        msb, lsb = parse_bit_range(name, bits)
+        base = strip_bit_range_suffix(name)
+        if base not in result:
+            result[base] = {"bits": bits, "msb": msb, "lsb": lsb, "full_name": name}
+    return result

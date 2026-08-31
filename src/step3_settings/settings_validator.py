@@ -18,20 +18,28 @@ timing·internal_power)를 만들 수 없으므로 이제 Validate 단계에서 
   - Pin 설정의 모든 하위 필드 (switch_function/pg_function, rise·fall power/when,
     timing_sense/timing_type, 인식된 DBS output pin마다의 related pin)
 
-DBS output pin의 related pin 검사(2026-08 확정 → 2026-08 자동 채움 도입으로 수정):
+DBS output pin의 related pin 검사(2026-08 확정 → 2026-08 자동 채움 도입 →
+2026-08 bit 분할 추가로 재수정):
   1. "Check DBS Output Pins"로 인식해 둔 pin 집합이 지금 Port List로 다시 펼친 결과와
      동일해야 한다 (Port List 파일이 바뀌면 인식 결과가 달라지므로, 다르면 다시 Check).
   2. 각 related pin은 비어 있으면 안 되고,
   3. Port List에 실제로 존재하는 Pin name이어야 한다.
+  4. (2026-08 추가) 그 DBS output pin의 Bits가 1보다 크면(=block5에서 bus로 쓰임),
+     Step3에서 입력한 "Split into (bits)" 값이 1 이상 Bits 이하의 정수이고 Bits가 그
+     값으로 정확히 나누어떨어져야 한다(나눠떨어진 몫 = block5가 쓸 pin() 그룹 개수).
+     그리고 Related Pin의 Bits(Port List에서 그 pin의 'Pin name'을 찾아 읽음)가 그
+     몫으로 정확히 나누어떨어져야 한다(나눠떨어진 몫이 그룹당 related_bus_pins가 쓸
+     bit 수 - 사용자가 직접 입력하지 않고 자동 계산됨). 어느 한쪽이라도 나누어떨어지지
+     않으면 에러.
 
   (변경 이력) 예전에는 여기에 "그 DBS output pin이 있는 Port List 행의 'Related Pin'
-  컬럼 값과 정확히 일치해야 한다"는 4번째 규칙이 있었다. 이제 "Check DBS Output Pins"를
+  컬럼 값과 정확히 일치해야 한다"는 4번째 규칙이 있었다. "Check DBS Output Pins"를
   누르면 각 pin의 Related Pin이 Port List의 'Related Pin' 컬럼 값으로 **자동
-  채워지고**(settings_view._fill_related_pin_table), 사용자가 표에서 직접 다른 pin으로
-  고쳐 쓸 수도 있는 것이 의도된 동작이므로(Port List와 다른 pin을 쓰고 싶은 경우), 그
-  자동 채움 값을 그대로 다시 강제하는 이 규칙은 삭제했다 - 이제는 자동 채움이 곧 기본값
-  일치를 보장하고, 사용자가 의도적으로 바꾼 값은 "Port List에 실제 존재하는 pin"이기만
-  하면 통과한다.
+  채워지고**(settings_view._fill_related_pin_table), 한때는 표에서 직접 다른 pin으로
+  고쳐 쓸 수도 있었다. 2026-08 bit 분할 추가와 함께 Related Pin은 다시 Port List
+  값으로 **고정**(수정 불가)되었으므로, 여기 3번 규칙("Port List에 실제 존재하는
+  pin")은 사실상 Port List 데이터 자체의 무결성 검사가 되었다(사용자 입력 오류를
+  막는 용도가 아님).
 """
 
 from __future__ import annotations
@@ -39,16 +47,19 @@ from __future__ import annotations
 import fnmatch
 from pathlib import Path
 
-from step1_setup.port_list_reader import list_all_pin_names, list_pins_by_port_type
+from step1_setup.port_list_reader import (
+    list_all_pin_bit_info, list_all_pin_names, list_pins_by_port_type, list_port_pins_detailed,
+    strip_bit_range_suffix,
+)
 from step3_settings.constants_field_defs import (
     CONDITION_NAME_KEY, CONDITION_VALUES_KEY, VOLTAGE_CONDITIONS_KEY, VOLTAGE_MATCH_TOLERANCE,
     condition_value_key, power_type_count_of, power_type_label, voltage_map_digital_voltage_key,
     voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
-    DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
-    ENABLE_SIGNAL_KEY, ENABLE_SIGNAL_PORT_TYPE, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY,
-    POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY, VIRTUAL_POWER_KEY,
+    DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY,
+    DBS_TIMING_TYPE_KEY, ENABLE_SIGNAL_KEY, ENABLE_SIGNAL_PORT_TYPE, POWER_DOWN_FALL_POWER_KEY,
+    POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY, VIRTUAL_POWER_KEY,
     VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_PORT_TYPE, VIRTUAL_POWER_SWITCH_FUNCTION_KEY,
     expand_dbs_output_pins, split_pattern_and_range,
 )
@@ -206,14 +217,17 @@ def validate_voltage_map(voltage_map: dict) -> list[str]:
 
 def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
     """
-    "Check DBS Output Pins"로 인식해 둔 DBS output pin마다의 related pin 검사.
-    (자세한 규칙은 이 모듈 docstring 참고)
+    "Check DBS Output Pins"로 인식해 둔 DBS output pin마다의 related pin +
+    (2026-08 추가) bit 분할 설정 검사. (자세한 규칙은 이 모듈 docstring 참고)
     """
     errors: list[str] = []
 
     related_map = pins.get(DBS_RELATED_PINS_KEY)
     if not isinstance(related_map, dict):
         related_map = {}
+    split_map = pins.get(DBS_BIT_SPLIT_KEY)
+    if not isinstance(split_map, dict):
+        split_map = {}
 
     recognized = expand_dbs_output_pins(port_list_file, pins.get(DBS_OUTPUT_KEY, ""))
     if not recognized:
@@ -232,6 +246,8 @@ def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
         return errors
 
     all_pin_names = set(list_all_pin_names(port_list_file))
+    dbs_bits_by_name = {p["pin_name"]: p["bits"] for p in list_port_pins_detailed(port_list_file)}
+    pin_bit_info = list_all_pin_bit_info(port_list_file)
 
     for pin_name in recognized:
         value = str(related_map.get(pin_name, "")).strip()
@@ -241,6 +257,58 @@ def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
         if value not in all_pin_names:
             errors.append(
                 f"Related Pin '{value}' (for DBS output pin '{pin_name}') is not a pin in the Port List."
+            )
+            continue
+
+        dbs_bits = dbs_bits_by_name.get(pin_name)
+        if dbs_bits is None:
+            errors.append(f"DBS output pin '{pin_name}': Bits value could not be read from the Port List.")
+            continue
+        if dbs_bits <= 1:
+            # 1비트 pin은 block5에서 bus()로 쪼개 쓰지 않으므로 분할 설정 자체가 없다.
+            continue
+
+        related_base = strip_bit_range_suffix(value)
+        related_info = pin_bit_info.get(related_base)
+        if related_info is None:
+            errors.append(
+                f"Related Pin '{value}' (for DBS output pin '{pin_name}') has no readable Bits "
+                "value in the Port List, so it cannot be split alongside the DBS output pin."
+            )
+            continue
+        related_bits = related_info["bits"]
+
+        split_text = str(split_map.get(pin_name, "")).strip()
+        if not split_text:
+            errors.append(f"DBS output pin '{pin_name}': 'Split into (bits)' is empty.")
+            continue
+        try:
+            split_bits = int(split_text)
+        except ValueError:
+            errors.append(
+                f"DBS output pin '{pin_name}': 'Split into (bits)' value '{split_text}' is not "
+                "a whole number."
+            )
+            continue
+        if split_bits <= 0 or split_bits > dbs_bits:
+            errors.append(
+                f"DBS output pin '{pin_name}': 'Split into (bits)' must be between 1 and "
+                f"{dbs_bits} (got {split_bits})."
+            )
+            continue
+        if dbs_bits % split_bits != 0:
+            errors.append(
+                f"DBS output pin '{pin_name}': its {dbs_bits} bits do not divide evenly by the "
+                f"{split_bits}-bit split ({dbs_bits} / {split_bits} is not a whole number)."
+            )
+            continue
+
+        group_count = dbs_bits // split_bits
+        if related_bits % group_count != 0:
+            errors.append(
+                f"DBS output pin '{pin_name}': Related Pin '{value}' has {related_bits} bits, "
+                f"which do not divide evenly across the {group_count} group(s) produced by the "
+                f"{split_bits}-bit split ({related_bits} / {group_count} is not a whole number)."
             )
 
     return errors
