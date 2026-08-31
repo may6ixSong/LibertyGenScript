@@ -23,10 +23,10 @@ lu_table_template(index_1/index_2)을 한 번에 뽑았다. 이제 lu_table_temp
      아래 `_BODY_KEEP_PREFIXES`로 다시 넓혔다). 가져오는 기준(사용자 지정, 전부 첫
      토큰이 그 접두어로 **시작**하면 포함 - 정확히 일치가 아님):
        - `define`(`define_group` 포함) / `default` / `input_` / `output_` / `slew_` /
-         `nom_` / `receiver_capacitance_`
+         `nom_`
        - `voltage_unit` / `current_unit` / `leakage_power_unit` /
          `capacitive_load_unit` / `library_features` / `time_unit` /
-         `pulling_resistance_unit`
+         `pulling_resistance_unit` / `in_place_swap_mode`
      이 접두어들은 전부 한 줄짜리 선언(그룹을 여는 게 아님)이라는 전제이므로,
      안전장치로 그 줄에 `{`가 있으면(그룹을 여는 줄이면) 접두어가 맞아도 가져오지
      않는다 - 닫는 `}` 없이 통째로 남으면 전체 중괄호 균형이 깨지기 때문
@@ -61,7 +61,7 @@ _BODY_KEEP_PREFIXES = (
     "library_features",
     "time_unit",
     "pulling_resistance_unit",
-    "receiver_capacitance_",  # receiver_capacitance_rise/fall, receiver_capacitance1_rise, ...
+    "in_place_swap_mode",
     "input_",  # input_threshold_pct_rise, input_threshold_pct_fall, ...
     "output_",  # output_threshold_pct_rise, output_threshold_pct_fall, ...
     "slew_",  # slew_derate_from_library, slew_lower_threshold_pct_rise, ...
