@@ -23,7 +23,7 @@ lu_table_template(index_1/index_2)을 한 번에 뽑았다. 이제 lu_table_temp
      아래 `_BODY_KEEP_PREFIXES`로 다시 넓혔다). 가져오는 기준(사용자 지정, 전부 첫
      토큰이 그 접두어로 **시작**하면 포함 - 정확히 일치가 아님):
        - `define`(`define_group` 포함) / `default` / `input_` / `output_` / `slew_` /
-         `nom_`
+         `nom_` / `receiver_capacitance_`
        - `voltage_unit` / `current_unit` / `leakage_power_unit` /
          `capacitive_load_unit` / `library_features` / `time_unit` /
          `pulling_resistance_unit`
@@ -61,6 +61,7 @@ _BODY_KEEP_PREFIXES = (
     "library_features",
     "time_unit",
     "pulling_resistance_unit",
+    "receiver_capacitance_",  # receiver_capacitance_rise/fall, receiver_capacitance1_rise, ...
     "input_",  # input_threshold_pct_rise, input_threshold_pct_fall, ...
     "output_",  # output_threshold_pct_rise, output_threshold_pct_fall, ...
     "slew_",  # slew_derate_from_library, slew_lower_threshold_pct_rise, ...

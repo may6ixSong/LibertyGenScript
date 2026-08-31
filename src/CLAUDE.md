@@ -335,7 +335,7 @@ forwarding 환경에서 보장할 수 없어서,
    `pdk_stream_reader.read_pdk_library_sections()`의 `_BODY_KEEP_PREFIXES`,
    `_should_keep_body_line()`):
      - `define`(`define_group` 포함) / `default` / `input_` / `output_` / `slew_` /
-       `nom_`
+       `nom_` / `receiver_capacitance_`
      - `voltage_unit` / `current_unit` / `leakage_power_unit` /
        `capacitive_load_unit` / `library_features` / `time_unit` /
        `pulling_resistance_unit`
