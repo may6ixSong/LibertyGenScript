@@ -28,7 +28,8 @@ condition을 직접 추가/삭제하고 이름도 정하는 형태로 바뀜, st
 2026-08 추가 - DBS output pin은 Validate 전에 반드시 Check 먼저:
   Port List 파일이 바뀌면 같은 와일드카드라도 인식되는 pin 집합이 달라지므로,
   "1) Check DBS Output Pins" 버튼을 눌러 현재 Port List 기준으로 pin을 다시 펼친 뒤에야
-  각 pin의 Split into (bits)를 입력할 수 있고, 그 다음에야 "2) Validate" 버튼이 열린다.
+  Data Transfer Type을 고르고(Parallel이면 pin마다 Bit Depth도 입력)할 수 있고, 그
+  다음에야 "2) Validate" 버튼이 열린다.
   DBS output pin 입력을 고치거나 화면을 다시 열면 Check 결과는 무효가 되고 Validate가
   다시 잠긴다. Step4에서 Back으로 돌아온 경우도 마찬가지다(showEvent).
 
@@ -55,6 +56,23 @@ condition을 직접 추가/삭제하고 이름도 정하는 형태로 바뀜, st
   별도 시각 단위로 감싸지 않고, 이 화면의 timing_sense/timing_type 같은 다른 입력
   행과 같은 방식으로 보여준다. pin이 둘 이상이면 사이에 얇은 구분선만 넣는다.
 
+2026-08 추가 - Data Transfer Type (Parallel/Serial):
+  Check 성공 후, 인식된 pin 전체에 공통으로 적용되는 라디오 버튼 선택
+  (`dbs_transfer_type_row`, pin마다가 아니라 한 번만 고른다) - Parallel (DTBUS) /
+  Serial (ADBUS).
+    - **Parallel**: 지금까지의 bit 분할 그대로 - 각 pin에 "Bit Depth"(옛 "Split into
+      (bits)") 입력칸이 보이고, 총 Bits를 그 값으로 나눈 몫이 "cluster 개수"다(화면에
+      "N cluster(s) · Related Pin Bit Depth: M bit(s)."로 표시). Related Pin의 Bit
+      Depth는 여전히 자동 계산이지 사용자가 입력하지 않는다.
+    - **Serial(기본값)**: 이 DBS output pin bit 분할 기능이 생기기 전과 동일 - 몫은
+      항상 1. 이 경우 pin마다 Bit Depth 입력칸 자체가 없고, DBS Output Pin 이름과
+      Related Pin 이름만 보여준다(Bits 표시도 생략 - 옛날 화면과 동일하게 최소한만).
+  라디오는 Check 때마다 다시 만들지 않는 영구 위젯이라, 전환해도 Port List를 다시
+  읽지 않고 이미 읽어 둔 `_dbs_row_info`를 그 자리에서 다시 그리기만 한다
+  (`_render_dbs_pin_sections`, `_on_dbs_transfer_type_changed`). 선택값은
+  `pins[DBS_TRANSFER_TYPE_KEY]`로 저장되고, block5가 Parallel일 때만 분할하도록
+  참조한다(block5_writer._dbs_bit_split_groups, liberty_assembler.build_job).
+
 2026-08 변경 - Output Path는 더 이상 Validate에 종속되지 않음:
   예전에는 Check(1) + Validate(2)를 통과해야만 Output Path 입력칸/Browse가 열렸다.
   이제 Output Path는 그 순서와 무관하게 언제든 입력·수정할 수 있고, Validate를 누르면
@@ -70,8 +88,8 @@ from typing import Callable
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QButtonGroup, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from step1_setup.port_list_reader import (
@@ -84,10 +102,11 @@ from step3_settings import settings_manager
 from step3_settings.constants_field_defs import SCALAR_CONSTANT_DEFS
 from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY,
-    DBS_TIMING_TYPE_KEY, ENABLE_SIGNAL_KEY, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY,
-    POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY, VIRTUAL_POWER_KEY,
-    VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_PORT_TYPE, VIRTUAL_POWER_SWITCH_FUNCTION_KEY,
-    expand_dbs_output_pins, split_pattern_and_range,
+    DBS_TIMING_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY,
+    DBS_TRANSFER_TYPE_PARALLEL, DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY,
+    POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY,
+    VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_PORT_TYPE,
+    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, expand_dbs_output_pins, split_pattern_and_range,
 )
 from step3_settings.settings_validator import (
     validate_constants, validate_output_path, validate_pin_settings,
@@ -158,14 +177,20 @@ _DBS_CHECK_INFO = (
     "Run this check BEFORE Validate. The pins recognized by the wildcard change whenever "
     "the Port List file changes, so this list must be rebuilt from the current Port List "
     "first. Validate stays locked until then.\n\n"
-    "Bits / Related Pin / Related Bits are read from the Port List and cannot be edited - "
-    "Related Pin is always the current Port List's 'Related Pin' column value for that DBS "
-    "output pin.\n\n"
-    "Split into (bits) is the only thing you set: how many bits each group uses when this "
-    "DBS output pin is written as multiple pin() ranges in block5 (Bits must divide evenly "
-    "by it - that quotient is the number of groups). Related Pin's own Bits is then divided "
-    "by that same quotient automatically to get its related_bus_pins bit count per group - "
-    "if that does not divide evenly, Validate will reject it."
+    "Related Pin is read from the Port List and cannot be edited - it is always the "
+    "current Port List's 'Related Pin' column value for that DBS output pin.\n\n"
+    "Choose a Data Transfer Type below to control how each pin is shown and written."
+)
+
+_DBS_TRANSFER_TYPE_INFO = (
+    "Parallel (DTBUS): set a Bit Depth per pin - this DBS output pin's total Bits must "
+    "divide evenly by it (that quotient is the cluster count). block5 writes that many "
+    "pin() ranges in the bus(), each with its own related_bus_pins range. Related Pin's "
+    "Bit Depth per cluster is derived automatically (Related Pin's Bits / cluster count) "
+    "- if that does not divide evenly, Validate will reject it.\n\n"
+    "Serial (ADBUS, default): the cluster count is always 1 - the same single-block "
+    "behavior as before this feature existed. Nothing else to set; only Related Pin is "
+    "shown."
 )
 
 _DBS_TIMING_INFO = (
@@ -224,9 +249,11 @@ class SettingsView(QWidget):
         # "Check DBS Output Pins"를 눌러 현재 Port List로 pin을 펼친 상태인지 여부.
         # False인 동안에는 Validate 버튼이 잠겨 있다.
         self._dbs_check_done = False
-        # 2026-08 추가: Check로 채운 표의 각 행(pin_name/dbs_bits/related_pin/
-        # related_bits) - Related Pin/Bits는 표에서 편집할 수 없으므로 이 값이 그
-        # 원본(source of truth)이고, 표의 Split into (bits) 칸만 사용자가 고친다.
+        # 2026-08 추가: Check로 채운 pin마다의 원본 데이터(pin_name/dbs_bits/
+        # related_pin/related_bits/default_split) + 현재 그려진 위젯 참조
+        # (split_edit/result_label, Serial이면 둘 다 None). Related Pin/Bits는
+        # 편집할 수 없으므로 이 값이 그 원본(source of truth)이고, Parallel일 때만
+        # split_edit(Bit Depth) 칸을 사용자가 고친다.
         self._dbs_row_info: list[dict] = []
         # 2) Validate를 통과했는지 여부. Generate 버튼은 이 값과 Output Path가 실제로
         # 존재하는 폴더인지에 따라 열린다(_update_generate_button_state). Output Path
@@ -391,6 +418,35 @@ class SettingsView(QWidget):
         self.dbs_check_status.setWordWrap(True)
         check_row.addWidget(self.dbs_check_status, stretch=1)
         group.addLayout(check_row)
+
+        # 2026-08 추가: Data Transfer Type(Parallel/Serial) - 인식된 pin 전체 공통
+        # 선택 하나. Check 때마다 다시 만들지 않는 영구 위젯이라(선택값이 유지됨),
+        # 전환되면 _on_dbs_transfer_type_changed가 Port List를 다시 읽지 않고
+        # _dbs_row_info를 그 자리에서 다시 그린다(모듈 docstring 참고).
+        self.dbs_transfer_type_row = QWidget()
+        self.dbs_transfer_type_row.setObjectName("transparentRow")
+        self.dbs_transfer_type_row.setVisible(False)
+        transfer_type_layout = QHBoxLayout(self.dbs_transfer_type_row)
+        transfer_type_layout.setContentsMargins(0, 0, 0, 0)
+        transfer_type_layout.setSpacing(10)
+        transfer_type_layout.addWidget(
+            build_label_with_info("Data Transfer Type", _DBS_TRANSFER_TYPE_INFO)
+        )
+        self.dbs_transfer_type_group = QButtonGroup(self)
+        self.dbs_transfer_type_parallel_radio = QRadioButton("Parallel (DTBUS)")
+        self.dbs_transfer_type_serial_radio = QRadioButton("Serial (ADBUS)")
+        self.dbs_transfer_type_group.addButton(self.dbs_transfer_type_parallel_radio)
+        self.dbs_transfer_type_group.addButton(self.dbs_transfer_type_serial_radio)
+        saved_transfer_type = pins.get(DBS_TRANSFER_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT)
+        if saved_transfer_type == DBS_TRANSFER_TYPE_PARALLEL:
+            self.dbs_transfer_type_parallel_radio.setChecked(True)
+        else:
+            self.dbs_transfer_type_serial_radio.setChecked(True)
+        self.dbs_transfer_type_parallel_radio.toggled.connect(self._on_dbs_transfer_type_changed)
+        transfer_type_layout.addWidget(self.dbs_transfer_type_parallel_radio)
+        transfer_type_layout.addWidget(self.dbs_transfer_type_serial_radio)
+        transfer_type_layout.addStretch()
+        group.addWidget(self.dbs_transfer_type_row)
 
         # 2026-08 2차 변경: 인식되는 DBS output pin은 보통 1~2개뿐이라 표/카드/스크롤로
         # 감쌀 이유가 없다 - 화면의 다른 입력들과 같은 QFormLayout 흐름으로 그냥
@@ -653,6 +709,8 @@ class SettingsView(QWidget):
         if hasattr(self, "dbs_pins_container"):
             self._clear_dbs_pin_sections()
             self.dbs_pins_container.setVisible(False)
+        if hasattr(self, "dbs_transfer_type_row"):
+            self.dbs_transfer_type_row.setVisible(False)
         if hasattr(self, "dbs_check_status"):
             self.dbs_check_status.setStyleSheet(f"color: {MUTED_TEXT_COLOR}; font-size: 11px;")
             self.dbs_check_status.setText("Not checked yet - Validate is locked.")
@@ -697,8 +755,7 @@ class SettingsView(QWidget):
         self.dbs_check_status.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 11px;")
         self.dbs_check_status.setText(
             f"✓ {len(recognized)} DBS output pin(s) recognized. Related Pin is fixed from "
-            "the Port List - set 'Split into (bits)' below (Related Pin's bit count per "
-            "group is derived automatically), then Validate."
+            "the Port List. Choose a Data Transfer Type below, then Validate."
         )
         self.validate_btn.setEnabled(True)
         self.validate_btn.setToolTip("")
@@ -718,16 +775,24 @@ class SettingsView(QWidget):
         line.setStyleSheet(f"color: {BORDER_COLOR};")
         return line
 
+    def _current_transfer_type(self) -> str:
+        if self.dbs_transfer_type_parallel_radio.isChecked():
+            return DBS_TRANSFER_TYPE_PARALLEL
+        return DBS_TRANSFER_TYPE_SERIAL
+
+    def _on_dbs_transfer_type_changed(self, _checked: bool = False) -> None:
+        """
+        라디오가 바뀌면(Check가 이미 끝난 상태에서만 의미 있음) Port List를 다시
+        읽지 않고, 이미 읽어 둔 _dbs_row_info로 화면만 다시 그린다.
+        """
+        if self._dbs_check_done:
+            self._render_dbs_pin_sections()
+
     def _rebuild_dbs_pin_sections(self, recognized: list[str]) -> None:
         """
-        인식된 pin마다 한 섹션씩 만든다(2026-08 2차 변경 - 표/카드 대신 이 화면의
-        다른 입력들과 같은 QFormLayout 흐름, 모듈 docstring "DBS output pin 표시"
-        절 참고). DBS Output Pin / Bits / Related Pin / Related Bits는 전부 Port
-        List에서 읽어와 **고정**된다(수정 불가). 사용자가 실제로 입력하는 건 "Split
-        into (bits)" 한 칸뿐이고, 그 바로 아래 문구가 몇 그룹이 나오고 Related Pin이
-        그룹당 몇 bit를 쓰게 되는지를 즉시 보여준다(_update_dbs_row_result). 인식된
-        pin이 보통 1~2개뿐이라 pin이 많을 때를 위한 스크롤/높이 제한은 두지 않는다 -
-        pin 사이에는 구분선만 넣는다.
+        Port List에서 인식된 pin마다 값(Bits/Related Pin/Related Bits)을 다시 읽어
+        _dbs_row_info를 채우고 화면을 그린다. Bit Depth의 저장된 기본값도 여기서
+        함께 채워 둔다(Data Transfer Type을 바꿔도 다시 읽을 필요 없도록).
         """
         port_list_file = self.get_port_list_file()
         detailed_by_name = {
@@ -736,9 +801,8 @@ class SettingsView(QWidget):
         pin_bit_info = list_all_pin_bit_info(port_list_file)
         saved_split = self.settings["pins"].get(DBS_BIT_SPLIT_KEY) or {}
 
-        self._clear_dbs_pin_sections()
         self._dbs_row_info = []
-        for row, pin_name in enumerate(recognized):
+        for pin_name in recognized:
             detail = detailed_by_name.get(pin_name)
             dbs_bits = detail["bits"] if detail else None
             related_pin = (detail.get("related_pin") or "").strip() if detail else ""
@@ -746,59 +810,93 @@ class SettingsView(QWidget):
             related_info = pin_bit_info.get(related_base) if related_base else None
             related_bits = related_info["bits"] if related_info else None
 
-            can_split = dbs_bits is not None and dbs_bits > 1
             default_split = str(saved_split.get(pin_name, "")).strip()
             if not default_split:
-                # 기본값 = 전체 bit 수 그대로(=1 그룹) - Split을 안 건드리면 예전과
-                # 동일하게 pin() 하나만 쓰는 동작이 유지된다.
+                # 기본값 = 전체 bit 수 그대로(=1 cluster) - Bit Depth를 안 건드리면
+                # 예전과 동일하게 pin() 하나만 쓰는 동작이 유지된다.
                 default_split = str(dbs_bits) if dbs_bits else "1"
 
-            if row > 0:
-                self.dbs_pins_layout.insertWidget(self.dbs_pins_layout.count() - 1, self._build_separator())
-
-            section, split_edit, result_label = self._build_dbs_pin_section(
-                pin_name, dbs_bits, related_pin, related_bits, default_split, can_split,
-            )
-            self.dbs_pins_layout.insertWidget(self.dbs_pins_layout.count() - 1, section)
-
-            row_info = {
+            self._dbs_row_info.append({
                 "pin_name": pin_name, "dbs_bits": dbs_bits,
                 "related_pin": related_pin, "related_bits": related_bits,
-                "split_edit": split_edit, "result_label": result_label,
-            }
-            self._dbs_row_info.append(row_info)
-            split_edit.textChanged.connect(lambda _t, r=row: self._update_dbs_row_result(r))
+                "default_split": default_split,
+                "split_edit": None, "result_label": None,
+            })
+
+        self._render_dbs_pin_sections()
+        self.dbs_pins_container.setVisible(True)
+        self.dbs_transfer_type_row.setVisible(True)
+
+    def _render_dbs_pin_sections(self) -> None:
+        """
+        현재 Data Transfer Type(Parallel/Serial)에 맞춰 _dbs_row_info를 화면에
+        (다시) 그린다 - Port List는 다시 읽지 않는다. 인식된 pin이 보통 1~2개뿐이라
+        pin이 많을 때를 위한 스크롤/높이 제한은 두지 않는다 - pin 사이에는 구분선만
+        넣는다(모듈 docstring "DBS output pin 표시" / "Data Transfer Type" 절 참고).
+        """
+        self._clear_dbs_pin_sections()
+        transfer_type = self._current_transfer_type()
+
+        for index, info in enumerate(self._dbs_row_info):
+            if index > 0:
+                self.dbs_pins_layout.insertWidget(self.dbs_pins_layout.count() - 1, self._build_separator())
+
+            section, split_edit, result_label = self._build_dbs_pin_section(info, transfer_type)
+            self.dbs_pins_layout.insertWidget(self.dbs_pins_layout.count() - 1, section)
+            info["split_edit"] = split_edit
+            info["result_label"] = result_label
+            if split_edit is not None:
+                row = index
+                split_edit.textChanged.connect(lambda _t, r=row: self._update_dbs_row_result(r))
 
         for row in range(len(self._dbs_row_info)):
             self._update_dbs_row_result(row)
-        self.dbs_pins_container.setVisible(True)
 
     def _build_dbs_pin_section(
-        self, pin_name: str, dbs_bits: int | None, related_pin: str, related_bits: int | None,
-        default_split: str, can_split: bool,
-    ) -> tuple[QWidget, QLineEdit, QLabel]:
+        self, info: dict, transfer_type: str,
+    ) -> tuple[QWidget, QLineEdit | None, QLabel | None]:
         """
-        인식된 DBS output pin 하나: 굵은 제목 줄(이름 + Bits) 아래에 이 화면의 다른
-        입력들과 같은 QFormLayout 두 행("Related Pin"은 읽기 전용 텍스트, "Split
-        into (bits)"는 입력칸 + 그 바로 아래 계산 결과 문구). Split into (bits)를 뺀
-        나머지는 전부 시스템이 채워주는 값이므로 표/카드처럼 별도 박스로 감싸지 않는다.
+        인식된 DBS output pin 하나. Serial이면 굵은 이름 줄 + "Related Pin" 한 줄뿐
+        (이 기능이 생기기 전과 동일 - Bits도 보여주지 않는다). Parallel이면
+        이름+Bits, Related Pin+Bits, 그리고 "Bit Depth" 입력칸(그 바로 아래 cluster
+        개수/Related Pin Bit Depth 계산 결과 문구)까지 - Bit Depth를 뺀 나머지는
+        전부 시스템이 채워주는 값이므로 표/카드처럼 별도 박스로 감싸지 않는다.
         """
+        pin_name = info["pin_name"]
+        dbs_bits = info["dbs_bits"]
+        related_pin = info["related_pin"]
+        related_bits = info["related_bits"]
+
         section = QWidget()
         section.setObjectName("transparentRow")
         section_layout = QVBoxLayout(section)
         section_layout.setContentsMargins(0, 0, 0, 0)
         section_layout.setSpacing(4)
 
+        form = QFormLayout()
+        form.setSpacing(6)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+
+        if transfer_type == DBS_TRANSFER_TYPE_SERIAL:
+            name_label = QLabel(pin_name)
+            name_label.setStyleSheet(_DBS_PIN_NAME_STYLE)
+            name_label.setWordWrap(True)
+            section_layout.addWidget(name_label)
+
+            related_label = QLabel(related_pin or "(none - Port List Related Pin is empty)")
+            related_label.setStyleSheet(_DBS_RELATED_VALUE_STYLE)
+            related_label.setWordWrap(True)
+            form.addRow("Related Pin", related_label)
+
+            section_layout.addLayout(form)
+            return section, None, None
+
         bits_text = f"{dbs_bits} bit" if dbs_bits is not None else "? bit"
         name_label = QLabel(f"{pin_name}   ·   {bits_text}")
         name_label.setStyleSheet(_DBS_PIN_NAME_STYLE)
         name_label.setWordWrap(True)
         section_layout.addWidget(name_label)
-
-        form = QFormLayout()
-        form.setSpacing(6)
-        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
         related_bits_text = f"{related_bits} bit" if related_bits is not None else "? bit"
         related_label = QLabel(
@@ -814,7 +912,8 @@ class SettingsView(QWidget):
         split_layout = QVBoxLayout(split_container)
         split_layout.setContentsMargins(0, 0, 0, 0)
         split_layout.setSpacing(2)
-        split_edit = QLineEdit(default_split)
+        can_split = dbs_bits is not None and dbs_bits > 1
+        split_edit = QLineEdit(info["default_split"])
         split_edit.setMaximumWidth(120)
         split_edit.setEnabled(can_split)
         if not can_split:
@@ -824,21 +923,25 @@ class SettingsView(QWidget):
         result_label.setStyleSheet("font-size: 11px;")
         split_layout.addWidget(split_edit)
         split_layout.addWidget(result_label)
-        form.addRow("Split into (bits)", split_container)
+        form.addRow("Bit Depth", split_container)
 
         section_layout.addLayout(form)
         return section, split_edit, result_label
 
     def _update_dbs_row_result(self, row: int) -> None:
         """
-        카드의 Result 줄을 이 행의 현재 Split into (bits) 값으로 다시 계산해 보여준다
+        Bit Depth 바로 아래 문구를 이 행의 현재 값으로 다시 계산해 보여준다
         (settings_validator._validate_dbs_related_pins와 같은 규칙 - 여기서는 즉시
-        피드백용이고, 최종 확정 검사는 여전히 Validate가 한다).
+        피드백용이고, 최종 확정 검사는 여전히 Validate가 한다). Serial이면 split_edit
+        자체가 없으므로 아무것도 하지 않는다.
         """
         if row >= len(self._dbs_row_info):
             return
         info = self._dbs_row_info[row]
-        result_label: QLabel = info["result_label"]
+        split_edit = info["split_edit"]
+        result_label = info["result_label"]
+        if split_edit is None or result_label is None:
+            return
 
         def _set(text: str, color: str) -> None:
             result_label.setStyleSheet(f"color: {color}; font-size: 11px;")
@@ -859,7 +962,7 @@ class SettingsView(QWidget):
             _set("Related Pin Bits is unknown.", ERROR_COLOR)
             return
 
-        split_text = info["split_edit"].text().strip()
+        split_text = split_edit.text().strip()
         try:
             split_bits = int(split_text)
         except ValueError:
@@ -872,16 +975,19 @@ class SettingsView(QWidget):
         if dbs_bits % split_bits != 0:
             _set(f"{dbs_bits} bits do not divide evenly by {split_bits}.", ERROR_COLOR)
             return
-        group_count = dbs_bits // split_bits
-        if related_bits % group_count != 0:
+        cluster_count = dbs_bits // split_bits
+        if related_bits % cluster_count != 0:
             _set(
                 f"Related Pin's {related_bits} bits do not divide evenly across "
-                f"{group_count} group(s).",
+                f"{cluster_count} cluster(s).",
                 ERROR_COLOR,
             )
             return
-        related_per_group = related_bits // group_count
-        _set(f"✓ {group_count} group(s) - Related Pin uses {related_per_group} bit(s) each.", SUCCESS_COLOR)
+        related_bit_depth = related_bits // cluster_count
+        _set(
+            f"✓ {cluster_count} cluster(s) · Related Pin Bit Depth: {related_bit_depth} bit(s).",
+            SUCCESS_COLOR,
+        )
 
     def _collect_dbs_related_pins(self) -> dict:
         """
@@ -896,11 +1002,23 @@ class SettingsView(QWidget):
         return {info["pin_name"]: info["related_pin"] for info in self._dbs_row_info}
 
     def _collect_dbs_bit_split(self) -> dict:
-        """Check가 끝난 상태면 각 카드의 Split into (bits) 칸에서, 아니면 저장값을 그대로."""
+        """
+        Check가 끝난 상태면 저장값에 각 pin의 현재 Bit Depth 칸 값을 덮어써서
+        돌려준다. Serial일 때는 Bit Depth 입력칸 자체가 없으므로(split_edit이 None)
+        그 pin은 건드리지 않고 저장값을 그대로 둔다 - Parallel로 다시 돌아왔을 때
+        예전에 입력했던 값이 날아가지 않도록.
+        """
+        saved = self.settings["pins"].get(DBS_BIT_SPLIT_KEY) or {}
         if not self._dbs_check_done:
-            saved = self.settings["pins"].get(DBS_BIT_SPLIT_KEY) or {}
             return dict(saved)
-        return {info["pin_name"]: info["split_edit"].text().strip() for info in self._dbs_row_info}
+        result = dict(saved)
+        for info in self._dbs_row_info:
+            if info["split_edit"] is not None:
+                result[info["pin_name"]] = info["split_edit"].text().strip()
+        return result
+
+    def _collect_dbs_transfer_type(self) -> str:
+        return self._current_transfer_type()
 
     # ------------------------------------------------------------------
     # 값 수집 / 저장
@@ -931,6 +1049,7 @@ class SettingsView(QWidget):
             DBS_TIMING_TYPE_KEY: self.dbs_timing_type_edit.text().strip(),
             DBS_RELATED_PINS_KEY: self._collect_dbs_related_pins(),
             DBS_BIT_SPLIT_KEY: self._collect_dbs_bit_split(),
+            DBS_TRANSFER_TYPE_KEY: self._collect_dbs_transfer_type(),
         }
 
     def _collect_all(self) -> dict:

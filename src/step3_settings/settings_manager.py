@@ -38,11 +38,12 @@ from step3_settings.constants_field_defs import (
 )
 from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_DEFAULT,
-    DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_DEFAULT, DBS_TIMING_TYPE_KEY, ENABLE_SIGNAL_KEY,
-    POWER_DOWN_FALL_POWER_DEFAULT, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY,
-    POWER_DOWN_RISE_POWER_DEFAULT, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_DEFAULT,
-    POWER_DOWN_WHEN_KEY, VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY,
-    VIRTUAL_POWER_SWITCH_FUNCTION_KEY,
+    DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_DEFAULT, DBS_TIMING_TYPE_KEY,
+    DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY, DBS_TRANSFER_TYPE_PARALLEL,
+    DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY, POWER_DOWN_FALL_POWER_DEFAULT,
+    POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_DEFAULT,
+    POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_DEFAULT, POWER_DOWN_WHEN_KEY,
+    VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_SWITCH_FUNCTION_KEY,
 )
 
 SETTINGS_FILE = CONFIG_DIR / "step3_settings.json"
@@ -174,6 +175,7 @@ def _default_pins() -> dict:
         DBS_TIMING_TYPE_KEY: DBS_TIMING_TYPE_DEFAULT,
         DBS_RELATED_PINS_KEY: {},
         DBS_BIT_SPLIT_KEY: {},
+        DBS_TRANSFER_TYPE_KEY: DBS_TRANSFER_TYPE_DEFAULT,
     }
 
 
@@ -203,6 +205,11 @@ def load_settings() -> dict:
                 merged_pins[DBS_RELATED_PINS_KEY] = {}
             if not isinstance(merged_pins.get(DBS_BIT_SPLIT_KEY), dict):
                 merged_pins[DBS_BIT_SPLIT_KEY] = {}
+            # dbs_data_transfer_type도 두 값 중 하나여야 함 - 아니면 기본값(Serial).
+            if merged_pins.get(DBS_TRANSFER_TYPE_KEY) not in (
+                DBS_TRANSFER_TYPE_PARALLEL, DBS_TRANSFER_TYPE_SERIAL,
+            ):
+                merged_pins[DBS_TRANSFER_TYPE_KEY] = DBS_TRANSFER_TYPE_DEFAULT
             output_path = data.get("output_path", defaults["output_path"])
             return {
                 "scalars": merged_scalars,
