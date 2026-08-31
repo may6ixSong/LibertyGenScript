@@ -42,6 +42,19 @@ condition을 직접 추가/삭제하고 이름도 정하는 형태로 바뀜, st
   지지 않으면 Validate가 막는다(settings_validator._validate_dbs_related_pins,
   block5_writer._dbs_bit_split_groups).
 
+2026-08 변경 - DBS output pin 표시: 표(QTableWidget) -> 카드 -> 일반 폼:
+  컬럼이 6개(DBS Output Pin/Bits/Related Pin/Related Bits/Split into (bits)/Result)로
+  늘어나면서 표 칸이 너무 좁아 값이 잘려 보인다는 피드백을 받아, 1차로 pin마다
+  entryCard 스타일 박스 목록으로 바꿨다. 그런데 박스+스크롤 구성도 여전히 "표 같다"는
+  피드백을 다시 받았고, 실제로 인식되는 DBS output pin은 보통 1~2개뿐이라 스크롤이나
+  박스로 감쌀 이유가 없었다. 그래서 2차로 **박스/스크롤을 걷어내고, 화면의 다른
+  입력들과 똑같은 `QFormLayout` 흐름**으로 더 단순화했다(`_build_dbs_pin_section`):
+  pin마다 굵은 제목 줄(이름 + Bits) 하나, 그 아래 `QFormLayout` 두 행("Related Pin"은
+  읽기 전용 텍스트, "Split into (bits)"는 입력칸 + 그 바로 아래 계산 결과 문구) -
+  Split into (bits)를 뺀 나머지는 전부 시스템이 채워주는 값이므로 굳이 표/카드처럼
+  별도 시각 단위로 감싸지 않고, 이 화면의 timing_sense/timing_type 같은 다른 입력
+  행과 같은 방식으로 보여준다. pin이 둘 이상이면 사이에 얇은 구분선만 넣는다.
+
 2026-08 변경 - Output Path는 더 이상 Validate에 종속되지 않음:
   예전에는 Check(1) + Validate(2)를 통과해야만 Output Path 입력칸/Browse가 열렸다.
   이제 Output Path는 그 순서와 무관하게 언제든 입력·수정할 수 있고, Validate를 누르면
@@ -56,11 +69,9 @@ from pathlib import Path
 from typing import Callable
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
-    QAbstractItemView, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
+    QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from step1_setup.port_list_reader import (
@@ -82,7 +93,7 @@ from step3_settings.settings_validator import (
     validate_constants, validate_output_path, validate_pin_settings,
 )
 from ui.theme import (
-    ERROR_COLOR, MUTED_TEXT_COLOR, PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR,
+    BORDER_COLOR, ERROR_COLOR, MUTED_TEXT_COLOR, PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR,
     WARNING_BG, WARNING_BORDER, WARNING_TEXT,
 )
 from ui.ui_common import (
@@ -91,16 +102,11 @@ from ui.ui_common import (
 )
 
 _HINT_STYLE = f"color: {MUTED_TEXT_COLOR}; font-size: 11px;"
-_RELATED_PIN_TABLE_MAX_HEIGHT = 220
-# 2026-08 추가: DBS Bits / Related Bits / Split into (bits) / Result 컬럼.
-# DBS Output Pin과 Related Pin 컬럼은 Port List 값으로 고정되어 읽기 전용이고,
-# Split into (bits)만 사용자가 입력한다 - 나머지는 그 결과를 보여주는 참고용.
-_RELATED_PIN_TABLE_HEADERS = [
-    "DBS Output Pin (from Port List)", "Bits", "Related Pin (from Port List)",
-    "Related Bits", "Split into (bits)", "Result",
-]
-_DBS_SPLIT_COLUMN = 4
-_DBS_RESULT_COLUMN = 5
+# 2026-08 2차 변경 - 카드(entryCard 박스) 목록도 "표처럼 보인다"는 피드백을 받아,
+# 인식된 pin이 보통 1~2개뿐이라는 점을 반영해 박스/스크롤 없이 나머지 입력들과 같은
+# QFormLayout 흐름으로 더 단순화했다(아래 "DBS output pin 표시" 절 참고).
+_DBS_PIN_NAME_STYLE = f"color: {TEXT_COLOR}; font-size: 13px; font-weight: 700;"
+_DBS_RELATED_VALUE_STYLE = f"color: {TEXT_COLOR}; font-size: 12px;"
 
 # 2026-08: Pin Settings의 상위 pin 3개(DBS output pin / Virtual Power / Power down
 # control signal)는 "여기가 상위단"이라는 게 한눈에 보이도록 아래 연계 필드보다 크고
@@ -386,18 +392,17 @@ class SettingsView(QWidget):
         check_row.addWidget(self.dbs_check_status, stretch=1)
         group.addLayout(check_row)
 
-        self.dbs_related_table = QTableWidget(0, len(_RELATED_PIN_TABLE_HEADERS))
-        self.dbs_related_table.setHorizontalHeaderLabels(_RELATED_PIN_TABLE_HEADERS)
-        self.dbs_related_table.verticalHeader().setVisible(False)
-        self.dbs_related_table.verticalHeader().setDefaultSectionSize(26)
-        header = self.dbs_related_table.horizontalHeader()
-        for col in range(len(_RELATED_PIN_TABLE_HEADERS) - 1):
-            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(len(_RELATED_PIN_TABLE_HEADERS) - 1, QHeaderView.Stretch)
-        self.dbs_related_table.setMaximumHeight(_RELATED_PIN_TABLE_MAX_HEIGHT)
-        self.dbs_related_table.setVisible(False)
-        self.dbs_related_table.itemChanged.connect(self._on_dbs_table_item_changed)
-        group.addWidget(self.dbs_related_table)
+        # 2026-08 2차 변경: 인식되는 DBS output pin은 보통 1~2개뿐이라 표/카드/스크롤로
+        # 감쌀 이유가 없다 - 화면의 다른 입력들과 같은 QFormLayout 흐름으로 그냥
+        # 이어서 보여준다(모듈 docstring "DBS output pin 표시" 절 참고).
+        self.dbs_pins_container = QWidget()
+        self.dbs_pins_container.setObjectName("transparentRow")
+        self.dbs_pins_container.setVisible(False)
+        self.dbs_pins_layout = QVBoxLayout(self.dbs_pins_container)
+        self.dbs_pins_layout.setContentsMargins(0, 0, 0, 0)
+        self.dbs_pins_layout.setSpacing(8)
+        self.dbs_pins_layout.addStretch()
+        group.addWidget(self.dbs_pins_container)
 
         inner_form = self._add_form(group)
         self.dbs_timing_sense_edit = QLineEdit(str(pins.get(DBS_TIMING_SENSE_KEY, "")))
@@ -645,11 +650,9 @@ class SettingsView(QWidget):
         self._dbs_check_done = False
         self._settings_validated = False
         self._dbs_row_info = []
-        if hasattr(self, "dbs_related_table"):
-            self.dbs_related_table.blockSignals(True)
-            self.dbs_related_table.setRowCount(0)
-            self.dbs_related_table.setVisible(False)
-            self.dbs_related_table.blockSignals(False)
+        if hasattr(self, "dbs_pins_container"):
+            self._clear_dbs_pin_sections()
+            self.dbs_pins_container.setVisible(False)
         if hasattr(self, "dbs_check_status"):
             self.dbs_check_status.setStyleSheet(f"color: {MUTED_TEXT_COLOR}; font-size: 11px;")
             self.dbs_check_status.setText("Not checked yet - Validate is locked.")
@@ -689,24 +692,42 @@ class SettingsView(QWidget):
             )
             return
 
-        self._fill_related_pin_table(recognized)
+        self._rebuild_dbs_pin_sections(recognized)
         self._dbs_check_done = True
         self.dbs_check_status.setStyleSheet(f"color: {SUCCESS_COLOR}; font-size: 11px;")
         self.dbs_check_status.setText(
             f"✓ {len(recognized)} DBS output pin(s) recognized. Related Pin is fixed from "
-            "the Port List - set 'Split into (bits)' for each row (Related Pin's bit count "
-            "per group is derived automatically), then Validate."
+            "the Port List - set 'Split into (bits)' below (Related Pin's bit count per "
+            "group is derived automatically), then Validate."
         )
         self.validate_btn.setEnabled(True)
         self.validate_btn.setToolTip("")
 
-    def _fill_related_pin_table(self, recognized: list[str]) -> None:
+    def _clear_dbs_pin_sections(self) -> None:
+        while self.dbs_pins_layout.count():
+            item = self.dbs_pins_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.dbs_pins_layout.addStretch()
+
+    @staticmethod
+    def _build_separator() -> QFrame:
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet(f"color: {BORDER_COLOR};")
+        return line
+
+    def _rebuild_dbs_pin_sections(self, recognized: list[str]) -> None:
         """
-        인식된 pin마다 한 행씩 채운다. DBS Output Pin / Bits / Related Pin / Related
-        Bits는 전부 Port List에서 읽어와 **고정**된다(2026-08 변경 - 예전엔 Related
-        Pin을 표에서 직접 고칠 수 있었다). 사용자가 실제로 입력하는 건 "Split into
-        (bits)" 한 칸뿐이고, Result 칸은 그 값으로 몇 그룹이 나오고 Related Pin이
-        그룹당 몇 bit를 쓰게 되는지를 즉시 보여준다(_update_dbs_row_result).
+        인식된 pin마다 한 섹션씩 만든다(2026-08 2차 변경 - 표/카드 대신 이 화면의
+        다른 입력들과 같은 QFormLayout 흐름, 모듈 docstring "DBS output pin 표시"
+        절 참고). DBS Output Pin / Bits / Related Pin / Related Bits는 전부 Port
+        List에서 읽어와 **고정**된다(수정 불가). 사용자가 실제로 입력하는 건 "Split
+        into (bits)" 한 칸뿐이고, 그 바로 아래 문구가 몇 그룹이 나오고 Related Pin이
+        그룹당 몇 bit를 쓰게 되는지를 즉시 보여준다(_update_dbs_row_result). 인식된
+        pin이 보통 1~2개뿐이라 pin이 많을 때를 위한 스크롤/높이 제한은 두지 않는다 -
+        pin 사이에는 구분선만 넣는다.
         """
         port_list_file = self.get_port_list_file()
         detailed_by_name = {
@@ -715,10 +736,8 @@ class SettingsView(QWidget):
         pin_bit_info = list_all_pin_bit_info(port_list_file)
         saved_split = self.settings["pins"].get(DBS_BIT_SPLIT_KEY) or {}
 
+        self._clear_dbs_pin_sections()
         self._dbs_row_info = []
-        table = self.dbs_related_table
-        table.blockSignals(True)
-        table.setRowCount(len(recognized))
         for row, pin_name in enumerate(recognized):
             detail = detailed_by_name.get(pin_name)
             dbs_bits = detail["bits"] if detail else None
@@ -727,68 +746,103 @@ class SettingsView(QWidget):
             related_info = pin_bit_info.get(related_base) if related_base else None
             related_bits = related_info["bits"] if related_info else None
 
-            self._dbs_row_info.append({
-                "pin_name": pin_name, "dbs_bits": dbs_bits,
-                "related_pin": related_pin, "related_bits": related_bits,
-            })
-
-            name_item = QTableWidgetItem(pin_name)
-            name_item.setFlags(Qt.ItemIsEnabled)
-            table.setItem(row, 0, name_item)
-
-            bits_item = QTableWidgetItem(str(dbs_bits) if dbs_bits is not None else "?")
-            bits_item.setFlags(Qt.ItemIsEnabled)
-            table.setItem(row, 1, bits_item)
-
-            related_item = QTableWidgetItem(related_pin or "(none)")
-            related_item.setFlags(Qt.ItemIsEnabled)
-            table.setItem(row, 2, related_item)
-
-            related_bits_item = QTableWidgetItem(str(related_bits) if related_bits is not None else "?")
-            related_bits_item.setFlags(Qt.ItemIsEnabled)
-            table.setItem(row, 3, related_bits_item)
-
             can_split = dbs_bits is not None and dbs_bits > 1
             default_split = str(saved_split.get(pin_name, "")).strip()
             if not default_split:
                 # 기본값 = 전체 bit 수 그대로(=1 그룹) - Split을 안 건드리면 예전과
                 # 동일하게 pin() 하나만 쓰는 동작이 유지된다.
                 default_split = str(dbs_bits) if dbs_bits else "1"
-            split_item = QTableWidgetItem(default_split)
-            if not can_split:
-                split_item.setFlags(Qt.ItemIsEnabled)  # 1비트 pin은 쪼갤 수 없음
-            table.setItem(row, _DBS_SPLIT_COLUMN, split_item)
 
-            result_item = QTableWidgetItem("")
-            result_item.setFlags(Qt.ItemIsEnabled)
-            table.setItem(row, _DBS_RESULT_COLUMN, result_item)
+            if row > 0:
+                self.dbs_pins_layout.insertWidget(self.dbs_pins_layout.count() - 1, self._build_separator())
 
-        table.blockSignals(False)
-        for row in range(table.rowCount()):
+            section, split_edit, result_label = self._build_dbs_pin_section(
+                pin_name, dbs_bits, related_pin, related_bits, default_split, can_split,
+            )
+            self.dbs_pins_layout.insertWidget(self.dbs_pins_layout.count() - 1, section)
+
+            row_info = {
+                "pin_name": pin_name, "dbs_bits": dbs_bits,
+                "related_pin": related_pin, "related_bits": related_bits,
+                "split_edit": split_edit, "result_label": result_label,
+            }
+            self._dbs_row_info.append(row_info)
+            split_edit.textChanged.connect(lambda _t, r=row: self._update_dbs_row_result(r))
+
+        for row in range(len(self._dbs_row_info)):
             self._update_dbs_row_result(row)
-        table.setVisible(True)
-        table.setEditTriggers(QAbstractItemView.AllEditTriggers)
+        self.dbs_pins_container.setVisible(True)
 
-    def _on_dbs_table_item_changed(self, item: QTableWidgetItem) -> None:
-        if item.column() == _DBS_SPLIT_COLUMN:
-            self._update_dbs_row_result(item.row())
+    def _build_dbs_pin_section(
+        self, pin_name: str, dbs_bits: int | None, related_pin: str, related_bits: int | None,
+        default_split: str, can_split: bool,
+    ) -> tuple[QWidget, QLineEdit, QLabel]:
+        """
+        인식된 DBS output pin 하나: 굵은 제목 줄(이름 + Bits) 아래에 이 화면의 다른
+        입력들과 같은 QFormLayout 두 행("Related Pin"은 읽기 전용 텍스트, "Split
+        into (bits)"는 입력칸 + 그 바로 아래 계산 결과 문구). Split into (bits)를 뺀
+        나머지는 전부 시스템이 채워주는 값이므로 표/카드처럼 별도 박스로 감싸지 않는다.
+        """
+        section = QWidget()
+        section.setObjectName("transparentRow")
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(4)
+
+        bits_text = f"{dbs_bits} bit" if dbs_bits is not None else "? bit"
+        name_label = QLabel(f"{pin_name}   ·   {bits_text}")
+        name_label.setStyleSheet(_DBS_PIN_NAME_STYLE)
+        name_label.setWordWrap(True)
+        section_layout.addWidget(name_label)
+
+        form = QFormLayout()
+        form.setSpacing(6)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+
+        related_bits_text = f"{related_bits} bit" if related_bits is not None else "? bit"
+        related_label = QLabel(
+            f"{related_pin}   ·   {related_bits_text}" if related_pin
+            else "(none - Port List Related Pin is empty)"
+        )
+        related_label.setStyleSheet(_DBS_RELATED_VALUE_STYLE)
+        related_label.setWordWrap(True)
+        form.addRow("Related Pin", related_label)
+
+        split_container = QWidget()
+        split_container.setObjectName("transparentRow")
+        split_layout = QVBoxLayout(split_container)
+        split_layout.setContentsMargins(0, 0, 0, 0)
+        split_layout.setSpacing(2)
+        split_edit = QLineEdit(default_split)
+        split_edit.setMaximumWidth(120)
+        split_edit.setEnabled(can_split)
+        if not can_split:
+            split_edit.setToolTip("1 bit - cannot be split.")
+        result_label = QLabel("")
+        result_label.setWordWrap(True)
+        result_label.setStyleSheet("font-size: 11px;")
+        split_layout.addWidget(split_edit)
+        split_layout.addWidget(result_label)
+        form.addRow("Split into (bits)", split_container)
+
+        section_layout.addLayout(form)
+        return section, split_edit, result_label
 
     def _update_dbs_row_result(self, row: int) -> None:
         """
-        Result 칸을 이 행의 현재 Split into (bits) 값으로 다시 계산해 보여준다
+        카드의 Result 줄을 이 행의 현재 Split into (bits) 값으로 다시 계산해 보여준다
         (settings_validator._validate_dbs_related_pins와 같은 규칙 - 여기서는 즉시
         피드백용이고, 최종 확정 검사는 여전히 Validate가 한다).
         """
         if row >= len(self._dbs_row_info):
             return
         info = self._dbs_row_info[row]
-        result_item = self.dbs_related_table.item(row, _DBS_RESULT_COLUMN)
-        if result_item is None:
-            return
+        result_label: QLabel = info["result_label"]
 
         def _set(text: str, color: str) -> None:
-            result_item.setText(text)
-            result_item.setForeground(QColor(color))
+            result_label.setStyleSheet(f"color: {color}; font-size: 11px;")
+            result_label.setText(text)
 
         dbs_bits = info["dbs_bits"]
         related_bits = info["related_bits"]
@@ -805,8 +859,7 @@ class SettingsView(QWidget):
             _set("Related Pin Bits is unknown.", ERROR_COLOR)
             return
 
-        split_item = self.dbs_related_table.item(row, _DBS_SPLIT_COLUMN)
-        split_text = split_item.text().strip() if split_item else ""
+        split_text = info["split_edit"].text().strip()
         try:
             split_bits = int(split_text)
         except ValueError:
@@ -834,8 +887,8 @@ class SettingsView(QWidget):
         """
         Check가 끝난 상태면 이번 Check로 고정된 Port List 값을 그대로 쓰고, 아직
         Check 전이면 저장돼 있던 값을 유지한다(화면을 다시 열었다는 이유만으로 이미
-        저장된 값이 날아가지 않도록). Related Pin은 더 이상 표에서 편집할 수 없으므로
-        표시용 QTableWidgetItem이 아니라 _dbs_row_info(원본)에서 읽는다.
+        저장된 값이 날아가지 않도록). Related Pin은 더 이상 편집할 수 없으므로 카드가
+        아니라 _dbs_row_info(원본)에서 읽는다.
         """
         if not self._dbs_check_done:
             saved = self.settings["pins"].get(DBS_RELATED_PINS_KEY) or {}
@@ -843,16 +896,11 @@ class SettingsView(QWidget):
         return {info["pin_name"]: info["related_pin"] for info in self._dbs_row_info}
 
     def _collect_dbs_bit_split(self) -> dict:
-        """Check가 끝난 상태면 표의 Split into (bits) 칸에서, 아니면 저장값을 그대로."""
+        """Check가 끝난 상태면 각 카드의 Split into (bits) 칸에서, 아니면 저장값을 그대로."""
         if not self._dbs_check_done:
             saved = self.settings["pins"].get(DBS_BIT_SPLIT_KEY) or {}
             return dict(saved)
-
-        result: dict[str, str] = {}
-        for row, info in enumerate(self._dbs_row_info):
-            item = self.dbs_related_table.item(row, _DBS_SPLIT_COLUMN)
-            result[info["pin_name"]] = item.text().strip() if item else ""
-        return result
+        return {info["pin_name"]: info["split_edit"].text().strip() for info in self._dbs_row_info}
 
     # ------------------------------------------------------------------
     # 값 수집 / 저장
