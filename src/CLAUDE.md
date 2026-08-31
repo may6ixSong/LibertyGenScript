@@ -328,14 +328,13 @@ forwarding 환경에서 보장할 수 없어서,
    다음부터 `voltage_map` 직전까지의 구간에서 **정해진 접두어로 시작하는 줄만** 가져와
    PDK에 있던 순서 그대로 붙인다 (**그 외 줄은 date/revision/comment를 포함해 전부
    버린다** - 2026-08 변경. 예전에는 이 구간 전체를 그대로 복사했는데, PDK/DK 파일마다
-   이 구간에 무엇이 있는지가 제각각이라("technology", "delay_model", 벤더별 커스텀
-   스칼라 attribute 등) 우리가 쓸 필요 없는/모르는 내용까지 그대로 딸려 들어오는
-   문제가 있었다. 처음엔 `define`/`define_group`만 남기도록 좁혔다가, 그것만으로는
-   부족하다는 실사용 확인을 거쳐 아래 접두어들로 다시 넓혔다 -
-   `pdk_stream_reader.read_pdk_library_sections()`의 `_BODY_KEEP_PREFIXES`,
-   `_should_keep_body_line()`):
-     - `define`(`define_group` 포함) / `default` / `input_` / `output_` / `slew_` /
-       `nom_`
+   이 구간에 무엇이 있는지가 제각각이라("technology", 벤더별 커스텀 스칼라 attribute
+   등) 우리가 쓸 필요 없는/모르는 내용까지 그대로 딸려 들어오는 문제가 있었다. 처음엔
+   `define`/`define_group`만 남기도록 좁혔다가, 그것만으로는 부족하다는 실사용 확인을
+   거쳐 아래 접두어들로 다시 넓혔다 - `pdk_stream_reader.read_pdk_library_sections()`의
+   `_BODY_KEEP_PREFIXES`, `_should_keep_body_line()`):
+     - `define`(`define_group` 포함) / `delay_model` / `default` / `input_` /
+       `output_` / `slew_` / `nom_`
      - `voltage_unit` / `current_unit` / `leakage_power_unit` /
        `capacitive_load_unit` / `library_features` / `time_unit` /
        `pulling_resistance_unit` / `in_place_swap_mode`

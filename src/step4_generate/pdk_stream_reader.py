@@ -22,8 +22,8 @@ lu_table_template(index_1/index_2)을 한 번에 뽑았다. 이제 lu_table_temp
      `define_group`만 남기도록 좁혔었는데, 그것만으로는 부족하다는 실사용 확인을 거쳐
      아래 `_BODY_KEEP_PREFIXES`로 다시 넓혔다). 가져오는 기준(사용자 지정, 전부 첫
      토큰이 그 접두어로 **시작**하면 포함 - 정확히 일치가 아님):
-       - `define`(`define_group` 포함) / `default` / `input_` / `output_` / `slew_` /
-         `nom_`
+       - `define`(`define_group` 포함) / `delay_model` / `default` / `input_` /
+         `output_` / `slew_` / `nom_`
        - `voltage_unit` / `current_unit` / `leakage_power_unit` /
          `capacitive_load_unit` / `library_features` / `time_unit` /
          `pulling_resistance_unit` / `in_place_swap_mode`
@@ -53,6 +53,7 @@ import re
 # (date/revision/comment 포함, PDK마다 뭐가 더 있을지 모르는 그 외 전부) 버린다.
 _BODY_KEEP_PREFIXES = (
     "define",  # define(...) / define_group(...) - define_group도 "define"으로 시작
+    "delay_model",
     "default",  # default_max_transition, default_fanout_load, ...
     "voltage_unit",
     "current_unit",
