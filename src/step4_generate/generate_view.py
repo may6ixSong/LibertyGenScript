@@ -43,6 +43,17 @@ QTimer.singleShot()으로 직접 다시 예약하는 방식으로 바꿨다 - �
 놓인 타일들도 새 열 개수에 맞게 다시 배치한다. 예전에는 5로 고정되어 있어서 창을
 넓혀도 타일이 만들어질 당시의 폭 기준으로만 배치되고 남는 공간이 그대로 비어
 보였다.
+
+2026-08 추가 - 이미 존재하는 .db 파일 처리: `_poll_db_files`는 output path에 그
+library 이름의 .db 파일이 "존재하고 크기가 0보다 크면" 변환 완료로 본다. 그런데 이
+검사는 그 파일이 **이번 실행에서 새로 생겼는지 확인하지 않으므로**, output path에
+예전 실행(또는 수동 복사 등)으로 이미 같은 이름의 .db가 남아 있으면 lc_sub 잡이
+시작하기도 전에 폴링이 그걸 보고 곧바로 "완료"로 잘못 표시하는 문제가 있었다.
+`_on_convert_clicked`가 lc_sub 잡을 넣기 **전에** output path를 먼저 훑어서, 이미
+`.db`가 있는 job은 애초에 그 잡(`_db_pending`, `library_names`)에서 빼고 곧바로
+"A .db file with this name already exists... conversion was skipped" 타일로
+표시한다 - 기존 파일을 덮어쓰지 않고, 이번 실행이 실제로 변환한 것과 혼동되지
+않도록 명확히 구분한다. 전부 이미 존재하면 lc_sub 잡 자체를 실행하지 않는다.
 """
 
 from __future__ import annotations
@@ -596,7 +607,20 @@ class GenerateView(QWidget):
         self._db_tiles = []
         self._db_failed = 0
         self.db_header.setText("DB Files")
-        self._db_pending = {job["library_name"]: job for job in self._succeeded_jobs}
+
+        # 2026-08 추가: output path에 이미 같은 이름의 .db가 있으면 폴링이 그걸 이번
+        # 실행이 방금 만든 것으로 착각해 곧바로 "완료"로 보여주는 문제가 있었다(실제로는
+        # lc_sub 잡이 아직 시작도 안 했는데 이미 있던 파일을 보고 성공으로 판정). 그런
+        # job은 애초에 lc_sub 잡에 넣지 않고, 기존 파일을 덮어쓰지 않은 채 "이미 존재함
+        # - 변환하지 않음"으로 바로 타일을 채운다.
+        output_dir = Path(self._output_path)
+        already_exist_jobs = []
+        to_convert_jobs = []
+        for job in self._succeeded_jobs:
+            db_path = output_dir / f"{job['library_name']}.db"
+            (already_exist_jobs if db_path.exists() else to_convert_jobs).append(job)
+
+        self._db_pending = {job["library_name"]: job for job in to_convert_jobs}
 
         total = len(self._succeeded_jobs)
         self.db_progress_bar.setMaximum(total)
@@ -604,13 +628,33 @@ class GenerateView(QWidget):
         self.db_progress_label.setStyleSheet(f"color: {MUTED_TEXT_COLOR}; font-size: 11px;")
         self.db_progress_label.setText(f"0 of {total} db files converted")
 
+        for job in already_exist_jobs:
+            self._add_db_tile(
+                job, False,
+                "A .db file with this name already exists in the output path - "
+                "conversion was skipped so the existing file is not overwritten. "
+                "Remove or rename it first if you want to regenerate it.",
+            )
+
+        if not to_convert_jobs:
+            # 전부 이미 있었던 경우 - lc_sub 잡을 아예 실행할 필요가 없다.
+            self._db_running = False
+            self._update_back_lock()
+            self.convert_btn.setText("Convert to .db")
+            self.convert_btn.setEnabled(True)
+            self.db_status_label.setStyleSheet(f"color: {ERROR_COLOR}; font-weight: 600; font-size: 11px;")
+            self.db_status_label.setText(
+                "All .db files already exist in the output path - nothing converted."
+            )
+            return
+
         self._db_spinner_index = 0
         self.db_status_label.setStyleSheet(f"color: {PRIMARY_COLOR}; font-weight: 600; font-size: 11px;")
         self._advance_db_spinner()
         self._db_spinner_timer.start()
 
         output_path = self._output_path
-        library_names = [job["library_name"] for job in self._succeeded_jobs]
+        library_names = [job["library_name"] for job in to_convert_jobs]
 
         def work() -> tuple[int, str]:
             return db_converter.run_make_db(output_path, library_names)
