@@ -337,7 +337,8 @@ forwarding 환경에서 보장할 수 없어서,
      - `define`(`define_group` 포함) / `default` / `input_` / `output_` / `slew_` /
        `nom_`
      - `voltage_unit` / `current_unit` / `leakage_power_unit` /
-       `capacitive_load_unit` / `library_features`
+       `capacitive_load_unit` / `library_features` / `time_unit` /
+       `pulling_resistance_unit`
    전부 **접두어(시작 문자열) 기준**이라 정확히 일치가 아니어도 잡힌다(예: `nom_`은
    `nom_voltage`/`nom_temperature`/`nom_process`를 모두 잡음). 이 접두어들은 전부
    한 줄짜리 선언이라는 전제이므로, 그 줄에 `{`가 있으면(그룹을 여는 줄이면) 접두어가

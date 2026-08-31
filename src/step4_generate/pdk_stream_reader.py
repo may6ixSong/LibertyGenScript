@@ -25,7 +25,8 @@ lu_table_template(index_1/index_2)을 한 번에 뽑았다. 이제 lu_table_temp
        - `define`(`define_group` 포함) / `default` / `input_` / `output_` / `slew_` /
          `nom_`
        - `voltage_unit` / `current_unit` / `leakage_power_unit` /
-         `capacitive_load_unit` / `library_features`
+         `capacitive_load_unit` / `library_features` / `time_unit` /
+         `pulling_resistance_unit`
      이 접두어들은 전부 한 줄짜리 선언(그룹을 여는 게 아님)이라는 전제이므로,
      안전장치로 그 줄에 `{`가 있으면(그룹을 여는 줄이면) 접두어가 맞아도 가져오지
      않는다 - 닫는 `}` 없이 통째로 남으면 전체 중괄호 균형이 깨지기 때문
@@ -58,6 +59,8 @@ _BODY_KEEP_PREFIXES = (
     "leakage_power_unit",
     "capacitive_load_unit",
     "library_features",
+    "time_unit",
+    "pulling_resistance_unit",
     "input_",  # input_threshold_pct_rise, input_threshold_pct_fall, ...
     "output_",  # output_threshold_pct_rise, output_threshold_pct_fall, ...
     "slew_",  # slew_derate_from_library, slew_lower_threshold_pct_rise, ...
