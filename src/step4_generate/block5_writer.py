@@ -64,12 +64,31 @@ Power Type의 voltage(digital) 값에 매칭시키되, 치환 결과는 다르�
     바꾼다는 점이 다르다.
   - 일치하는 Power Type이 없으면 기존처럼 Port List Volts 값을 그대로 쓴다.
   자리수는 그대로 %0.5f.
+
+2026-08 추가 (DBS output pin bit 분할): DBS output signal과 매치되고 Bits > 1인(=bus로
+쓰이는) pin은 예전에는 bus() 안에 pin() 하나만 썼다. 이제 Step3에서 pin마다 설정한
+"Split into (bits)" 값으로 그 pin의 총 Bits를 쪼개, bus() 안에 **여러 개의 pin() 범위**
+(예: `pin(BUS[12:0])`, `pin(BUS[25:13])`, ...)를 이어서 쓴다 - 그 그룹 개수(=총
+Bits / Split into (bits))만큼. Related Pin의 related_bus_pins도 같은 그룹 개수로 그
+Related Pin 자신의 총 Bits를 나눠 쓴다(그룹당 bit 수는 사용자가 입력하지 않고 자동
+계산 - Related Pin Bits / 그룹 개수). 나눠떨어지지 않는 조합은 Step3 Validate가 이미
+막으므로(settings_validator._validate_dbs_related_pins) 여기서는 그 계산을
+`_dbs_bit_split_groups()`로 다시 한 번만 수행한다(방어적으로, 나눠떨어지지 않으면
+쪼개지 않고 원래 범위 1개로 폴백). **각 그룹의 pin() 몸체는 pin_name과
+related_bus_pins만 다르고 나머지(capacitance/max_capacitance/related_power_pin/
+related_ground_pin/input_signal_level, 그리고 timing() 안의 timing_sense/
+timing_type/cell_fall/cell_rise/rise_transition/fall_transition 표 전부)는 동일하게
+반복해서 쓴다** - 이 job의 DBS output(.mt0) 파일에서 읽는 값 자체가 그룹과 무관하게
+하나이기 때문(job["dbs_bit_split"]/job["pin_bit_info"], liberty_assembler.build_job
+참고). Bits==1인 DBS output pin(bus가 아니라 pin() 하나만 쓰는 경우)은 애초에 쪼갤
+대상이 아니므로 이 분할 로직이 적용되지 않는다.
 """
 
 from __future__ import annotations
 
 import fnmatch
 
+from step1_setup.port_list_reader import parse_bit_range, strip_bit_range_suffix
 from step3_settings.constants_field_defs import VOLTAGE_MATCH_TOLERANCE
 from step4_generate.missing_data import (
     INDENT_2, INDENT_3, INDENT_4, PORT_LIST_NOT_FOUND_TOKEN, write_missing_comment,
@@ -89,10 +108,7 @@ _TIMING_ENTRIES = [
 ]
 
 
-def _strip_bit_range_suffix(pin_name: str) -> str:
-    """'BUS0[3:0]' -> 'BUS0'. 대괄호가 없으면 그대로 반환."""
-    idx = pin_name.find("[")
-    return pin_name if idx == -1 else pin_name[:idx]
+_strip_bit_range_suffix = strip_bit_range_suffix  # 2026-08: port_list_reader로 이동, 이름만 유지
 
 
 def _matches_pattern(pin_name: str, pattern: str) -> bool:
@@ -153,12 +169,19 @@ def _write_values_table(f_out, table: list[list[str]] | None, indent: str) -> No
         f_out.write(");\n" if is_last else ",\\\n")
 
 
-def _write_timing_block(f_out, pin: dict, job: dict, indent_decl: str) -> None:
+def _write_timing_block(
+    f_out, pin: dict, job: dict, indent_decl: str, related_override: str | None = None,
+) -> None:
     """
     DBS output signal과 매치된 pin의 timing() { ... } 블록. 값은 전부 이 job의 DBS
     output(.mt0) 파일에서만 읽어온다 - PDK/DK 파일은 전혀 참조하지 않는다(표의
     행/열 크기도 .mt0 파일 자체의 slope/cload 컬럼에서 derive_table_shape()로
     추론함).
+
+    related_override(2026-08 추가): DBS output pin bit 분할로 여러 pin() 범위를 쓸
+    때, 그룹마다 계산된 related_bus_pins 범위 문자열을 그대로 전달받아 쓴다
+    (_dbs_bit_split_groups). None이면 예전과 동일하게 job/Port List에서 related pin
+    전체를 읽어 쓴다(분할 대상이 아닌 pin, 또는 분할 설정이 없어 폴백한 경우).
     """
     cell_name = job["cell_name"]
     pdk_filename = job["pdk_filename"]
@@ -169,11 +192,15 @@ def _write_timing_block(f_out, pin: dict, job: dict, indent_decl: str) -> None:
     body_indent = indent_decl + "  "
     table_indent = body_indent + "  "
 
-    # Step3에서 이 pin에 대해 직접 입력받은 related pin이 우선 (Step3 Validate가 Port
-    # List와의 일치까지 이미 확인함). 값이 없으면 Port List의 'Related Pin' 컬럼으로 폴백.
-    related_pin_value = (job.get("dbs_related_pins") or {}).get(pin["pin_name"], "")
-    if not str(related_pin_value).strip():
-        related_pin_value = pin.get("related_pin", "")
+    if related_override is not None:
+        related_pin_value = related_override
+    else:
+        # Step3에서 이 pin에 대해 직접 입력받은 related pin이 우선 (Step3 Validate가
+        # Port List와의 일치까지 이미 확인함). 값이 없으면 Port List의 'Related Pin'
+        # 컬럼으로 폴백.
+        related_pin_value = (job.get("dbs_related_pins") or {}).get(pin["pin_name"], "")
+        if not str(related_pin_value).strip():
+            related_pin_value = pin.get("related_pin", "")
     related_pin = _text_or_missing(
         f_out, related_pin_value, f"Related Pin for pin '{pin['pin_name']}' (Step 3 / Port List)", pdk_filename,
     )
@@ -225,19 +252,28 @@ def _write_max_capacitance(f_out, job: dict, lut_sections: dict, body_indent: st
     f_out.write(f"{body_indent}max_capacitance : {value} ;\n")
 
 
+def _classify_pin_kind(pin_name: str, job: dict) -> str:
+    """
+    pin_name이 Step3의 어느 연계 입력(와일드카드)에 매치되는지 우선순위대로 판단.
+    write_block5의 분할 여부 결정과 _write_pin_body의 몸체 포맷 결정이 같은 결과를
+    써야 하므로(2026-08 DBS output pin bit 분할 추가로 분리됨) 한 곳으로 모았다.
+    """
+    if _matches_pattern(pin_name, job["enable_signal_pattern"]):
+        return "enable_signal"
+    if _matches_pattern(pin_name, job["dbs_output_pattern"]):
+        return "dbs_output"
+    if _matches_pattern(pin_name, job["power_down_pattern"]):
+        return "power_down"
+    return "standard"
+
+
 def _write_pin_body(
     f_out, pin: dict, job: dict, lut_sections: dict, body_indent: str, pin_type_value: str,
+    kind: str, related_override: str | None = None,
 ) -> None:
     pdk_filename = job["pdk_filename"]
     process_prefix = job["process_prefix"]
     pin_name = pin["pin_name"]
-
-    is_enable_signal = _matches_pattern(pin_name, job["enable_signal_pattern"])
-    is_dbs_output = (not is_enable_signal) and _matches_pattern(pin_name, job["dbs_output_pattern"])
-    is_power_down = (
-        not is_enable_signal and not is_dbs_output
-        and _matches_pattern(pin_name, job["power_down_pattern"])
-    )
 
     direction = _direction_text(f_out, pin, pdk_filename)
     cap_text = _cap_text(pin["cap"])
@@ -253,7 +289,7 @@ def _write_pin_body(
     f_out.write(f"{body_indent}{process_prefix}_pin_type : {pin_type_value} ;\n")
     f_out.write(f"{body_indent}direction : {direction} ;\n")
 
-    if is_enable_signal:
+    if kind == "enable_signal":
         f_out.write(f"{body_indent}always_on : true ;\n")
         f_out.write(f"{body_indent}switch_pin : true ;\n")
         f_out.write(f"{body_indent}capacitance : {cap_text} ;\n")
@@ -262,7 +298,7 @@ def _write_pin_body(
         f_out.write(f"{body_indent}{process_prefix}_input_signal_level : {volts_text} ;\n")
         return
 
-    if is_dbs_output:
+    if kind == "dbs_output":
         f_out.write(f"{body_indent}capacitance : {cap_text} ;\n")
         # 2026-08 확정: max_capacitance는 worst case PDK의 lu_table_template index_2
         # 마지막 값을 그대로 쓴다 (예전엔 값을 몰라 "No Answer" 주석이었다).
@@ -271,7 +307,7 @@ def _write_pin_body(
         f_out.write(f"{body_indent}related_ground_pin : {related_ground} ;\n")
         f_out.write(f"{body_indent}{process_prefix}_input_signal_level : {volts_text} ;\n")
         f_out.write("\n")
-        _write_timing_block(f_out, pin, job, body_indent)
+        _write_timing_block(f_out, pin, job, body_indent, related_override=related_override)
         return
 
     f_out.write(f"{body_indent}capacitance : {cap_text} ;\n")
@@ -279,7 +315,7 @@ def _write_pin_body(
     f_out.write(f"{body_indent}related_ground_pin : {related_ground} ;\n")
     f_out.write(f"{body_indent}{process_prefix}_input_signal_level : {volts_text} ;\n")
 
-    if is_power_down:
+    if kind == "power_down":
         inner_body = body_indent + "  "
         f_out.write(f'{body_indent}{process_prefix}_acore_internal_power("{pin_name}") {{\n')
         f_out.write(f"{inner_body}{process_prefix}_acore_rise_power : {job['power_down_rise_power']} ;\n")
@@ -290,11 +326,76 @@ def _write_pin_body(
 
 def _write_pin_block(
     f_out, pin: dict, job: dict, lut_sections: dict, decl_indent: str, body_indent: str,
-    pin_type_value: str,
+    pin_type_value: str, kind: str | None = None, related_override: str | None = None,
 ) -> None:
+    if kind is None:
+        kind = _classify_pin_kind(pin["pin_name"], job)
     f_out.write(f"{decl_indent}pin({pin['pin_name']}) {{\n")
-    _write_pin_body(f_out, pin, job, lut_sections, body_indent, pin_type_value)
+    _write_pin_body(f_out, pin, job, lut_sections, body_indent, pin_type_value, kind, related_override)
     f_out.write(f"{decl_indent}}}\n")
+
+
+def _dbs_bit_split_groups(pin: dict, job: dict) -> list[tuple[str, str]]:
+    """
+    DBS output pin(bus, bits > 1)을 Step3의 "Split into (bits)" 설정만큼 쪼갠
+    (pin() 선언용 이름, related_bus_pins 값) 쌍의 목록을 만든다.
+
+    - DBS output pin의 총 Bits를 split 값으로 나눈 몫이 그룹 개수.
+    - Related Pin의 총 Bits를 그 그룹 개수로 나눈 몫이 그룹당 related_bus_pins bit 수
+      (사용자가 입력하지 않고 자동 계산 - 모듈 docstring 참고).
+    - 이 조합이 나눠떨어지지 않는 경우는 Step3 Validate가 이미 막아야 하지만, 방어적
+      으로 여기서도 다시 계산해서 실패하면 쪼개지 않고 원래 pin 이름 + related pin
+      전체 1개짜리 목록으로 폴백한다(missing_data 정책과 동일하게, 값을 지어내지
+      않고 그대로 통과시켜 사람이 알아볼 수 있게 남긴다).
+    """
+    pin_name = pin["pin_name"]
+    total_bits = pin["bits"]
+    base_name = _strip_bit_range_suffix(pin_name)
+    _dbs_msb, dbs_lsb = parse_bit_range(pin_name, total_bits)
+
+    related_raw = (job.get("dbs_related_pins") or {}).get(pin_name, "")
+    if not str(related_raw).strip():
+        related_raw = pin.get("related_pin", "")
+    related_raw = str(related_raw).strip()
+
+    fallback = [(pin_name, related_raw)]
+    if not related_raw:
+        return fallback
+
+    related_base = _strip_bit_range_suffix(related_raw)
+    related_info = (job.get("pin_bit_info") or {}).get(related_base)
+    if related_info is None:
+        return fallback
+
+    split_text = str((job.get("dbs_bit_split") or {}).get(pin_name, "")).strip()
+    try:
+        split_bits = int(split_text) if split_text else total_bits
+    except ValueError:
+        return fallback
+
+    if split_bits <= 0 or split_bits > total_bits or total_bits % split_bits != 0:
+        return fallback
+    group_count = total_bits // split_bits
+    if group_count <= 1:
+        return fallback
+
+    related_bits = related_info["bits"]
+    if related_bits % group_count != 0:
+        return fallback
+    related_per_group = related_bits // group_count
+    related_lsb = related_info["lsb"]
+
+    groups = []
+    for i in range(group_count):
+        g_dbs_lsb = dbs_lsb + i * split_bits
+        g_dbs_msb = g_dbs_lsb + split_bits - 1
+        g_related_lsb = related_lsb + i * related_per_group
+        g_related_msb = g_related_lsb + related_per_group - 1
+        groups.append((
+            f"{base_name}[{g_dbs_msb}:{g_dbs_lsb}]",
+            f"{related_base}[{g_related_msb}:{g_related_lsb}]",
+        ))
+    return groups
 
 
 def _write_pdt_pin_block(f_out, pin: dict, pin_type: str, process_prefix: str) -> None:
@@ -323,8 +424,8 @@ def write_block5(f_out, job: dict, lut_sections: dict) -> None:
         job: liberty_assembler.build_job()의 결과 (cell_name, process_prefix,
              port_pins, pwr_pins, gnd_pins, enable_signal_pattern,
              power_down_pattern, power_down_rise_power/fall_power/when,
-             dbs_output_pattern, dbs_related_pins, dbs_timing_sense/timing_type,
-             dbs_path 포함).
+             dbs_output_pattern, dbs_related_pins, dbs_bit_split, pin_bit_info,
+             dbs_timing_sense/timing_type, dbs_path 포함).
         lut_sections: pdk_stream_reader.read_lut_table_sections()의 결과(worst case
              PDK에서 실행당 한 번 읽음). DBS output pin의 max_capacitance 값을 여기
              index_2의 마지막 값에서 가져온다.
@@ -345,7 +446,21 @@ def write_block5(f_out, job: dict, lut_sections: dict) -> None:
         bus_type = f"bus_0_{bits - 1}_{bits}_{cell_name}"
         f_out.write(f"{INDENT_2}bus({base_name}) {{\n")
         f_out.write(f"{INDENT_3}bus_type : {bus_type} ;\n")
-        _write_pin_block(f_out, pin, job, lut_sections, INDENT_3, INDENT_4, "data_bus")
+
+        kind = _classify_pin_kind(pin["pin_name"], job)
+        if kind == "dbs_output":
+            # 2026-08 추가: Step3의 "Split into (bits)" 설정만큼 여러 pin() 범위로
+            # 나눠 쓴다 - 모듈 docstring "2026-08 추가 (DBS output pin bit 분할)" 참고.
+            for pin_label, related_label in _dbs_bit_split_groups(pin, job):
+                split_pin = dict(pin)
+                split_pin["pin_name"] = pin_label
+                _write_pin_block(
+                    f_out, split_pin, job, lut_sections, INDENT_3, INDENT_4, "data_bus",
+                    kind="dbs_output", related_override=related_label,
+                )
+        else:
+            _write_pin_block(f_out, pin, job, lut_sections, INDENT_3, INDENT_4, "data_bus", kind=kind)
+
         f_out.write(f"{INDENT_2}}}\n")
 
     for pin in job["pwr_pins"]:

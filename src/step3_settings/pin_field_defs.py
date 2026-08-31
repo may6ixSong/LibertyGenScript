@@ -42,8 +42,15 @@ POWER_DOWN_WHEN_KEY = "power_down_when"
 DBS_OUTPUT_KEY = "dbs_output_signal"
 DBS_TIMING_SENSE_KEY = "dbs_timing_sense"
 DBS_TIMING_TYPE_KEY = "dbs_timing_type"
-# {인식된 DBS output pin name: related pin} - "Check DBS Output Pins"로 뽑은 pin마다 하나씩
+# {인식된 DBS output pin name: related pin} - "Check DBS Output Pins"로 뽑은 pin마다 하나씩.
+# 2026-08부터 이 값은 더 이상 사용자가 편집하지 않고, Check 시점에 Port List의
+# 'Related Pin' 컬럼 값으로 고정된다(settings_view._fill_related_pin_table).
 DBS_RELATED_PINS_KEY = "dbs_related_pins"
+# {인식된 DBS output pin name: str(bit 수)} - 2026-08 추가. 이 DBS output pin의 총
+# Bits를 몇 bit씩 쪼개 block5에 여러 pin() 범위로 나눠 쓸지(quotient = 총 bits /
+# 이 값). Related Pin이 그 quotient로 다시 나뉜 bit 수는 자동 계산이며 사용자가
+# 직접 입력하지 않는다(settings_validator._validate_dbs_related_pins).
+DBS_BIT_SPLIT_KEY = "dbs_output_bit_split"
 
 # 기본값: 2026-08 이전에 block5_writer.py / block5 timing{}에 하드코딩되어 있던 값들.
 # 이제는 전부 사용자 입력이고, 아래 값들은 그 입력의 초기값(default)으로만 쓰인다.

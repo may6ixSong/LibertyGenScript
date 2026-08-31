@@ -37,8 +37,8 @@ from step3_settings.constants_field_defs import (
     voltage_map_digital_voltage_key, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
-    DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_DEFAULT, DBS_TIMING_SENSE_KEY,
-    DBS_TIMING_TYPE_DEFAULT, DBS_TIMING_TYPE_KEY, ENABLE_SIGNAL_KEY,
+    DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_DEFAULT,
+    DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_DEFAULT, DBS_TIMING_TYPE_KEY, ENABLE_SIGNAL_KEY,
     POWER_DOWN_FALL_POWER_DEFAULT, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY,
     POWER_DOWN_RISE_POWER_DEFAULT, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_DEFAULT,
     POWER_DOWN_WHEN_KEY, VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY,
@@ -173,6 +173,7 @@ def _default_pins() -> dict:
         DBS_TIMING_SENSE_KEY: DBS_TIMING_SENSE_DEFAULT,
         DBS_TIMING_TYPE_KEY: DBS_TIMING_TYPE_DEFAULT,
         DBS_RELATED_PINS_KEY: {},
+        DBS_BIT_SPLIT_KEY: {},
     }
 
 
@@ -196,9 +197,12 @@ def load_settings() -> dict:
             merged_scalars = {**defaults["scalars"], **data.get("scalars", {})}
             merged_voltage_map = _merge_voltage_map(data.get("voltage_map"))
             merged_pins = {**defaults["pins"], **data.get("pins", {})}
-            # dbs_related_pins는 dict여야 함 - 예전 포맷/손상된 파일이면 기본값으로 되돌림
+            # dbs_related_pins/dbs_output_bit_split는 dict여야 함 - 예전 포맷/손상된
+            # 파일이면 기본값으로 되돌림
             if not isinstance(merged_pins.get(DBS_RELATED_PINS_KEY), dict):
                 merged_pins[DBS_RELATED_PINS_KEY] = {}
+            if not isinstance(merged_pins.get(DBS_BIT_SPLIT_KEY), dict):
+                merged_pins[DBS_BIT_SPLIT_KEY] = {}
             output_path = data.get("output_path", defaults["output_path"])
             return {
                 "scalars": merged_scalars,

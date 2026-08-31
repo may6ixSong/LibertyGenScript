@@ -30,10 +30,10 @@ from step3_settings.constants_field_defs import (
     power_type_count_of, voltage_map_digital_voltage_key, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
-    DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
-    ENABLE_SIGNAL_KEY, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY,
-    POWER_DOWN_WHEN_KEY, VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY,
-    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, split_pattern_and_range,
+    DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY,
+    DBS_TIMING_TYPE_KEY, ENABLE_SIGNAL_KEY, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY,
+    POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY, VIRTUAL_POWER_KEY,
+    VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_SWITCH_FUNCTION_KEY, split_pattern_and_range,
 )
 
 
@@ -67,6 +67,7 @@ def build_job(
     power_ground_pins: dict,
     pins: dict,
     port_pins: list[dict],
+    pin_bit_info: dict,
     errors: list[str],
 ) -> dict | None:
     """
@@ -76,6 +77,11 @@ def build_job(
     nom_voltage / nom_temperature는 **파일명에서 파싱하지 않고 사용자가 Step2에서 직접
     입력한 값을 그대로 쓴다** (2026-08 2차 재설계 확정) - 파일명과 같은 값이 나오는 게
     보통이지만, 파일명 규칙에서 벗어난 파일을 고르는 경우까지 고려한 것이다.
+
+    pin_bit_info: port_list_reader.list_all_pin_bit_info()의 결과(Port 타입 무관 전체
+        pin name -> {bits, msb, lsb}). block5가 DBS output pin bit 분할 시 Related
+        Pin의 Bits/범위를 찾는 데 그대로 재사용하므로 job에 그대로 실어 보낸다
+        (2026-08 추가).
     """
     pdk_filename = str(entry.get(ENTRY_PDK_KEY, "")).strip()
     dbs_filename = str(entry.get(ENTRY_DBS_KEY, "")).strip()
@@ -234,6 +240,9 @@ def build_job(
     dbs_related_pins = pins.get(DBS_RELATED_PINS_KEY)
     if not isinstance(dbs_related_pins, dict):
         dbs_related_pins = {}
+    dbs_bit_split = pins.get(DBS_BIT_SPLIT_KEY)
+    if not isinstance(dbs_bit_split, dict):
+        dbs_bit_split = {}
 
     return {
         "pdk_path": pdk_path,
@@ -274,9 +283,11 @@ def build_job(
         "power_down_when": pins.get(POWER_DOWN_WHEN_KEY, ""),
         "dbs_output_pattern": dbs_output_pattern,
         "dbs_related_pins": dbs_related_pins,
+        "dbs_bit_split": dbs_bit_split,
         "dbs_timing_sense": pins.get(DBS_TIMING_SENSE_KEY, ""),
         "dbs_timing_type": pins.get(DBS_TIMING_TYPE_KEY, ""),
         "port_pins": port_pins,
+        "pin_bit_info": pin_bit_info,
         # 다음 라운드를 위해 함께 넘겨두는 공통 필드 - 현재 block1~5에서는 직접
         # 쓰이지 않는다.
         "static_current": common.get("static_current", ""),
@@ -294,9 +305,13 @@ def build_jobs(
     power_ground_pins: dict,
     pins: dict,
     port_pins: list[dict],
+    pin_bit_info: dict,
 ) -> tuple[list[dict], list[str]]:
     """
     Step2의 liberty setting 하나하나에 대해 job을 만든다.
+
+    pin_bit_info: build_job() 참고 - port_list_reader.list_all_pin_bit_info()의 결과를
+        그대로 넘긴다.
 
     Returns:
         (jobs, errors) - errors는 개별 setting 실패 메시지를 전부 모은 것. 실패한
@@ -310,7 +325,7 @@ def build_jobs(
         entry_errors: list[str] = []
         job = build_job(
             entry, common, pdk_folder, dbs_folder, scalars, voltage_map_settings,
-            port_bit_values, power_ground_pins, pins, port_pins, entry_errors,
+            port_bit_values, power_ground_pins, pins, port_pins, pin_bit_info, entry_errors,
         )
         if job is None:
             errors.extend(entry_errors)
