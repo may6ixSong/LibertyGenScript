@@ -246,6 +246,9 @@ def build_job(
     dbs_bit_split = pins.get(DBS_BIT_SPLIT_KEY)
     if not isinstance(dbs_bit_split, dict):
         dbs_bit_split = {}
+    dbs_serial_related_pattern = pins.get(DBS_SERIAL_RELATED_PATTERN_KEY)
+    if not isinstance(dbs_serial_related_pattern, dict):
+        dbs_serial_related_pattern = {}
 
     return {
         "pdk_path": pdk_path,
@@ -286,12 +289,11 @@ def build_job(
         "power_down_when": pins.get(POWER_DOWN_WHEN_KEY, ""),
         "dbs_output_pattern": dbs_output_pattern,
         "dbs_related_pins": dbs_related_pins,
-        "dbs_recognized_pins": list(dbs_related_pins.keys()),
         "dbs_bit_split": dbs_bit_split,
         "dbs_data_transfer_type": str(pins.get(DBS_TRANSFER_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT)),
         "dbs_serial_cluster_mode": str(pins.get(DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT)),
         "dbs_serial_num_col": pins.get(DBS_SERIAL_NUM_COL_KEY, ""),
-        "dbs_serial_related_pattern": pins.get(DBS_SERIAL_RELATED_PATTERN_KEY, ""),
+        "dbs_serial_related_pattern": dbs_serial_related_pattern,
         "dbs_power_down_function": pins.get(DBS_POWER_DOWN_FUNCTION_KEY, ""),
         "dbs_timing_sense": pins.get(DBS_TIMING_SENSE_KEY, ""),
         "dbs_timing_type": pins.get(DBS_TIMING_TYPE_KEY, ""),
