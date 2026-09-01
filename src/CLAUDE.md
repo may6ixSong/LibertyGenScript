@@ -431,15 +431,30 @@ forwarding 환경에서 보장할 수 없어서,
 
 ### 처리 순서
 1. **Block 1 (헤더 주석)**: 기존과 동일한 포맷, `GENERATE OPTION` 블록만 완전히 삭제.
-2. **Block 2-(1) (library 선언 + PDK 본문)**: 우리 쪽 `date`/`revision`/`comment`를 먼저
-   쓴 뒤, PDK/DK 파일을 줄 단위로 스트리밍하며 `library (...) {` 다음부터
-   `voltage_map` 직전까지 그대로 복사. **PDK 자체의 `date`/`revision`/`comment` 줄(줄
-   첫 토큰 기준)은 순서/위치에 상관없이 만날 때마다 개별적으로 스킵** (중복 방지,
-   2026-08 확정). 그 PDK 본문을 다 복사한 바로 다음, 우리 쪽 `voltage_map`(Block
-   2-(2)) 바로 앞에서 **이 생성기가 `{process_prefix}_*`로 쓰는 모든 custom
-   attribute/group을 `define`/`define_group`으로 등록**한다(`process_prefix_defines.py`,
-   2026-08 추가 - 아래 단락 참고. PDK 본문을 붙여넣은 바로 뒤에 두어 PDK 자체의
-   define들과 한데 모이게 한 배치다).
+2. **Block 2-(1) (library 선언 + PDK의 정해진 줄들)**: 우리 쪽 `date`/`revision`/
+   `comment`를 먼저 쓴 뒤, PDK/DK 파일을 줄 단위로 스트리밍하며 `library (...) {`
+   다음부터 `voltage_map` 직전까지의 구간에서 **정해진 접두어로 시작하는 줄만** 가져와
+   PDK에 있던 순서 그대로 붙인다 (**그 외 줄은 date/revision/comment를 포함해 전부
+   버린다** - 2026-08 변경. 예전에는 이 구간 전체를 그대로 복사했는데, PDK/DK 파일마다
+   이 구간에 무엇이 있는지가 제각각이라("technology", 벤더별 커스텀 스칼라 attribute
+   등) 우리가 쓸 필요 없는/모르는 내용까지 그대로 딸려 들어오는 문제가 있었다. 처음엔
+   `define`/`define_group`만 남기도록 좁혔다가, 그것만으로는 부족하다는 실사용 확인을
+   거쳐 아래 접두어들로 다시 넓혔다 - `pdk_stream_reader.read_pdk_library_sections()`의
+   `_BODY_KEEP_PREFIXES`, `_should_keep_body_line()`):
+     - `define`(`define_group` 포함) / `delay_model` / `default` / `input_` /
+       `output_` / `slew_` / `nom_`
+     - `voltage_unit` / `current_unit` / `leakage_power_unit` /
+       `capacitive_load_unit` / `library_features` / `time_unit` /
+       `pulling_resistance_unit` / `in_place_swap_mode`
+   전부 **접두어(시작 문자열) 기준**이라 정확히 일치가 아니어도 잡힌다(예: `nom_`은
+   `nom_voltage`/`nom_temperature`/`nom_process`를 모두 잡음). 이 접두어들은 전부
+   한 줄짜리 선언이라는 전제이므로, 그 줄에 `{`가 있으면(그룹을 여는 줄이면) 접두어가
+   맞아도 가져오지 않는다 - 닫는 `}` 없이 남으면 전체 중괄호 균형이 깨지기 때문. 판단은
+   한 줄씩 원본 순서대로 스캔하면서 그 자리에서 가져올지만 정하고, 별도로 재배열하지
+   않는다. 그 다음, 우리 쪽 `voltage_map`(Block 2-(2)) 바로 앞에서
+   **이 생성기가 `{process_prefix}_*`로 쓰는 모든 custom attribute/group을
+   `define`/`define_group`으로 등록**한다(`process_prefix_defines.py`, 2026-08 추가 -
+   아래 단락 참고. PDK의 define들 바로 뒤에 두어 한데 모이게 한 배치다).
 
    **`{process_prefix}_*` custom attribute를 이 생성기가 직접 define하는 이유
    (2026-08 확정)**: 예전에는 PDK/DK 파일이 이 attribute들을 이미 define해뒀다고
@@ -452,11 +467,10 @@ forwarding 환경에서 보장할 수 없어서,
    '{process_prefix}_width' attribute/group name cannot be specified here."로
    거부해서 .db 변환이 실패했다. `process_prefix_defines.py`가 block4_writer.py/
    block5_writer.py가 실제로 쓰는 attribute/group 전부를(이름·소속 그룹·타입까지
-   정확히) 목록으로 갖고 있다가, PDK 본문에 이미 같은 이름의 define/define_group이
-   있으면 건너뛰고 없는 것만(그 job의 process_prefix로 채워) PDK 본문 바로 뒤,
-   `voltage_map`보다는 앞에 써준다. **block4/block5에서 새 `{process_prefix}_` 줄을
-   추가/삭제/이름변경할 때 이 목록을 같이 맞추는 규칙은 이 문서 맨 위 "코드 수정 규칙"
-   절에 있다 - 반드시 지킬 것.**
+   정확히) 목록으로 갖고 있다가, 위에서 이미 옮겨 쓴 PDK의 define/define_group과 이름이
+   같으면 건너뛰고 없는 것만(그 job의 process_prefix로 채워) 써준다. **block4/block5에서
+   새 `{process_prefix}_` 줄을 추가/삭제/이름변경할 때 이 목록을 같이 맞추는 규칙은 이
+   문서 맨 위 "코드 수정 규칙" 절에 있다 - 반드시 지킬 것.**
 3. **Block 2-(2) (voltage_map)** (2026-08 Voltage Map 재설계): Step2에서 이 liberty에
    선택된 voltage condition 이름으로 Voltage Map에서 그 condition을 찾아(대소문자 무시)
    Power Type1..N 값을 가져와, **power type 개수만큼의 VDD 줄 + VSS 1줄**을 항상 전부 작성한다.
@@ -563,9 +577,9 @@ forwarding 환경에서 보장할 수 없어서,
   줄 단위로 스트리밍**하며, 필요한 걸 다 얻는 즉시 읽기를 중단한다.
 - PDK 읽기는 두 갈래로 완전히 분리되어 있다 (`pdk_stream_reader.py`):
   1. `read_pdk_library_sections(pdk_path)` — **liberty 하나당 한 번**, block2용.
-     library 선언 / 본문 / `input_voltage` / `output_voltage`만 필요하고 이것들은 전부
-     첫 `cell (...)` 선언보다 앞에 있으므로, **첫 cell 선언을 만나는 즉시 중단**한다.
-     파일의 대부분(cell 본문 수십만 줄)은 아예 읽지 않는다.
+     library 선언 / `define`·`define_group` 줄 / `input_voltage` / `output_voltage`만
+     필요하고 이것들은 전부 첫 `cell (...)` 선언보다 앞에 있으므로, **첫 cell 선언을
+     만나는 즉시 중단**한다. 파일의 대부분(cell 본문 수십만 줄)은 아예 읽지 않는다.
   2. `read_lut_table_sections(pdk_path, dff, lut)` — **실행당 한 번**, block3용.
      Step3에서 고른 worst case PDK 하나에서만 읽고, index_1/index_2를 찾는 즉시 중단.
      결과는 모든 job이 그대로 재사용한다.
