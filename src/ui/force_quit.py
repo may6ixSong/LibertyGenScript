@@ -5,7 +5,9 @@ Ctrl+C 강제 종료 (2026-08 추가).
 
 Step1의 Port List 파싱, Step3의 Output Path 선택(파일 대화상자가 네트워크 폴더를
 훑는 경우) 등 느린 동기 작업 중에 화면이 멈춘 것처럼 보이는 경우를 대비해, **어느
-Step 화면에 있든 Ctrl+C를 누르면 즉시 프로세스를 강제 종료**한다.
+Step 화면에 있든 Ctrl+C를 누르면 즉시 프로세스를 강제 종료**한다 - 단, 텍스트 입력칸/
+뷰어에 포커스가 있을 때는 예외다(아래 "텍스트 칸 포커스면 Ctrl+C를 복사로 그대로
+통과" 참고 - 텍스트를 복사하려던 Ctrl+C까지 강제 종료로 오인되는 것을 막는다).
 
 두 경로로 Ctrl+C를 받는다:
   1. GUI가 응답 가능한 상태(이벤트 루프가 돌고 있음)일 때: QApplication 전체에 건
@@ -31,9 +33,17 @@ QShortcut도, 시그널 처리도 그 시점까지 대기). openpyxl 파싱은 �
 루프라서 보통 수백ms~수 초 안에는 반응하지만, 완전한 즉시성은 무거운 파싱을 별도
 스레드/프로세스로 옮겨야만 보장된다(이번 라운드 범위 밖 - 근본 원인 분석 참고).
 
-Ctrl+C를 애플리케이션 전역 이벤트 필터로 가로채므로, 텍스트 입력칸에서 Ctrl+C로
-복사하는 동작은 더 이상 쓸 수 없다(대신 마우스 우클릭 메뉴의 Copy를 쓰면 된다). "어느
-화면에서든 무조건 강제 종료"라는 요구사항과 맞바꾼 트레이드오프다.
+2026-08 수정 - 텍스트 칸 포커스면 Ctrl+C를 복사로 그대로 통과: 이벤트 필터가 모든
+Ctrl+C를 무조건 가로채면 텍스트 입력칸/뷰어(예: 생성된 liberty 파일을 읽기 전용으로
+보여주는 file_viewer.py의 QPlainTextEdit)에서 텍스트를 복사하려고 누른 Ctrl+C까지
+강제 종료로 오인된다. 그래서 이벤트를 가로채기 전에 **현재 포커스를 가진 위젯이
+QLineEdit/QPlainTextEdit/QTextEdit(=`_COPY_TEXT_WIDGET_TYPES`)이면 그냥 통과**시켜
+Qt의 기본 복사 동작이 그대로 실행되게 한다 - 그 외(버튼/목록 등에 포커스가 있거나,
+포커스를 가진 위젯이 아예 없는 경우 - 진짜로 멈춘 것처럼 보일 때 포함)에는 예전과
+동일하게 강제 종료한다. 이 예외는 이 앱의 이벤트 필터 안에서만 적용되고
+(`install_force_quit`이 이 QApplication에만 필터를 건다), 터미널에서 오는
+SIGINT(2번 경로)는 전혀 건드리지 않으므로 "정말 멈췄을 때 터미널에서 Ctrl+C로
+강제 종료"라는 안전장치는 그대로 유지된다.
 """
 
 from __future__ import annotations
@@ -43,9 +53,15 @@ import signal
 import sys
 
 from PyQt5.QtCore import QEvent, QObject, Qt, QTimer
-from PyQt5.QtWidgets import QApplication, QWidget
+from PyQt5.QtWidgets import QApplication, QLineEdit, QPlainTextEdit, QTextEdit, QWidget
 
 _KEEPALIVE_MS = 200
+
+# 이 위젯들에 포커스가 있을 때는 Ctrl+C를 강제 종료로 가로채지 않고 Qt 기본 복사
+# 동작으로 통과시킨다(2026-08 추가) - 텍스트 입력칸(QLineEdit)과 읽기 전용 파일
+# 뷰어(file_viewer.py의 QPlainTextEdit 서브클래스 _ViewerEdit 포함, QTextEdit도
+# 방어적으로 포함)가 대상이다.
+_COPY_TEXT_WIDGET_TYPES = (QLineEdit, QPlainTextEdit, QTextEdit)
 
 
 def _force_quit(*_args) -> None:
@@ -59,11 +75,17 @@ class _CtrlCFilter(QObject):
     QApplication 전체에 건 이벤트 필터. Qt::notify()를 거쳐 이 앱의 어느 위젯으로든
     전달되는 모든 KeyPress 이벤트를 필터가 먼저 보므로, 포커스가 어디에 있든(파일
     대화상자 포함) Ctrl+C를 놓치지 않는다 - QShortcut의 "활성 창" 판단에 기대지 않음.
+
+    단, 현재 포커스를 가진 위젯이 텍스트 입력칸/뷰어(_COPY_TEXT_WIDGET_TYPES)면
+    가로채지 않고 그대로 통과시킨다(2026-08 추가) - Qt의 기본 Ctrl+C 복사 동작이
+    정상적으로 실행되도록.
     """
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt 오버라이드 시그니처
         if event.type() == QEvent.KeyPress:
             if event.key() == Qt.Key_C and event.modifiers() & Qt.ControlModifier:
+                if isinstance(QApplication.focusWidget(), _COPY_TEXT_WIDGET_TYPES):
+                    return False
                 _force_quit()
                 return True
         return False
