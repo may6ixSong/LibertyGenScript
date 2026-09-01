@@ -44,6 +44,15 @@ pin() 몸체 내용은 pin name이 아래 중 어디에 매치되는지에 따�
   - Power down control signal 매치 pin의 {prefix}_acore_internal_power 안 rise/fall
     power와 when 역시 Step3 입력값을 쓴다(예전 하드코딩 값이 그 입력의 기본값이다).
 
+2026-08 추가 (power_down_function, DBS output pin 전용, 선택 입력): Step3 DBS output
+pin 섹션의 (Parallel/Serial 및 Serial Cluster 선택과 무관한) 전역 입력 하나
+(job["dbs_power_down_function"]) - 값이 있으면 매 DBS output pin() 본문에서
+{process_prefix}_input_signal_level 바로 다음 줄로
+`power_down_function : "<text>" ;`를 쓴다. 비어 있으면 그 줄 자체를 아예 쓰지 않는다
+(다른 필수 하위 필드와 달리 Step3 Validate가 이 필드를 요구하지 않는다). 표준
+Liberty pin 속성이라 {process_prefix}_ 접두사를 붙이지 않으므로
+process_prefix_defines.py에 등록할 필요가 없다.
+
 2026-08 수정: DBS output signal 매치 pin의 timing 표(cell_fall/cell_rise/
 rise_transition/fall_transition)는 PDK/DK 파일과 완전히 무관하다는 피드백을 반영해,
 PDK/DK 파일의 DFF/primitive cell 검색 결과(sections)에 대한 의존을 전부 제거했다.
@@ -84,7 +93,7 @@ Transfer Type + (Serial일 때) Serial Cluster 선택에 따라 갈린다
     전체 공통 "Number of Col(#)"으로 이 DBS output pin 자신의 총 Bits를 나눈 몫이
     cluster 개수다(Parallel과 반대 - 옛 방식과 같은 계산이다). related_bus_pins는
     Related Pin 하나를 슬라이스하는 게 아니라, 전체 공통 Related Pin 와일드카드
-    (예: 'ABC_*[12:0]', '*'는 숫자만 매칭)로 Port==PORT pin 중 매치된 개별 pin들을
+    (예: 'RD_EN_*[12:0]', '*'는 숫자만 매칭)로 Port==PORT pin 중 매치된 개별 pin들을
     '*' 숫자값 오름차순으로 cluster에 배정한다. 인식된 DBS output pin이 Top/Bottom
     2개면 그 중 '*'가 매치한 숫자값이 홀수인 것만 Top에, 짝수인 것만 Bottom에 쓴다 -
     Top/Bottom 판별은 DBS output pin 와일드카드의 '*'가 그 pin에서 실제로 매치한
@@ -332,6 +341,11 @@ def _write_pin_body(
         f_out.write(f"{body_indent}related_power_pin : {related_power} ;\n")
         f_out.write(f"{body_indent}related_ground_pin : {related_ground} ;\n")
         f_out.write(f"{body_indent}{process_prefix}_input_signal_level : {volts_text} ;\n")
+        # 2026-08 추가: Step3의 (선택 입력) power_down_function - 비어 있으면 이 줄
+        # 자체를 쓰지 않는다(Validate도 필수로 요구하지 않음, 모듈 docstring 참고).
+        power_down_function = str(job.get("dbs_power_down_function", "")).strip()
+        if power_down_function:
+            f_out.write(f'{body_indent}power_down_function : "{power_down_function}" ;\n')
         f_out.write("\n")
         _write_timing_block(f_out, pin, job, body_indent, related_override=related_override)
         return

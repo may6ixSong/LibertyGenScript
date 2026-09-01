@@ -238,6 +238,12 @@ Type 개수 무제한 + voltage(digital) 필드 추가)
      `{prefix}_acore_internal_power` 블록에 들어감. 기본값은 예전 하드코딩 값
      (`30000000.0000` / `0.0` / `"1"`).
 3. **DBS output pin** (와일드카드 허용)
+   - `power_down_function`(2026-08 추가, **선택 입력**) — 인식된 DBS output pin
+     **전체 공통 1개**, Parallel/Serial(및 Serial Cluster 선택)과 무관하게 화면에서
+     `timing_sense` 바로 위에 위치. 값을 입력하면 block5가 매 DBS output pin() 본문의
+     `{process_prefix}_input_signal_level` 바로 다음 줄로
+     `power_down_function : "<입력한 text>" ;`를 쓴다. **비워두면 그 줄 자체를 쓰지
+     않고**, 다른 하위 필드와 달리 Step3 Validate가 이 필드를 필수로 요구하지 않는다.
    - `timing_sense` / `timing_type` — 인식된 DBS output pin **전체 공통 1쌍**,
      block5의 `timing()` 블록에 들어감. 기본값은 예전 하드코딩 값
      (`non_unate` / `combinational`).
@@ -310,7 +316,7 @@ entryCard 스타일 박스 목록으로, 그 박스+스크롤도 "여전히 표 
     보여준다(Bits 표시도 생략).
   - **Cluster: More than 1**: 전체 공통(인식된 pin 전체, pin마다가 아님) 입력 두
     개가 추가로 나타난다 - `Number of Col (#)`와 `Related Pin (wildcard)`(예:
-    `ABC_*[12:0]`, `*`는 숫자만 매칭하고 문자가 섞인 이름은 무시,
+    `RD_EN_*[12:0]`, `*`는 숫자만 매칭하고 문자가 섞인 이름은 무시,
     `pin_field_defs.match_digit_wildcard`). 각 DBS output pin의 총 Bits를 그
     Number of Col로 나눈 몫이 그 pin의 cluster 개수이고(**Parallel과 반대 방향** -
     Parallel은 Related Pin 쪽을, 이쪽은 DBS output pin 쪽을 나눈다), 와일드카드로
@@ -531,6 +537,15 @@ forwarding 환경에서 보장할 수 없어서,
    선택값/공유 입력값을 `job["dbs_serial_cluster_mode"]`/
    `job["dbs_serial_num_col"]`/`job["dbs_serial_related_pattern"]`로, 인식된 DBS
    output pin 이름 목록을 `job["dbs_recognized_pins"]`로 실어 보낸다.
+8. **Block 5 `power_down_function`** (2026-08 추가, DBS output pin 전용·선택 입력):
+   Step3에서 입력했다면(`job["dbs_power_down_function"]`), Parallel/Serial 및 cluster
+   개수와 무관하게 매 DBS output pin() 본문의 `{process_prefix}_input_signal_level`
+   바로 다음 줄로 `power_down_function : "<입력한 text>" ;`를 쓴다(cluster로 쪼개져도
+   각 cluster에 동일하게 반복). 비어 있으면 그 줄 자체를 쓰지 않는다 - 값을 지어내지
+   않는 결측 처리 원칙과 달리, 이 필드는 애초에 선택 입력이라 Step3 Validate도 필수로
+   요구하지 않는다(`block5_writer.py`의 `_write_pin_body`). `power_down_function`은
+   표준 Liberty pin 속성이므로 `{process_prefix}_`로 시작하지 않고,
+   `process_prefix_defines.py`에 등록할 필요도 없다.
 
 ### 결측 데이터 처리
 하드코딩되는 부분(예: `vmin: 0.00`, `process: 1.000`)을 제외하고, PDK 파일에서 기대한

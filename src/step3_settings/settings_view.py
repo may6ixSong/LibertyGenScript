@@ -85,7 +85,7 @@ condition을 직접 추가/삭제하고 이름도 정하는 형태로 바뀜, st
       섹션에 이름 + Related Pin(Port List 값)만 보여준다.
     - **Cluster: More than 1**: 전체 공통(인식된 pin 전체, pin마다가 아님) 입력 두
       개를 `dbs_serial_split_row`에서 받는다 - "Number of Col (#)"과 "Related Pin
-      (wildcard)"(예: "ABC_*[12:0]", '*'는 숫자만 매칭 - `pin_field_defs.
+      (wildcard)"(예: "RD_EN_*[12:0]", '*'는 숫자만 매칭 - `pin_field_defs.
       match_digit_wildcard`). 각 DBS output pin의 Bits를 그 Number of Col로 나눈
       몫이 그 pin의 cluster 개수이고(Parallel과 반대 방향), 와일드카드로 매치된
       Related Pin이 그 개수만큼 있어야 한다. 인식된 DBS output pin이 Top/Bottom
@@ -125,9 +125,10 @@ from step2_udc.udc_validator import selected_pdk_files
 from step3_settings import settings_manager
 from step3_settings.constants_field_defs import SCALAR_CONSTANT_DEFS
 from step3_settings.pin_field_defs import (
-    DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT,
-    DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI, DBS_SERIAL_CLUSTER_SINGLE,
-    DBS_SERIAL_NUM_COL_KEY, DBS_SERIAL_RELATED_PATTERN_KEY, DBS_TIMING_SENSE_KEY,
+    DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_POWER_DOWN_FUNCTION_KEY, DBS_RELATED_PINS_KEY,
+    DBS_SERIAL_CLUSTER_MODE_DEFAULT, DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI,
+    DBS_SERIAL_CLUSTER_SINGLE, DBS_SERIAL_NUM_COL_KEY, DBS_SERIAL_RELATED_PATTERN_KEY,
+    DBS_TIMING_SENSE_KEY,
     DBS_TIMING_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY,
     DBS_TRANSFER_TYPE_PARALLEL, DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY,
     POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY,
@@ -234,10 +235,18 @@ _DBS_SERIAL_CLUSTER_INFO = (
 )
 
 _DBS_SERIAL_RELATED_INFO = (
-    "Wildcard matched against Port==PORT pin names (e.g. 'ABC_*[12:0]') - '*' matches "
+    "Wildcard matched against Port==PORT pin names (e.g. 'RD_EN_*[12:0]') - '*' matches "
     "digits only (a name where '*' would match letters is ignored). The trailing "
     "'[12:0]' is display-only, like the DBS output pin's own range suffix - it is not "
     "used for matching."
+)
+
+_DBS_POWER_DOWN_FUNCTION_INFO = (
+    "Optional - shared by every recognized DBS output pin, regardless of Data Transfer "
+    "Type or Serial Cluster. When filled in, block5 writes "
+    "power_down_function : \"<this text>\" ; right after "
+    "{process_prefix}_input_signal_level in every DBS output pin() body. Leave empty to "
+    "omit the line entirely - Validate does not require this field."
 )
 
 _DBS_TIMING_INFO = (
@@ -560,6 +569,11 @@ class SettingsView(QWidget):
         group.addWidget(self.dbs_pins_container)
 
         inner_form = self._add_form(group)
+        self.dbs_power_down_function_edit = QLineEdit(str(pins.get(DBS_POWER_DOWN_FUNCTION_KEY, "")))
+        inner_form.addRow(
+            build_label_with_info("power_down_function", _DBS_POWER_DOWN_FUNCTION_INFO),
+            self.dbs_power_down_function_edit,
+        )
         self.dbs_timing_sense_edit = QLineEdit(str(pins.get(DBS_TIMING_SENSE_KEY, "")))
         self.dbs_timing_type_edit = QLineEdit(str(pins.get(DBS_TIMING_TYPE_KEY, "")))
         inner_form.addRow(build_label_with_info("timing_sense", _DBS_TIMING_INFO), self.dbs_timing_sense_edit)
@@ -1193,7 +1207,7 @@ class SettingsView(QWidget):
 
         related_pattern = self.dbs_serial_related_edit.text().strip()
         if not related_pattern:
-            _set("Enter a Related Pin wildcard (e.g. ABC_*[12:0]).", ERROR_COLOR)
+            _set("Enter a Related Pin wildcard (e.g. RD_EN_*[12:0]).", ERROR_COLOR)
             return
         matched = match_digit_wildcard_pins(self.get_port_list_file(), related_pattern)
         if not matched:
@@ -1290,6 +1304,7 @@ class SettingsView(QWidget):
             POWER_DOWN_FALL_POWER_KEY: self.power_down_fall_edit.text().strip(),
             POWER_DOWN_WHEN_KEY: self.power_down_when_edit.text().strip(),
             DBS_OUTPUT_KEY: self.dbs_output_edit.text().strip(),
+            DBS_POWER_DOWN_FUNCTION_KEY: self.dbs_power_down_function_edit.text().strip(),
             DBS_TIMING_SENSE_KEY: self.dbs_timing_sense_edit.text().strip(),
             DBS_TIMING_TYPE_KEY: self.dbs_timing_type_edit.text().strip(),
             DBS_RELATED_PINS_KEY: self._collect_dbs_related_pins(),
