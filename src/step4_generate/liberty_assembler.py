@@ -30,10 +30,11 @@ from step3_settings.constants_field_defs import (
     power_type_count_of, voltage_map_digital_voltage_key, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
-    DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT,
-    DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_NUM_COL_KEY, DBS_SERIAL_RELATED_PATTERN_KEY,
-    DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY,
-    ENABLE_SIGNAL_KEY, POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY,
+    DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_POWER_DOWN_FUNCTION_KEY, DBS_RELATED_PINS_KEY,
+    DBS_SERIAL_CLUSTER_MODE_DEFAULT, DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_NUM_COL_KEY,
+    DBS_SERIAL_RELATED_PATTERN_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
+    DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY, ENABLE_SIGNAL_KEY,
+    POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY,
     POWER_DOWN_WHEN_KEY, VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY,
     VIRTUAL_POWER_SWITCH_FUNCTION_KEY, split_pattern_and_range,
 )
@@ -291,6 +292,7 @@ def build_job(
         "dbs_serial_cluster_mode": str(pins.get(DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT)),
         "dbs_serial_num_col": pins.get(DBS_SERIAL_NUM_COL_KEY, ""),
         "dbs_serial_related_pattern": pins.get(DBS_SERIAL_RELATED_PATTERN_KEY, ""),
+        "dbs_power_down_function": pins.get(DBS_POWER_DOWN_FUNCTION_KEY, ""),
         "dbs_timing_sense": pins.get(DBS_TIMING_SENSE_KEY, ""),
         "dbs_timing_type": pins.get(DBS_TIMING_TYPE_KEY, ""),
         "port_pins": port_pins,

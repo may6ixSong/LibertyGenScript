@@ -14,6 +14,8 @@ Step 3 'Constants & Pin Settings' 화면의 Pin 설정 정의.
   2. Power down control signal
        └ rise power / fall power / when    (block5의 {prefix}_acore_internal_power)
   3. DBS output pin
+       └ power_down_function (선택 입력)    (block5 pin() 본문 - 인식된 pin 전체 공통
+                                             1개, 비어 있으면 줄 자체를 쓰지 않음)
        └ timing_sense / timing_type        (block5 timing{} - 인식된 pin 전체 공통 1쌍)
        └ (Check 후) 인식된 pin마다 related pin  (block5 timing{} related_bus_pins)
 
@@ -40,6 +42,13 @@ POWER_DOWN_FALL_POWER_KEY = "power_down_fall_power"
 POWER_DOWN_WHEN_KEY = "power_down_when"
 
 DBS_OUTPUT_KEY = "dbs_output_signal"
+# 인식된 DBS output pin 전체 공통 1개(pin마다가 아님), Parallel/Serial(및 Serial
+# Cluster 선택)과 무관하게 항상 같은 자리에 쓰인다 - block5의 각 DBS output pin
+# pin() 본문에서 {process_prefix}_input_signal_level 바로 다음 줄로 `power_down_function
+# : "..."` 을 쓴다(block5_writer._write_pin_body). **선택 입력** - 비워두면 그 줄 자체를
+# 쓰지 않고, Validate도 이 필드가 비어있다고 에러로 보지 않는다(다른 DBS 하위 필드와
+# 달리 필수 목록에 없음).
+DBS_POWER_DOWN_FUNCTION_KEY = "dbs_power_down_function"
 DBS_TIMING_SENSE_KEY = "dbs_timing_sense"
 DBS_TIMING_TYPE_KEY = "dbs_timing_type"
 # {인식된 DBS output pin name: related pin} - "Check DBS Output Pins"로 뽑은 pin마다 하나씩.
@@ -72,7 +81,7 @@ DBS_TRANSFER_TYPE_DEFAULT = DBS_TRANSFER_TYPE_SERIAL
 #   - 1 (기본값): 이 기능이 생기기 전과 완전히 동일 - quotient 항상 1, Related Pin은
 #     Port List 값 그대로.
 #   - More than 1: Parallel처럼 Number of Col(#)을 입력받되(전체 공통 1개), Related
-#     Pin은 Port List 컬럼이 아니라 사용자가 입력하는 와일드카드(예: "ABC_*[12:0]")로
+#     Pin은 Port List 컬럼이 아니라 사용자가 입력하는 와일드카드(예: "RD_EN_*[12:0]")로
 #     Port List pin name 중 일치하는 pin 전체를 찾는다. DBS output pin의 총 Bits를
 #     그 Number of Col로 나눈 몫이 cluster 개수이고(Parallel과 반대로 DBS output pin
 #     쪽을 나눔), 그 개수만큼 와일드카드로 매치된 Related Pin이 있어야 한다. DBS
@@ -157,7 +166,7 @@ def _split_single_wildcard(pattern: str) -> tuple[str, str] | None:
 
 def match_digit_wildcard(pattern_text: str, candidate_pin_names: list[str]) -> list[tuple[int, str]]:
     """
-    Split Serial의 Related Pin 와일드카드(예: 'ABC_*[12:0]')를 candidate_pin_names
+    Split Serial의 Related Pin 와일드카드(예: 'RD_EN_*[12:0]')를 candidate_pin_names
     (순서 유지, 보통 Port=="PORT" pin 이름 목록) 중에서 찾는다.
 
     - '*'는 정확히 1개여야 한다(그 외는 매치 없음으로 취급).
