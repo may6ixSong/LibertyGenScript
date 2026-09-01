@@ -19,21 +19,31 @@ timing·internal_power)를 만들 수 없으므로 이제 Validate 단계에서 
     timing_sense/timing_type, 인식된 DBS output pin마다의 related pin)
 
 DBS output pin의 related pin 검사(2026-08 확정 → 2026-08 자동 채움 도입 →
-2026-08 bit 분할 추가 → 2026-08 Data Transfer Type 추가로 재수정):
+2026-08 bit 분할 추가 → 2026-08 Data Transfer Type 추가 → 2026-08 재설계(Number of
+Col) + Serial Cluster "More than 1"(Split Serial) 추가):
   1. "Check DBS Output Pins"로 인식해 둔 pin 집합이 지금 Port List로 다시 펼친 결과와
      동일해야 한다 (Port List 파일이 바뀌면 인식 결과가 달라지므로, 다르면 다시 Check).
   2. 각 related pin은 비어 있으면 안 되고,
   3. Port List에 실제로 존재하는 Pin name이어야 한다.
-  4. (2026-08 추가 → Data Transfer Type이 Parallel일 때만 검사) 그 DBS output pin의
-     Bits가 1보다 크면(=block5에서 bus로 쓰임), Step3에서 입력한 "Bit Depth"(옛
-     "Split into (bits)") 값이 1 이상 Bits 이하의 정수이고 Bits가 그 값으로 정확히
-     나누어떨어져야 한다(나눠떨어진 몫 = cluster 개수 = block5가 쓸 pin() 개수).
-     그리고 Related Pin의 Bits(Port List에서 그 pin의 'Pin name'을 찾아 읽음)가 그
-     몫으로 정확히 나누어떨어져야 한다(나눠떨어진 몫이 cluster당 related_bus_pins가
-     쓸 Bit Depth - 사용자가 직접 입력하지 않고 자동 계산됨). 어느 한쪽이라도
-     나누어떨어지지 않으면 에러. **Data Transfer Type이 Serial이면 이 4번 규칙 자체를
-     건너뛴다** - Serial은 항상 cluster 1개(quotient 1)이므로 Bit Depth를 입력받지도
-     검사하지도 않는다.
+  4. (Data Transfer Type이 Parallel일 때만 검사, 2026-08 재설계) 그 DBS output pin의
+     Bits가 1보다 크면(=block5에서 bus로 쓰임), Related Pin의 Bits가 Step3에서 입력한
+     "Number of Col(#)"(옛 "Bit Depth"/"Split into (bits)") 값으로 정확히 나누어떨어져야
+     한다(나눠떨어진 몫 = cluster 개수 = block5가 쓸 pin() 개수 - **Related Pin 쪽을
+     나눈다는 점이 옛 규칙과 반대**). 그리고 그 DBS output pin 자신의 Bits가 그 몫으로
+     정확히 나누어떨어져야 한다(나눠떨어진 몫이 cluster당 DBS output pin 자신의 Bit
+     Depth - 사용자가 직접 입력하지 않고 자동 계산됨). 어느 한쪽이라도 나누어떨어지지
+     않으면 에러. **Data Transfer Type이 Serial이면 이 4번 규칙 자체를 건너뛴다.**
+  5. (Data Transfer Type이 Serial이고 Serial Cluster가 "More than 1"일 때만, 2026-08
+     추가 - `_validate_serial_split`) pin마다가 아니라 인식된 pin 전체 공통으로 한 번:
+     최대 2개(Top/Bottom)까지만 지원하며, 공통 "Number of Col(#)"로 각 DBS output
+     pin의 Bits가 나누어떨어져야(몫 = 그 pin의 cluster 개수) 하고, 공통 Related Pin
+     와일드카드로 Port==PORT pin 중 일치하는 pin이 있어야 한다(`match_digit_wildcard_pins`,
+     '*'는 숫자만 매칭). 인식된 pin이 1개면 매치된 개수가 그 cluster 개수와 정확히
+     같아야 하고, 2개면 DBS output pin 와일드카드의 '*'가 각각 정확히 'T'/'B'로
+     매치되어(`classify_wildcard_side`) Top/Bottom이 판별되어야 하며, 매치된 Related
+     Pin 중 '*' 숫자값이 홀수인 개수가 Top의 cluster 개수와, 짝수인 개수가 Bottom의
+     cluster 개수와 정확히 같아야 한다. Serial Cluster가 "1"(기본값)이면 이 5번 규칙도
+     건너뛴다 - 이 기능이 생기기 전과 완전히 동일하다.
 
   (변경 이력) 예전에는 여기에 "그 DBS output pin이 있는 Port List 행의 'Related Pin'
   컬럼 값과 정확히 일치해야 한다"는 4번째 규칙이 있었다. "Check DBS Output Pins"를
@@ -42,12 +52,15 @@ DBS output pin의 related pin 검사(2026-08 확정 → 2026-08 자동 채움 �
   고쳐 쓸 수도 있었다. 2026-08 bit 분할 추가와 함께 Related Pin은 다시 Port List
   값으로 **고정**(수정 불가)되었으므로, 여기 3번 규칙("Port List에 실제 존재하는
   pin")은 사실상 Port List 데이터 자체의 무결성 검사가 되었다(사용자 입력 오류를
-  막는 용도가 아님).
+  막는 용도가 아님, Serial Cluster "More than 1"의 Related Pin은 이 규칙과 별개로
+  와일드카드 매칭 자체가 존재 확인을 겸한다).
 
 Data Transfer Type(2026-08 추가): Parallel(DTBUS) / Serial(ADBUS) 중 선택하는 전역
 설정(인식된 pin 전체 공통) - pin_field_defs.DBS_TRANSFER_TYPE_KEY. Parallel이면 위
-4번 규칙대로 Bit Depth/cluster 분할을 검사하고, Serial이면 이 세션의 DBS output pin
-bit 분할 기능이 생기기 전과 동일하게(quotient 항상 1) 그 검사를 건너뛴다.
+4번 규칙대로 Number of Col/cluster 분할을 검사하고, Serial이면 Serial Cluster
+선택(pin_field_defs.DBS_SERIAL_CLUSTER_MODE_KEY)에 따라 "1"이면 이 기능이 생기기
+전과 동일하게(quotient 항상 1) 검사를 건너뛰고, "More than 1"이면 위 5번 규칙을
+따른다.
 """
 
 from __future__ import annotations
@@ -65,12 +78,15 @@ from step3_settings.constants_field_defs import (
     voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
-    DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_TIMING_SENSE_KEY,
-    DBS_TIMING_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY,
-    DBS_TRANSFER_TYPE_PARALLEL, ENABLE_SIGNAL_KEY, ENABLE_SIGNAL_PORT_TYPE,
+    DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT,
+    DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI, DBS_SERIAL_NUM_COL_KEY,
+    DBS_SERIAL_RELATED_PATTERN_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
+    DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY, DBS_TRANSFER_TYPE_PARALLEL,
+    DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY, ENABLE_SIGNAL_PORT_TYPE,
     POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY,
     VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_PORT_TYPE,
-    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, expand_dbs_output_pins, split_pattern_and_range,
+    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, classify_wildcard_side, expand_dbs_output_pins,
+    match_digit_wildcard_pins, split_pattern_and_range,
 )
 
 _REQUIRED_TEXT_SCALARS = [
@@ -224,6 +240,125 @@ def validate_voltage_map(voltage_map: dict) -> list[str]:
     return errors
 
 
+def _validate_serial_split(pins: dict, recognized: list[str], dbs_bits_by_name: dict, port_list_file: str) -> list[str]:
+    """
+    Serial(ADBUS) + Serial Cluster "More than 1"(Split Serial) 검사. (자세한 규칙은
+    이 모듈 docstring "Serial Cluster" 절 참고)
+
+    - 인식된 DBS output pin은 최대 2개(Top/Bottom)까지만 지원한다.
+    - 전체 공통 'Number of Col (#)'로 각 DBS output pin의 총 Bits가 나누어떨어져야
+      하고(몫 = cluster 개수), 그 pin은 1비트를 넘어야 한다.
+    - 전체 공통 Related Pin 와일드카드로 매치된 pin이 있어야 한다.
+    - 인식된 DBS output pin이 1개면, 매치된 Related Pin 개수가 그 pin의 cluster
+      개수와 정확히 같아야 한다.
+    - 2개(Top/Bottom)면, DBS output pin 와일드카드의 '*'가 각각 정확히 'T'/'B'로
+      매치되어야 하고, 매치된 Related Pin 중 '*'가 매치한 숫자값이 홀수인 것의
+      개수가 Top pin의 cluster 개수와, 짝수인 것의 개수가 Bottom pin의 cluster
+      개수와 정확히 같아야 한다.
+    """
+    errors: list[str] = []
+
+    if len(recognized) > 2:
+        errors.append(
+            "Serial Cluster 'More than 1' (Split Serial) supports at most 2 recognized "
+            f"DBS output pins (Top/Bottom); {len(recognized)} were recognized."
+        )
+        return errors
+
+    col_text = str(pins.get(DBS_SERIAL_NUM_COL_KEY, "")).strip()
+    if not col_text:
+        errors.append("'Number of Col' is empty.")
+        return errors
+    try:
+        col_count = int(col_text)
+    except ValueError:
+        errors.append(f"'Number of Col' value '{col_text}' is not a whole number.")
+        return errors
+    if col_count <= 0:
+        errors.append("'Number of Col' must be a positive whole number.")
+        return errors
+
+    related_pattern = str(pins.get(DBS_SERIAL_RELATED_PATTERN_KEY, "")).strip()
+    if not related_pattern:
+        errors.append("Related Pin (wildcard) is empty.")
+        return errors
+
+    # 각 recognized pin의 cluster 개수를 각자의 Bits로 계산한다(Top/Bottom이 서로
+    # 다른 Bits를 가질 수도 있으므로 pin마다 계산 - 보통은 같다).
+    cluster_counts: dict[str, int] = {}
+    for pin_name in recognized:
+        dbs_bits = dbs_bits_by_name.get(pin_name)
+        if dbs_bits is None:
+            errors.append(f"DBS output pin '{pin_name}': Bits value could not be read from the Port List.")
+            continue
+        if dbs_bits <= 1:
+            errors.append(
+                f"DBS output pin '{pin_name}' has only 1 bit and cannot use Serial Cluster "
+                "'More than 1'."
+            )
+            continue
+        if col_count > dbs_bits or dbs_bits % col_count != 0:
+            errors.append(
+                f"DBS output pin '{pin_name}': its {dbs_bits} bits do not divide evenly by "
+                f"'Number of Col' ({col_count})."
+            )
+            continue
+        cluster_counts[pin_name] = dbs_bits // col_count
+
+    if errors:
+        return errors
+
+    matched = match_digit_wildcard_pins(port_list_file, related_pattern)
+    if not matched:
+        errors.append(f"Related Pin pattern '{related_pattern}' matched no PORT pins.")
+        return errors
+
+    dbs_pattern, _ = split_pattern_and_range(str(pins.get(DBS_OUTPUT_KEY, "")))
+
+    if len(recognized) == 1:
+        pin_name = recognized[0]
+        needed = cluster_counts[pin_name]
+        if len(matched) != needed:
+            errors.append(
+                f"Related Pin pattern '{related_pattern}' matched {len(matched)} pin(s), but "
+                f"{needed} are required (DBS output pin '{pin_name}' Bits / Number of Col)."
+            )
+        return errors
+
+    sides: dict[str, str] = {}
+    for pin_name in recognized:
+        side = classify_wildcard_side(dbs_pattern, pin_name)
+        if side is None:
+            errors.append(
+                f"Could not determine Top/Bottom for DBS output pin '{pin_name}' - the DBS "
+                "output pin wildcard's '*' must match exactly 'T' or 'B'."
+            )
+        else:
+            sides[pin_name] = side
+    if errors:
+        return errors
+    if set(sides.values()) != {"top", "bottom"}:
+        errors.append(
+            "Serial Cluster 'More than 1' with 2 DBS output pins requires one 'Top' (T) and "
+            "one 'Bottom' (B) pin - both were classified the same way."
+        )
+        return errors
+
+    odd_count = sum(1 for value, _name in matched if value % 2 == 1)
+    even_count = len(matched) - odd_count
+    for pin_name, side in sides.items():
+        needed = cluster_counts[pin_name]
+        actual = odd_count if side == "top" else even_count
+        parity = "odd" if side == "top" else "even"
+        if actual != needed:
+            errors.append(
+                f"DBS output pin '{pin_name}' ({side.capitalize()}) needs {needed} "
+                f"{parity}-numbered Related Pin(s) (Bits / Number of Col), but {actual} "
+                "were matched."
+            )
+    return errors
+
+
 def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
     """
     "Check DBS Output Pins"로 인식해 둔 DBS output pin마다의 related pin +
@@ -237,7 +372,9 @@ def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
     split_map = pins.get(DBS_BIT_SPLIT_KEY)
     if not isinstance(split_map, dict):
         split_map = {}
-    is_parallel = str(pins.get(DBS_TRANSFER_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT)) == DBS_TRANSFER_TYPE_PARALLEL
+    transfer_type = str(pins.get(DBS_TRANSFER_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT))
+    is_parallel = transfer_type == DBS_TRANSFER_TYPE_PARALLEL
+    is_serial = transfer_type == DBS_TRANSFER_TYPE_SERIAL
 
     recognized = expand_dbs_output_pins(port_list_file, pins.get(DBS_OUTPUT_KEY, ""))
     if not recognized:
@@ -275,7 +412,9 @@ def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
             continue
 
         if not is_parallel:
-            # Serial(ADBUS): quotient는 항상 1 - Bit Depth를 입력받지도 검사하지도 않는다.
+            # Serial(ADBUS) Cluster: 1 (또는 그 외 값): quotient는 항상 1 - Number of
+            # Col을 입력받지도 검사하지도 않는다. Serial Cluster "More than 1"은 pin마다가
+            # 아니라 전체 공통 설정이므로 아래에서 한 번만 검사한다.
             continue
 
         dbs_bits = dbs_bits_by_name.get(pin_name)
@@ -295,39 +434,50 @@ def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
             )
             continue
         related_bits = related_info["bits"]
+        if related_bits <= 1:
+            errors.append(
+                f"DBS output pin '{pin_name}': Related Pin '{value}' has only 1 bit, so it "
+                "cannot be split into columns."
+            )
+            continue
 
-        split_text = str(split_map.get(pin_name, "")).strip()
-        if not split_text:
-            errors.append(f"DBS output pin '{pin_name}': 'Bit Depth' is empty.")
+        col_text = str(split_map.get(pin_name, "")).strip()
+        if not col_text:
+            errors.append(f"DBS output pin '{pin_name}': 'Number of Col' is empty.")
             continue
         try:
-            split_bits = int(split_text)
+            col_count = int(col_text)
         except ValueError:
             errors.append(
-                f"DBS output pin '{pin_name}': 'Bit Depth' value '{split_text}' is not "
+                f"DBS output pin '{pin_name}': 'Number of Col' value '{col_text}' is not "
                 "a whole number."
             )
             continue
-        if split_bits <= 0 or split_bits > dbs_bits:
+        if col_count <= 0 or col_count > related_bits:
             errors.append(
-                f"DBS output pin '{pin_name}': 'Bit Depth' must be between 1 and "
-                f"{dbs_bits} (got {split_bits})."
+                f"DBS output pin '{pin_name}': 'Number of Col' must be between 1 and "
+                f"{related_bits} (Related Pin's Bits, got {col_count})."
             )
             continue
-        if dbs_bits % split_bits != 0:
+        if related_bits % col_count != 0:
             errors.append(
-                f"DBS output pin '{pin_name}': its {dbs_bits} bits do not divide evenly by the "
-                f"{split_bits}-bit depth ({dbs_bits} / {split_bits} is not a whole number)."
+                f"DBS output pin '{pin_name}': Related Pin '{value}' has {related_bits} bits, "
+                f"which do not divide evenly by {col_count} columns."
             )
             continue
 
-        cluster_count = dbs_bits // split_bits
-        if related_bits % cluster_count != 0:
+        cluster_count = related_bits // col_count
+        if dbs_bits % cluster_count != 0:
             errors.append(
-                f"DBS output pin '{pin_name}': Related Pin '{value}' has {related_bits} bits, "
-                f"which do not divide evenly across the {cluster_count} cluster(s) produced by "
-                f"the {split_bits}-bit depth ({related_bits} / {cluster_count} is not a whole number)."
+                f"DBS output pin '{pin_name}': its {dbs_bits} bits do not divide evenly across "
+                f"the {cluster_count} cluster(s) produced by 'Number of Col' "
+                f"({dbs_bits} / {cluster_count} is not a whole number)."
             )
+
+    if is_serial:
+        cluster_mode = str(pins.get(DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT))
+        if cluster_mode == DBS_SERIAL_CLUSTER_MULTI:
+            errors += _validate_serial_split(pins, recognized, dbs_bits_by_name, port_list_file)
 
     return errors
 
