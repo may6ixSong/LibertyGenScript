@@ -89,15 +89,16 @@ Transfer Type + (Serial일 때) Serial Cluster 선택에 따라 갈린다
     pin 자신의 총 Bits를 그 cluster 개수로 나눈 몫이 cluster당 DBS output pin 자신의
     Bit Depth(자동 계산). related_bus_pins는 Related Pin 하나를 그 몫만큼 슬라이스한
     범위다.
-  - **Serial(ADBUS) + Serial Cluster "More than 1"(2026-08 추가, Split Serial)**:
-    전체 공통 "Number of Col(#)"으로 이 DBS output pin 자신의 총 Bits를 나눈 몫이
-    cluster 개수다(Parallel과 반대 - 옛 방식과 같은 계산이다). related_bus_pins는
-    Related Pin 하나를 슬라이스하는 게 아니라, 전체 공통 Related Pin 와일드카드
-    (예: 'RD_EN_*[12:0]', '*'는 숫자만 매칭)로 Port==PORT pin 중 매치된 개별 pin들을
-    '*' 숫자값 오름차순으로 cluster에 배정한다. 인식된 DBS output pin이 Top/Bottom
-    2개면 그 중 '*'가 매치한 숫자값이 홀수인 것만 Top에, 짝수인 것만 Bottom에 쓴다 -
-    Top/Bottom 판별은 DBS output pin 와일드카드의 '*'가 그 pin에서 실제로 매치한
-    조각이 정확히 'T'/'B'인지로 한다(`pin_field_defs.classify_wildcard_side`).
+  - **Serial(ADBUS) + Serial Cluster "More than 1"(2026-08 추가 → 2026-08 재설계,
+    Split Serial)**: 전체 공통 "Number of Col(#)"으로 이 DBS output pin 자신의 총
+    Bits를 나눈 몫이 cluster 개수다(Parallel과 반대 - 옛 방식과 같은 계산이다).
+    related_bus_pins는 Related Pin 하나를 슬라이스하는 게 아니라, **이 DBS output
+    pin 자신의** Related Pin 와일드카드(job["dbs_serial_related_pattern"][pin_name],
+    예: 'RD_EN_*[12:0]', '*'는 숫자만 매칭)로 Port==PORT pin 중 매치된 개별 pin들을
+    '*' 숫자값 오름차순으로 이 pin의 cluster에 배정한다. 인식된 DBS output pin이
+    여러 개면(예: Top/Bottom) 각자 자신의 와일드카드로 독립적으로 매치하고 배정한다
+    (2026-08 재설계 - 예전의 홀/짝 분배 방식은 폐기됐다. "DBS output pin이 1개일 때가
+    총 N벌"이라고 생각하면 된다).
   - **Serial(ADBUS) + Serial Cluster "1"(기본값)**: 이 분할 기능이 생기기 전과 완전히
     동일 - 몫은 항상 1, pin() 하나만 쓰고 related_bus_pins는 Related Pin 전체.
 
@@ -123,7 +124,7 @@ from step1_setup.port_list_reader import parse_bit_range, strip_bit_range_suffix
 from step3_settings.constants_field_defs import VOLTAGE_MATCH_TOLERANCE
 from step3_settings.pin_field_defs import (
     DBS_SERIAL_CLUSTER_MULTI, DBS_TRANSFER_TYPE_PARALLEL, DBS_TRANSFER_TYPE_SERIAL,
-    classify_wildcard_side, match_digit_wildcard,
+    match_digit_wildcard,
 )
 from step4_generate.missing_data import (
     INDENT_2, INDENT_3, INDENT_4, PORT_LIST_NOT_FOUND_TOKEN, write_missing_comment,
@@ -432,14 +433,16 @@ def _serial_split_groups(
 ) -> list[tuple[str, str]] | None:
     """
     Data Transfer Type이 Serial(ADBUS)이고 Serial Cluster가 "More than 1"(Split
-    Serial)일 때의 분할 (2026-08 추가):
+    Serial)일 때의 분할 (2026-08 추가 → 2026-08 재설계 - Top/Bottom 홀짝 분배 방식
+    폐기):
 
     - 이 DBS output pin 자신의 총 Bits를 전체 공통 "Number of Col(#)"으로 나눈 몫이
       cluster 개수(Parallel과 반대로 DBS output pin 쪽을 나눈다).
-    - related_bus_pins는 Related Pin 하나를 슬라이스하는 게 아니라, 전체 공통 Related
-      Pin 와일드카드로 매치된 개별 pin들을 그대로 cluster 순서에 배정한다('*'가 매치한
-      숫자값 오름차순). 인식된 DBS output pin이 2개(Top/Bottom)면 그 중 홀수(Top)/
-      짝수(Bottom)만 쓴다(classify_wildcard_side).
+    - related_bus_pins는 Related Pin 하나를 슬라이스하는 게 아니라, **이 DBS output
+      pin 자신의** Related Pin 와일드카드(job["dbs_serial_related_pattern"][pin_name])
+      로 매치된 개별 pin들을 그대로 cluster 순서에 배정한다('*'가 매치한 숫자값
+      오름차순). 다른 DBS output pin이 몇 개 인식됐든 서로 독립적이다 - 각자 자신의
+      와일드카드로만 매치한다.
 
     필요한 조건이 하나라도 안 맞으면 None(호출부가 폴백 처리) - Step3 Validate가 이미
     막아야 하지만 방어적으로 다시 계산한다.
@@ -457,27 +460,14 @@ def _serial_split_groups(
     if cluster_count <= 1:
         return None
 
-    related_pattern_text = str(job.get("dbs_serial_related_pattern", "")).strip()
+    related_pattern_text = str((job.get("dbs_serial_related_pattern") or {}).get(pin_name, "")).strip()
     if not related_pattern_text:
         return None
     candidate_names = [p["pin_name"] for p in (job.get("port_pins") or [])]
     matched = match_digit_wildcard(related_pattern_text, candidate_names)
-    if not matched:
+    if len(matched) != cluster_count:
         return None
-
-    recognized_pins = job.get("dbs_recognized_pins") or []
-    if len(recognized_pins) >= 2:
-        dbs_pattern = job.get("dbs_output_pattern", "")
-        side = classify_wildcard_side(dbs_pattern, pin_name)
-        if side is None:
-            return None
-        parity = 1 if side == "top" else 0
-        selected = [name for value, name in matched if value % 2 == parity]
-    else:
-        selected = [name for _value, name in matched]
-
-    if len(selected) != cluster_count:
-        return None
+    selected = [name for _value, name in matched]
 
     groups = []
     for i in range(cluster_count):

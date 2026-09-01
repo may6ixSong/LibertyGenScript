@@ -181,7 +181,10 @@ def _default_pins() -> dict:
         DBS_TRANSFER_TYPE_KEY: DBS_TRANSFER_TYPE_DEFAULT,
         DBS_SERIAL_CLUSTER_MODE_KEY: DBS_SERIAL_CLUSTER_MODE_DEFAULT,
         DBS_SERIAL_NUM_COL_KEY: "",
-        DBS_SERIAL_RELATED_PATTERN_KEY: "",
+        # {인식된 DBS output pin name: 와일드카드 문자열} - DBS_RELATED_PINS_KEY/
+        # DBS_BIT_SPLIT_KEY와 같은 모양(2026-08 재설계 - 예전엔 전체 공통 문자열
+        # 하나였다).
+        DBS_SERIAL_RELATED_PATTERN_KEY: {},
     }
 
 
@@ -211,6 +214,10 @@ def load_settings() -> dict:
                 merged_pins[DBS_RELATED_PINS_KEY] = {}
             if not isinstance(merged_pins.get(DBS_BIT_SPLIT_KEY), dict):
                 merged_pins[DBS_BIT_SPLIT_KEY] = {}
+            # dbs_serial_related_pattern도 dict여야 함 - 2026-08 재설계 전 config는 이
+            # 값이 전체 공통 문자열 하나였으므로(구 포맷), 그런 경우도 여기서 걸러진다.
+            if not isinstance(merged_pins.get(DBS_SERIAL_RELATED_PATTERN_KEY), dict):
+                merged_pins[DBS_SERIAL_RELATED_PATTERN_KEY] = {}
             # dbs_data_transfer_type도 두 값 중 하나여야 함 - 아니면 기본값(Serial).
             if merged_pins.get(DBS_TRANSFER_TYPE_KEY) not in (
                 DBS_TRANSFER_TYPE_PARALLEL, DBS_TRANSFER_TYPE_SERIAL,

@@ -34,16 +34,15 @@ Col) + Serial Cluster "More than 1"(Split Serial) 추가):
      Depth - 사용자가 직접 입력하지 않고 자동 계산됨). 어느 한쪽이라도 나누어떨어지지
      않으면 에러. **Data Transfer Type이 Serial이면 이 4번 규칙 자체를 건너뛴다.**
   5. (Data Transfer Type이 Serial이고 Serial Cluster가 "More than 1"일 때만, 2026-08
-     추가 - `_validate_serial_split`) pin마다가 아니라 인식된 pin 전체 공통으로 한 번:
-     최대 2개(Top/Bottom)까지만 지원하며, 공통 "Number of Col(#)"로 각 DBS output
-     pin의 Bits가 나누어떨어져야(몫 = 그 pin의 cluster 개수) 하고, 공통 Related Pin
-     와일드카드로 Port==PORT pin 중 일치하는 pin이 있어야 한다(`match_digit_wildcard_pins`,
-     '*'는 숫자만 매칭). 인식된 pin이 1개면 매치된 개수가 그 cluster 개수와 정확히
-     같아야 하고, 2개면 DBS output pin 와일드카드의 '*'가 각각 정확히 'T'/'B'로
-     매치되어(`classify_wildcard_side`) Top/Bottom이 판별되어야 하며, 매치된 Related
-     Pin 중 '*' 숫자값이 홀수인 개수가 Top의 cluster 개수와, 짝수인 개수가 Bottom의
-     cluster 개수와 정확히 같아야 한다. Serial Cluster가 "1"(기본값)이면 이 5번 규칙도
-     건너뛴다 - 이 기능이 생기기 전과 완전히 동일하다.
+     추가 → 2026-08 재설계 - `_validate_serial_split`) 공통 "Number of Col(#)"은
+     인식된 pin 전체 공통 1개지만, Related Pin은 **인식된 DBS output pin마다 독립적인
+     와일드카드**다(옛 Top/Bottom 홀짝 분배 방식은 폐기 - "DBS output pin이 1개일 때가
+     총 N벌"이라고 생각하면 된다). 인식된 pin마다: 그 pin의 Bits가 공통 Number of
+     Col로 나누어떨어져야(몫 = 그 pin의 cluster 개수) 하고, 그 pin 자신의 Related Pin
+     와일드카드로 Port==PORT pin 중 일치하는 pin이 있어야 하며(`match_digit_wildcard_pins`,
+     '*'는 숫자만 매칭), 매치된 개수가 정확히 그 cluster 개수와 같아야 한다(다른 DBS
+     output pin의 매치 결과와는 무관하게 독립적으로 검사). Serial Cluster가
+     "1"(기본값)이면 이 5번 규칙도 건너뛴다 - 이 기능이 생기기 전과 완전히 동일하다.
 
   (변경 이력) 예전에는 여기에 "그 DBS output pin이 있는 Port List 행의 'Related Pin'
   컬럼 값과 정확히 일치해야 한다"는 4번째 규칙이 있었다. "Check DBS Output Pins"를
@@ -85,8 +84,8 @@ from step3_settings.pin_field_defs import (
     DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY, ENABLE_SIGNAL_PORT_TYPE,
     POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY,
     VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_PORT_TYPE,
-    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, classify_wildcard_side, expand_dbs_output_pins,
-    match_digit_wildcard_pins, split_pattern_and_range,
+    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, expand_dbs_output_pins, match_digit_wildcard_pins,
+    split_pattern_and_range,
 )
 
 _REQUIRED_TEXT_SCALARS = [
@@ -242,28 +241,20 @@ def validate_voltage_map(voltage_map: dict) -> list[str]:
 
 def _validate_serial_split(pins: dict, recognized: list[str], dbs_bits_by_name: dict, port_list_file: str) -> list[str]:
     """
-    Serial(ADBUS) + Serial Cluster "More than 1"(Split Serial) 검사. (자세한 규칙은
-    이 모듈 docstring "Serial Cluster" 절 참고)
+    Serial(ADBUS) + Serial Cluster "More than 1"(Split Serial) 검사 (2026-08 재설계 -
+    Top/Bottom 홀짝 분배 방식 폐기, 자세한 규칙은 이 모듈 docstring "Serial Cluster"
+    절 참고).
 
-    - 인식된 DBS output pin은 최대 2개(Top/Bottom)까지만 지원한다.
-    - 전체 공통 'Number of Col (#)'로 각 DBS output pin의 총 Bits가 나누어떨어져야
-      하고(몫 = cluster 개수), 그 pin은 1비트를 넘어야 한다.
-    - 전체 공통 Related Pin 와일드카드로 매치된 pin이 있어야 한다.
-    - 인식된 DBS output pin이 1개면, 매치된 Related Pin 개수가 그 pin의 cluster
-      개수와 정확히 같아야 한다.
-    - 2개(Top/Bottom)면, DBS output pin 와일드카드의 '*'가 각각 정확히 'T'/'B'로
-      매치되어야 하고, 매치된 Related Pin 중 '*'가 매치한 숫자값이 홀수인 것의
-      개수가 Top pin의 cluster 개수와, 짝수인 것의 개수가 Bottom pin의 cluster
-      개수와 정확히 같아야 한다.
+    - 전체 공통 'Number of Col (#)'는 인식된 pin 전체에 하나.
+    - Related Pin은 **인식된 DBS output pin마다 독립적인 와일드카드**
+      (`pin_field_defs.DBS_SERIAL_RELATED_PATTERN_KEY`, {pin name: 와일드카드} dict).
+    - 인식된 pin마다 독립적으로 검사한다("DBS output pin이 1개일 때가 총 N벌"):
+      그 pin의 총 Bits가 공통 Number of Col로 나누어떨어져야 하고(몫 = cluster
+      개수, pin은 1비트를 넘어야 함), 그 pin 자신의 Related Pin 와일드카드로 매치된
+      pin이 있어야 하며, 매치된 개수가 정확히 그 cluster 개수와 같아야 한다. 다른
+      DBS output pin의 매치 결과와는 서로 무관하다.
     """
     errors: list[str] = []
-
-    if len(recognized) > 2:
-        errors.append(
-            "Serial Cluster 'More than 1' (Split Serial) supports at most 2 recognized "
-            f"DBS output pins (Top/Bottom); {len(recognized)} were recognized."
-        )
-        return errors
 
     col_text = str(pins.get(DBS_SERIAL_NUM_COL_KEY, "")).strip()
     if not col_text:
@@ -278,14 +269,10 @@ def _validate_serial_split(pins: dict, recognized: list[str], dbs_bits_by_name: 
         errors.append("'Number of Col' must be a positive whole number.")
         return errors
 
-    related_pattern = str(pins.get(DBS_SERIAL_RELATED_PATTERN_KEY, "")).strip()
-    if not related_pattern:
-        errors.append("Related Pin (wildcard) is empty.")
-        return errors
+    related_pattern_map = pins.get(DBS_SERIAL_RELATED_PATTERN_KEY)
+    if not isinstance(related_pattern_map, dict):
+        related_pattern_map = {}
 
-    # 각 recognized pin의 cluster 개수를 각자의 Bits로 계산한다(Top/Bottom이 서로
-    # 다른 Bits를 가질 수도 있으므로 pin마다 계산 - 보통은 같다).
-    cluster_counts: dict[str, int] = {}
     for pin_name in recognized:
         dbs_bits = dbs_bits_by_name.get(pin_name)
         if dbs_bits is None:
@@ -303,59 +290,20 @@ def _validate_serial_split(pins: dict, recognized: list[str], dbs_bits_by_name: 
                 f"'Number of Col' ({col_count})."
             )
             continue
-        cluster_counts[pin_name] = dbs_bits // col_count
+        cluster_count = dbs_bits // col_count
 
-    if errors:
-        return errors
-
-    matched = match_digit_wildcard_pins(port_list_file, related_pattern)
-    if not matched:
-        errors.append(f"Related Pin pattern '{related_pattern}' matched no PORT pins.")
-        return errors
-
-    dbs_pattern, _ = split_pattern_and_range(str(pins.get(DBS_OUTPUT_KEY, "")))
-
-    if len(recognized) == 1:
-        pin_name = recognized[0]
-        needed = cluster_counts[pin_name]
-        if len(matched) != needed:
+        related_pattern = str(related_pattern_map.get(pin_name, "")).strip()
+        if not related_pattern:
+            errors.append(f"DBS output pin '{pin_name}': 'Related Pin (wildcard)' is empty.")
+            continue
+        matched = match_digit_wildcard_pins(port_list_file, related_pattern)
+        if len(matched) != cluster_count:
             errors.append(
-                f"Related Pin pattern '{related_pattern}' matched {len(matched)} pin(s), but "
-                f"{needed} are required (DBS output pin '{pin_name}' Bits / Number of Col)."
+                f"DBS output pin '{pin_name}': Related Pin pattern '{related_pattern}' matched "
+                f"{len(matched)} pin(s), but {cluster_count} are required "
+                "(this pin's Bits / Number of Col)."
             )
-        return errors
 
-    sides: dict[str, str] = {}
-    for pin_name in recognized:
-        side = classify_wildcard_side(dbs_pattern, pin_name)
-        if side is None:
-            errors.append(
-                f"Could not determine Top/Bottom for DBS output pin '{pin_name}' - the DBS "
-                "output pin wildcard's '*' must match exactly 'T' or 'B'."
-            )
-        else:
-            sides[pin_name] = side
-    if errors:
-        return errors
-    if set(sides.values()) != {"top", "bottom"}:
-        errors.append(
-            "Serial Cluster 'More than 1' with 2 DBS output pins requires one 'Top' (T) and "
-            "one 'Bottom' (B) pin - both were classified the same way."
-        )
-        return errors
-
-    odd_count = sum(1 for value, _name in matched if value % 2 == 1)
-    even_count = len(matched) - odd_count
-    for pin_name, side in sides.items():
-        needed = cluster_counts[pin_name]
-        actual = odd_count if side == "top" else even_count
-        parity = "odd" if side == "top" else "even"
-        if actual != needed:
-            errors.append(
-                f"DBS output pin '{pin_name}' ({side.capitalize()}) needs {needed} "
-                f"{parity}-numbered Related Pin(s) (Bits / Number of Col), but {actual} "
-                "were matched."
-            )
     return errors
 
 

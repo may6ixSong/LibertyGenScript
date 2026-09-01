@@ -80,20 +80,24 @@ DBS_TRANSFER_TYPE_DEFAULT = DBS_TRANSFER_TYPE_SERIAL
 # 추가로 한 번 더 고르는 전역 선택(인식된 pin 전체 공통).
 #   - 1 (기본값): 이 기능이 생기기 전과 완전히 동일 - quotient 항상 1, Related Pin은
 #     Port List 값 그대로.
-#   - More than 1: Parallel처럼 Number of Col(#)을 입력받되(전체 공통 1개), Related
-#     Pin은 Port List 컬럼이 아니라 사용자가 입력하는 와일드카드(예: "RD_EN_*[12:0]")로
-#     Port List pin name 중 일치하는 pin 전체를 찾는다. DBS output pin의 총 Bits를
-#     그 Number of Col로 나눈 몫이 cluster 개수이고(Parallel과 반대로 DBS output pin
-#     쪽을 나눔), 그 개수만큼 와일드카드로 매치된 Related Pin이 있어야 한다. DBS
-#     output pin이 Top/Bottom 2개로 인식된 경우, 매치된 Related Pin을 '*'가 매치한
-#     숫자값의 홀/짝으로 나눠 Top은 홀수만, Bottom은 짝수만 쓴다(Top/Bottom 판별은
-#     classify_wildcard_side 참고).
+#   - More than 1 (2026-08 재설계 - Top/Bottom 홀짝 분배 방식 폐기): Number of
+#     Col(#)은 여전히 전체 공통 1개지만, Related Pin은 **인식된 DBS output pin마다
+#     독립적인 와일드카드**를 입력받는다(DBS_SERIAL_RELATED_PATTERN_KEY, 예:
+#     "RD_EN_*[12:0]") - DBS output pin이 1개면 와일드카드도 1개, 2개(Top/Bottom
+#     등)면 와일드카드도 각각 따로 2개다("DBS output pin이 1개일 때가 총 N벌"). 각
+#     pin은 자신의 총 Bits를 그 Number of Col로 나눈 몫(cluster 개수)만큼 자신의
+#     와일드카드로 매치된 Related Pin이 있어야 하고, 그 매치된 pin들을 '*'가 매치한
+#     숫자값 오름차순으로 자신의 cluster에 순서대로 배정한다 - 서로 다른 DBS output
+#     pin끼리 매치 결과를 나누지 않는다(과거의 홀/짝 분배와 다른 점).
 DBS_SERIAL_CLUSTER_MODE_KEY = "dbs_serial_cluster_mode"
 DBS_SERIAL_CLUSTER_SINGLE = "single"
 DBS_SERIAL_CLUSTER_MULTI = "multi"
 DBS_SERIAL_CLUSTER_MODE_DEFAULT = DBS_SERIAL_CLUSTER_SINGLE
 
-# Serial Cluster가 "More than 1"일 때만 쓰이는 전역(인식된 pin 전체 공통) 입력 두 개.
+# Serial Cluster가 "More than 1"일 때만 쓰이는 입력 두 개.
+# Number of Col은 전체 공통 1개(문자열), Related Pin은 인식된 DBS output pin마다
+# 독립적인 와일드카드이므로 {pin name: 와일드카드 문자열} dict다(DBS_RELATED_PINS_KEY/
+# DBS_BIT_SPLIT_KEY와 같은 모양).
 DBS_SERIAL_NUM_COL_KEY = "dbs_serial_num_col"
 DBS_SERIAL_RELATED_PATTERN_KEY = "dbs_serial_related_pattern"
 
@@ -151,8 +155,8 @@ def expand_dbs_output_pins(port_list_file: str, dbs_output_text: str) -> list[st
 
 # ---------------------------------------------------------------------------
 # 2026-08 추가 - Serial Cluster "More than 1" (Split Serial): 숫자만 매칭하는
-# 와일드카드(Related Pin) + DBS output pin의 Top/Bottom 판별. block5_writer.py(step4)와
-# settings_validator.py/settings_view.py(step3)가 모두 이 두 헬퍼를 공유한다.
+# 와일드카드(Related Pin, 인식된 DBS output pin마다 독립적으로 하나씩). block5_writer.py
+# (step4)와 settings_validator.py/settings_view.py(step3)가 모두 이 헬퍼를 공유한다.
 # ---------------------------------------------------------------------------
 
 
@@ -201,27 +205,3 @@ def match_digit_wildcard_pins(port_list_file: str, pattern_text: str) -> list[tu
     """match_digit_wildcard()를 현재 Port List의 Port=="PORT" pin 전체를 대상으로 실행."""
     candidates = list_pins_by_port_type(port_list_file, DBS_OUTPUT_PORT_TYPE)
     return match_digit_wildcard(pattern_text, candidates)
-
-
-def classify_wildcard_side(pattern: str, pin_name: str) -> str | None:
-    """
-    Split Serial에서 인식된 DBS output pin이 2개(Top/Bottom)일 때 어느 쪽인지 판별한다.
-
-    pattern은 이미 split_pattern_and_range로 범위 표기를 뗀 DBS output pin 와일드카드
-    (예: 'ABC_*')다. 그 '*'가 pin_name(대괄호를 뗀 base name)에서 실제로 매치한 조각이
-    정확히 'T' 또는 'B'(대소문자 무관)일 때만 판별 가능하다 - 그 외(조각이 T/B가
-    아니거나, pattern에 '*'가 정확히 1개가 아닌 경우)는 None(판별 불가)을 반환한다.
-    """
-    split = _split_single_wildcard(pattern)
-    if split is None:
-        return None
-    prefix, suffix = split
-    base_name = strip_bit_range_suffix(pin_name)
-    if not base_name.startswith(prefix) or not base_name.endswith(suffix):
-        return None
-    fragment = base_name[len(prefix): len(base_name) - len(suffix)].strip().upper()
-    if fragment == "T":
-        return "top"
-    if fragment == "B":
-        return "bottom"
-    return None
