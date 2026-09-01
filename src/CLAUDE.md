@@ -654,8 +654,16 @@ Step1의 Port List 파싱, Step3의 Output Path 파일 대화상자(네트워크
   SIGINT를 보내 1.5초 만에 강제 종료되는 것까지 확인함. 앱은 항상 `run_generator.sh`로
   터미널에서 띄워지므로, 진짜 멈춘 것 같으면 그 터미널에서 Ctrl+C를 누르는 게 가장
   확실한 탈출구다.
-- Ctrl+C를 앱 전역에서 가로채므로 텍스트 입력칸의 Ctrl+C 복사 단축키는 더 이상 쓸 수
-  없다(우클릭 메뉴의 Copy로 대체).
+- **텍스트 칸 포커스면 Ctrl+C는 복사로 통과 (2026-08 수정)**: 처음에는 Ctrl+C를 앱
+  전역에서 무조건 가로채서 텍스트 입력칸의 Ctrl+C 복사 단축키를 쓸 수 없었다(우클릭
+  메뉴의 Copy로만 대체 가능했음). 텍스트를 복사하려던 Ctrl+C까지 강제 종료로 오인되는
+  문제였다. 이벤트 필터(`_CtrlCFilter`)가 Ctrl+C를 가로채기 전에 **현재 포커스를 가진
+  위젯이 `QLineEdit`/`QPlainTextEdit`/`QTextEdit`(생성된 liberty 파일을 보여주는
+  `file_viewer.py`의 읽기 전용 뷰어 포함)이면 그냥 통과**시켜 Qt 기본 복사 동작이
+  실행되도록 고쳤다(`force_quit._COPY_TEXT_WIDGET_TYPES`). 그 외(버튼/목록 등에
+  포커스가 있거나 포커스를 가진 위젯이 없는 경우 - 진짜로 멈춘 것처럼 보일 때 포함)는
+  예전과 동일하게 강제 종료하고, 터미널 SIGINT 경로는 전혀 건드리지 않으므로 "정말
+  멈췄을 때 터미널에서 Ctrl+C" 안전장치는 그대로 유지된다.
 
 ### 근본 원인 (Step1 Port List / Step3 Output Path가 느린 이유)
 
