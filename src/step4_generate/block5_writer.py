@@ -165,6 +165,11 @@ def _cap_text(value: float | None) -> str:
     return PORT_LIST_NOT_FOUND_TOKEN if value is None else "%0.6f" % value
 
 
+def _is_analog(pin: dict) -> bool:
+    """Port List의 'Map' 컬럼 값이 (대소문자 무시) "analog"인지 (2026-08 추가)."""
+    return str(pin.get("map") or "").strip().lower() == "analog"
+
+
 def _volts_text(value: float | None) -> str:
     return PORT_LIST_NOT_FOUND_TOKEN if value is None else "%0.5f" % value
 
@@ -313,6 +318,7 @@ def _write_pin_body(
 
     direction = _direction_text(f_out, pin, pdk_filename)
     cap_text = _cap_text(pin["cap"])
+    is_analog = _is_analog(pin)
     related_power = _text_or_missing(
         f_out, pin["related_power"], f"Related Power for pin '{pin_name}' (Port List)", pdk_filename,
     )
@@ -329,6 +335,8 @@ def _write_pin_body(
         f_out.write(f"{body_indent}always_on : true ;\n")
         f_out.write(f"{body_indent}switch_pin : true ;\n")
         f_out.write(f"{body_indent}capacitance : {cap_text} ;\n")
+        if is_analog:
+            f_out.write(f"{body_indent}is_analog : true ;\n")
         f_out.write(f"{body_indent}related_power_pin : {related_power} ;\n")
         f_out.write(f"{body_indent}related_ground_pin : {related_ground} ;\n")
         f_out.write(f"{body_indent}{process_prefix}_input_signal_level : {volts_text} ;\n")
@@ -336,6 +344,8 @@ def _write_pin_body(
 
     if kind == "dbs_output":
         f_out.write(f"{body_indent}capacitance : {cap_text} ;\n")
+        if is_analog:
+            f_out.write(f"{body_indent}is_analog : true ;\n")
         # 2026-08 확정: max_capacitance는 worst case PDK의 lu_table_template index_2
         # 마지막 값을 그대로 쓴다 (예전엔 값을 몰라 "No Answer" 주석이었다).
         _write_max_capacitance(f_out, job, lut_sections, body_indent)
@@ -352,6 +362,8 @@ def _write_pin_body(
         return
 
     f_out.write(f"{body_indent}capacitance : {cap_text} ;\n")
+    if is_analog:
+        f_out.write(f"{body_indent}is_analog : true ;\n")
     f_out.write(f"{body_indent}related_power_pin : {related_power} ;\n")
     f_out.write(f"{body_indent}related_ground_pin : {related_ground} ;\n")
     f_out.write(f"{body_indent}{process_prefix}_input_signal_level : {volts_text} ;\n")
