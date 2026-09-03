@@ -596,16 +596,18 @@ def list_port_pins_detailed(file_path: str) -> list[dict]:
     Port List에서 Port=="PORT"인 행들을 파일에 나온 순서 그대로
     {"pin_name": str, "bits": int, "volts": float | None, "cap": float | None,
      "related_power": str, "related_ground": str, "related_pin": str, "io": str,
-     "map": str}
+     "map": str, "type": str}
     리스트로 반환한다 (Step4 block5의 pin()/bus() 생성용).
 
     - bits는 Step1 Validate에서 이미 정수인지 검사하지만, 방어적으로 여기서도 정수로
       변환 안 되면 해당 행은 건너뛴다(예외를 던지지 않음).
     - volts는 단위(V 등)가 붙어있어도 숫자만 파싱한다. 파싱 안 되면 None.
     - cap은 숫자로 바로 파싱을 시도하고, 안 되면 None.
-    - related_power/related_ground/related_pin/io/map은 빈 값이면 빈 문자열 그대로
+    - related_power/related_ground/related_pin/io/map/type은 빈 값이면 빈 문자열 그대로
       반환(결측 표시는 block5_writer.py에서 처리). map은 block5의 `is_analog` 판단에
-      쓰인다(2026-08 추가, "Map" 컬럼 값이 대소문자 무시로 "analog"와 같을 때만).
+      쓰인다(2026-08 추가, "Map" 컬럼 값이 대소문자 무시로 "analog"와 같을 때만). type은
+      block5의 `{process_prefix}_pin_type` 값 결정에 쓰인다("Type" 컬럼 값이 대소문자
+      무시로 "clock"과 같을 때만 "clock"으로 씀, 그 외에는 기존 data/data_bus 그대로).
     """
     result = read_port_list_rows(file_path)
     pins: list[dict] = []
@@ -632,6 +634,7 @@ def list_port_pins_detailed(file_path: str) -> list[dict]:
             "related_pin": str(row.get("Related Pin", "")).strip(),
             "io": str(row.get("I/O", "")).strip(),
             "map": str(row.get("Map", "")).strip(),
+            "type": str(row.get("Type", "")).strip(),
         })
     return pins
 

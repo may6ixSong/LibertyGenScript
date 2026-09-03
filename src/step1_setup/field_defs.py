@@ -61,7 +61,7 @@ PORT_LIST_REQUIRED_COLUMNS = [
     "Port", "Pin name", "Bits", "Num", "I/O", "Volts", "Cap", "Map",
 ]
 PORT_LIST_OPTIONAL_COLUMNS = [
-    "Related Power", "Related ground", "Related Pin", "Timing reference",
+    "Related Power", "Related ground", "Related Pin", "Timing reference", "Type",
 ]
 
 # ---------------------------------------------------------------------------

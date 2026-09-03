@@ -170,6 +170,11 @@ def _is_analog(pin: dict) -> bool:
     return str(pin.get("map") or "").strip().lower() == "analog"
 
 
+def _is_clock(pin: dict) -> bool:
+    """Port List의 'Type' 컬럼 값이 (대소문자 무시) "clock"인지 (2026-08 추가)."""
+    return str(pin.get("type") or "").strip().lower() == "clock"
+
+
 def _volts_text(value: float | None) -> str:
     return PORT_LIST_NOT_FOUND_TOKEN if value is None else "%0.5f" % value
 
@@ -328,6 +333,10 @@ def _write_pin_body(
     # 모듈 docstring "2026-08 재설계 (input_signal_level)" 참고.
     volts_text = _input_signal_level_text(pin["volts"], job)
 
+    # 2026-08 추가: Port List 'Type' 컬럼 값이 "clock"이면 pin_type을 "clock"으로
+    # 덮어쓴다. 그 외에는 기존과 동일하게 data/data_bus 그대로 쓴다.
+    if _is_clock(pin):
+        pin_type_value = "clock"
     f_out.write(f"{body_indent}{process_prefix}_pin_type : {pin_type_value} ;\n")
     f_out.write(f"{body_indent}direction : {direction} ;\n")
 
