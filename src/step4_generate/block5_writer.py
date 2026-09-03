@@ -335,10 +335,15 @@ def _write_pin_body(
 
     # 2026-08 추가: Port List 'Type' 컬럼 값이 "clock"이면 pin_type을 "clock"으로
     # 덮어쓴다. 그 외에는 기존과 동일하게 data/data_bus 그대로 쓴다.
-    if _is_clock(pin):
+    pin_is_clock = _is_clock(pin)
+    if pin_is_clock:
         pin_type_value = "clock"
     f_out.write(f"{body_indent}{process_prefix}_pin_type : {pin_type_value} ;\n")
     f_out.write(f"{body_indent}direction : {direction} ;\n")
+    # 2026-08 추가: 같은 'Type' 컬럼 판단으로, direction 바로 다음 줄에 표준 Liberty
+    # `clock` attribute도 함께 쓴다. clock이 아니면 이 줄은 쓰지 않는다(기존과 동일).
+    if pin_is_clock:
+        f_out.write(f"{body_indent}clock : true ;\n")
 
     if kind == "enable_signal":
         f_out.write(f"{body_indent}always_on : true ;\n")
