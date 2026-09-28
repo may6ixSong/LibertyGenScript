@@ -147,7 +147,8 @@ from ui.theme import (
 )
 from ui.ui_common import (
     NoWheelComboBox, add_shadow, build_back_button, build_bottom_button_row,
-    build_label_with_info, build_section_header, run_export_config_dialog,
+    build_label_with_info, build_section_header, highlight_empty_required_fields,
+    run_export_config_dialog, scroll_to_widget,
 )
 
 _HINT_STYLE = f"color: {MUTED_TEXT_COLOR}; font-size: 11px;"
@@ -1365,6 +1366,8 @@ class SettingsView(QWidget):
             if self.hide_loading:
                 self.hide_loading()
 
+        self._mark_empty_required_fields()
+
         if errors:
             self._settings_validated = False
             self.result_label.setStyleSheet(f"color: {ERROR_COLOR};")
@@ -1380,6 +1383,46 @@ class SettingsView(QWidget):
                     "Settings passed validation. Choose an output path to continue."
                 )
         self._update_generate_button_state()
+
+    def _required_widgets(self) -> list[QWidget]:
+        """
+        비어 있으면 Validate 에러가 나는 입력칸 목록 (settings_validator 규칙과 동일).
+        DBS output pin - power_down_function과 Output Path는 비어 있어도 되므로 빠진다.
+        Number of Col / Related Pin (wildcard)는 지금 선택된 Data Transfer Type /
+        Serial Cluster에서 실제로 쓰이고(칸이 있고) 활성화된 것만 넣는다.
+        """
+        widgets: list[QWidget] = [self.scalar_widgets[key] for key, *_ in SCALAR_CONSTANT_DEFS]
+        widgets += [
+            self.virtual_power_combo,
+            self.enable_signal_edit, self.switch_function_edit, self.pg_function_edit,
+            self.power_down_edit, self.power_down_rise_edit, self.power_down_fall_edit,
+            self.power_down_when_edit,
+            self.dbs_output_edit, self.dbs_timing_sense_edit, self.dbs_timing_type_edit,
+        ]
+        if not self._dbs_check_done:
+            return widgets
+
+        is_serial_multi = (
+            self._current_transfer_type() == DBS_TRANSFER_TYPE_SERIAL
+            and self._current_serial_cluster_mode() == DBS_SERIAL_CLUSTER_MULTI
+        )
+        if is_serial_multi:
+            widgets.append(self.dbs_serial_num_col_edit)
+        for info in self._dbs_row_info:
+            for key in ("split_edit", "serial_related_edit"):
+                edit = info.get(key)
+                if edit is not None and edit.isEnabled():
+                    widgets.append(edit)
+        return widgets
+
+    def _mark_empty_required_fields(self) -> None:
+        """
+        비어 있어서 Validate 에러가 난 입력칸을 빨간 테두리 + "Must fill"로 표시하고
+        (채워진 칸은 표시를 지움), 화면 순서상 첫 번째 칸으로 스크롤한다.
+        """
+        marked = highlight_empty_required_fields(self._required_widgets())
+        if marked:
+            scroll_to_widget(marked[0])
 
     def _update_generate_button_state(self) -> None:
         # 2026-08 변경: Output Path는 더 이상 Validate로 잠기지 않으므로, Generate는

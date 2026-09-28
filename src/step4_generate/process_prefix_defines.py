@@ -34,9 +34,11 @@ import re
 from step4_generate.missing_data import INDENT_1
 
 # (attribute 이름의 process_prefix 뒷부분, 소속 그룹, 값 타입).
-# 그룹은 표준 Liberty 그룹("cell"/"pin")이거나, 아래 _CUSTOM_GROUPS에 있는 커스텀
+# 그룹은 표준 Liberty 그룹("library"/"cell"/"pin")이거나, 아래 _CUSTOM_GROUPS에 있는 커스텀
 # 그룹 이름의 뒷부분(그 경우 실제 그룹 이름도 "{process_prefix}_그 이름"이 된다).
 _ATTRIBUTES: list[tuple[str, str, str]] = [
+    # block2_writer.py write_block2() - library{} 직속 속성 (voltage_map 직전 줄)
+    ("default_unit_area_cell", "library", "string"),
     # block4_writer.py write_block4() - cell{} 직속 속성
     ("class", "cell", "string"),
     ("cell_type", "cell", "string"),
@@ -109,6 +111,6 @@ def write_process_prefix_defines(
         attr_name = f"{process_prefix}_{attr_suffix}"
         if attr_name in already_defined:
             continue
-        group_name = group if group in ("cell", "pin") else f"{process_prefix}_{group}"
+        group_name = group if group in ("library", "cell", "pin") else f"{process_prefix}_{group}"
         f_out.write(f"{INDENT_1}define({attr_name}, {group_name}, {value_type}) ;\n")
     f_out.write("\n")

@@ -367,6 +367,17 @@ block5가 실제로 여러 `pin()` 범위를 쓰는 방식은 아래 "Step 4 —
 (`output_path_status`, ✓/✗)이 있다. **Generate 버튼은 여전히 "Validate 통과" +
 "Output Path가 실제로 존재"를 모두 요구한다**(`_update_generate_button_state`).
 
+### 비어 있는 필수 입력칸 표시 (Step2/Step3 공통, 2026-09 추가)
+
+Validate를 누르면 에러 목록과 함께, 비어 있어서 에러가 난 입력칸을 빨간 테두리 +
+빨간 배경으로 표시하고 칸 안에 "Must fill"(드롭다운은 "Must select")을 띄운다
+(`ui_common.highlight_empty_required_fields`, QSS는 `theme.py`의
+`[missingRequired="true"]` 규칙). 값을 채우면 그 칸의 표시는 즉시 사라진다. 표시된 칸이
+접힌 카드(liberty setting / voltage condition) 안에 있으면 카드를 펼치고, 첫 번째 칸으로
+스크롤한다. 어떤 칸을 필수로 넘길지는 각 화면(`UDCView._mark_empty_required_fields`,
+`SettingsView._required_widgets`)이 validator 규칙에 맞춰 고른다 - validator에 필수
+필드를 추가/삭제하면 이 목록도 같이 맞출 것.
+
 ### Step 3 Validate 검사 항목
 - Constants: `class` / `process_prefix` / `output_prefix` / `DFF Cell Name` /
   `LUT Table`이 비어있지 않은지, `Worst case primitive liberty`가 선택돼 있고 **Step2의
@@ -461,6 +472,11 @@ forwarding 환경에서 보장할 수 없어서,
    `voltage_map`보다는 앞에 써준다. **block4/block5에서 새 `{process_prefix}_` 줄을
    추가/삭제/이름변경할 때 이 목록을 같이 맞추는 규칙은 이 문서 맨 위 "코드 수정 규칙"
    절에 있다 - 반드시 지킬 것.**
+   그 define들 다음, `voltage_map` 바로 앞에
+   `{process_prefix}_default_unit_area_cell : {DFF Cell Name} ;` 1줄을 쓴다(2026-09 추가,
+   값은 Step3 Constants의 DFF Cell Name). library 그룹 attribute이므로
+   `process_prefix_defines.py`의 `_ATTRIBUTES`에 `("default_unit_area_cell", "library",
+   "string")`로 define도 함께 등록돼 있다.
 3. **Block 2-(2) (voltage_map)** (2026-08 Voltage Map 재설계): Step2에서 이 liberty에
    선택된 voltage condition 이름으로 Voltage Map에서 그 condition을 찾아(대소문자 무시)
    Power Type1..N 값을 가져와, **power type 개수만큼의 VDD 줄 + VSS 1줄**을 항상 전부 작성한다.

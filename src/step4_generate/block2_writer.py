@@ -3,6 +3,7 @@ block2_writer.py
 
 Block 2 작성: `library (...) {` 선언부터 시작해서
   2-(1) library 선언 + 우리 쪽 date/revision/comment + PDK 본문(그대로 복사)
+  2-(1') {process_prefix}_default_unit_area_cell : {DFF Cell Name} (voltage_map 직전 1줄)
   2-(2) voltage_map (power type 개수만큼의 VDD 줄 + VSS 1줄, Step2/Step3 값으로 항상
         전부 작성 - 2026-08 Voltage Map 재설계)
   2-(3) operating_conditions / default_operating_conditions (괄호 안 이름은 PDK가 아니라
@@ -102,6 +103,10 @@ def write_block2(f_out, job: dict, sections: dict, header_date_parts: tuple) -> 
     # 다음, 우리 쪽 voltage_map보다 앞에 둔다(2026-08 위치 조정 - PDK를 붙여넣은 뒤에
     # 오는 게 읽기 자연스럽고, PDK 자체의 define들과도 한데 모여 있어 비교하기 쉽다).
     write_process_prefix_defines(f_out, job["process_prefix"], sections["body_lines"])
+
+    # default unit area cell - Step3의 DFF Cell Name을 그대로 쓴다. PDK 본문/define들
+    # 다음, voltage_map 직전 위치(define은 process_prefix_defines.py의 library 그룹 항목).
+    f_out.write(f"{INDENT_1}{job['process_prefix']}_default_unit_area_cell : {job['dff_cell_name']} ;\n")
 
     # ---- Block 2-(2): voltage_map - pg_pin 존재 여부와 무관하게 항상 전부 작성.
     # power type 개수만큼의 VDD 줄(이름은 Step3에서 입력한 Power Type voltage name,

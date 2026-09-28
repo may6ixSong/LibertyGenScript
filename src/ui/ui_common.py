@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QPropertyAnimation
-from PyQt5.QtGui import QColor
+from PyQt5.QtCore import Qt, QPropertyAnimation, QTimer
+from PyQt5.QtGui import QColor, QPalette
 from PyQt5.QtWidgets import (
     QAbstractItemView, QComboBox, QFileDialog, QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QMessageBox, QPushButton, QToolTip, QWidget,
+    QLineEdit, QMessageBox, QPushButton, QScrollArea, QToolTip, QWidget,
 )
 
 import config_transfer
@@ -237,3 +237,116 @@ class DetailsList(QListWidget):
         anim.setEndValue(1.0)
         anim.start()
         self._anim = anim
+
+# ---------------------------------------------------------------------------
+# 필수 입력칸 "Must fill" 표시 - Step2/Step3 Validate 때 비어 있어서 에러가 난 입력칸을
+# 빨간 테두리 + 안내 문구로 표시한다. 입력할 칸이 많아 놓친 칸을 바로 찾을 수 있도록.
+#   - QLineEdit: 빨간 테두리/배경 + placeholder를 "Must fill"로 바꿈
+#   - QComboBox: 빨간 테두리/배경 + 빈 선택지(data가 "")의 문구를 "Must select"로 바꿈
+# 사용자가 값을 채우면(글자 입력/선택 변경) 그 칸의 표시는 즉시 사라진다.
+# ---------------------------------------------------------------------------
+MISSING_REQUIRED_PROPERTY = "missingRequired"
+MISSING_FILL_TEXT = "Must fill"
+MISSING_SELECT_TEXT = "Must select"
+_ORIGINAL_TEXT_PROPERTY = "_missingRequiredOriginalText"
+_HOOKED_PROPERTY = "_missingRequiredHooked"
+
+
+def _is_empty_required(widget: QWidget) -> bool:
+    if isinstance(widget, QLineEdit):
+        return not widget.text().strip()
+    if isinstance(widget, QComboBox):
+        if widget.currentIndex() < 0:
+            return True
+        data = widget.currentData()
+        # data 없이 addItems()로만 채운 드롭다운은 보이는 글자로 판단한다.
+        return not str(widget.currentText() if data is None else data).strip()
+    return False
+
+
+def _repolish(widget: QWidget) -> None:
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+    widget.update()
+
+
+def _set_missing_required(widget: QWidget, missing: bool) -> None:
+    was_missing = bool(widget.property(MISSING_REQUIRED_PROPERTY))
+    if was_missing == missing:
+        return
+    widget.setProperty(MISSING_REQUIRED_PROPERTY, missing)
+    _repolish(widget)
+
+    if isinstance(widget, QLineEdit):
+        if missing:
+            widget.setProperty(_ORIGINAL_TEXT_PROPERTY, widget.placeholderText())
+            widget.setPlaceholderText(MISSING_FILL_TEXT)
+            palette = widget.palette()
+            palette.setColor(QPalette.PlaceholderText, QColor(ERROR_COLOR))
+            widget.setPalette(palette)
+        else:
+            widget.setPlaceholderText(str(widget.property(_ORIGINAL_TEXT_PROPERTY) or ""))
+            widget.setPalette(QPalette())
+    elif isinstance(widget, QComboBox) and widget.count() > 0 and widget.itemData(0) in ("", None):
+        # 빈 선택지("(Select)"/"(None)")가 맨 앞에 있는 드롭다운만 문구를 바꾼다.
+        if missing:
+            widget.setProperty(_ORIGINAL_TEXT_PROPERTY, widget.itemText(0))
+            widget.setItemText(0, MISSING_SELECT_TEXT)
+        else:
+            original = widget.property(_ORIGINAL_TEXT_PROPERTY)
+            if original is not None and widget.itemText(0) == MISSING_SELECT_TEXT:
+                widget.setItemText(0, str(original))
+
+
+def _hook_auto_clear(widget: QWidget) -> None:
+    """값이 채워지는 순간 표시를 지우도록 한 번만 연결한다."""
+    if widget.property(_HOOKED_PROPERTY):
+        return
+    widget.setProperty(_HOOKED_PROPERTY, True)
+
+    def _on_changed(*_args) -> None:
+        if widget.property(MISSING_REQUIRED_PROPERTY) and not _is_empty_required(widget):
+            _set_missing_required(widget, False)
+
+    if isinstance(widget, QLineEdit):
+        widget.textChanged.connect(_on_changed)
+    elif isinstance(widget, QComboBox):
+        widget.currentIndexChanged.connect(_on_changed)
+
+
+def highlight_empty_required_fields(widgets) -> list[QWidget]:
+    """
+    넘겨받은 필수 입력칸 중 비어 있는 칸은 "Must fill"로 표시하고, 채워진 칸은 표시를
+    지운다. 표시한 칸 목록을 돌려준다(화면 순서 그대로) - 호출한 쪽에서 접혀 있는
+    카드를 펼치고 첫 번째 칸으로 스크롤(scroll_to_widget)하는 데 쓴다.
+
+    어떤 칸이 "필수"인지는 호출한 쪽(각 Step 화면)이 validator 규칙에 맞춰 골라서
+    넘긴다 - 비어 있으면 항상 Validate 에러가 나는 칸만 넘길 것.
+    """
+    marked: list[QWidget] = []
+    for widget in widgets:
+        if widget is None:
+            continue
+        _hook_auto_clear(widget)
+        missing = _is_empty_required(widget)
+        _set_missing_required(widget, missing)
+        if missing:
+            marked.append(widget)
+    return marked
+
+
+def scroll_to_widget(widget: QWidget) -> None:
+    """
+    widget을 감싸는 QScrollArea가 있으면 그 widget이 보이도록 스크롤한다. 방금 펼친
+    카드 안의 칸일 수 있으므로 레이아웃이 다시 계산된 다음(이벤트 루프 한 바퀴 뒤)에
+    스크롤한다.
+    """
+    def _scroll() -> None:
+        parent = widget.parentWidget()
+        while parent is not None:
+            if isinstance(parent, QScrollArea):
+                parent.ensureWidgetVisible(widget, 50, 50)
+                return
+            parent = parent.parentWidget()
+
+    QTimer.singleShot(0, _scroll)

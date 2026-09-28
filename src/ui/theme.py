@@ -22,6 +22,8 @@ BORDER_COLOR = "#E4E6EF"
 TEXT_COLOR = "#1F2430"
 MUTED_TEXT_COLOR = "#6B7280"
 ERROR_COLOR = "#DC2626"
+# Validate 때 비어 있는 필수 입력칸(ui_common.highlight_empty_required_fields) 배경
+ERROR_BG = "#FEF2F2"
 SUCCESS_COLOR = "#16A34A"
 PENDING_COLOR = "#9CA3AF"
 VOLTAGE_COLOR = "#2563EB"
@@ -250,6 +252,17 @@ QSpinBox {{
     border: 1px solid {BORDER_COLOR};
     border-radius: 8px;
     padding: 4px 6px;
+}}
+
+/* Validate 때 비어 있어서 에러가 난 필수 입력칸 (ui_common.highlight_empty_required_fields).
+   :focus 규칙보다 뒤에 둬서, 포커스가 가 있어도 채울 때까지는 빨간 테두리가 유지된다. */
+QLineEdit[missingRequired="true"], QComboBox[missingRequired="true"] {{
+    border: 1px solid {ERROR_COLOR};
+    background-color: {ERROR_BG};
+}}
+
+QComboBox[missingRequired="true"] {{
+    color: {ERROR_COLOR};
 }}
 
 QTableWidget {{
