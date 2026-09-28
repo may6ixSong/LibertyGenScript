@@ -55,7 +55,8 @@ from ui.theme import (
 )
 from ui.ui_common import (
     NoWheelComboBox, add_shadow, build_back_button, build_bottom_button_row,
-    build_hint, build_section_header, run_export_config_dialog,
+    build_hint, build_section_header, highlight_empty_required_fields,
+    run_export_config_dialog, scroll_to_widget,
 )
 
 _NUMBER_REGEX = QRegExp(r"^-?\d*\.?\d*$")
@@ -419,6 +420,13 @@ class _EntryCard(QFrame):
         entry[ENTRY_PDK_KEY] = self.pdk_combo.currentData() or ""
         entry[ENTRY_DBS_KEY] = self.dbs_combo.currentData() or ""
         return entry
+
+    def required_widgets(self) -> list[QWidget]:
+        """비어 있으면 Validate 에러가 나는 칸 - 이 카드의 입력칸 전부."""
+        return [
+            *self.select_widgets.values(), *self.number_widgets.values(),
+            self.pdk_combo, self.dbs_combo,
+        ]
 
     def set_match_status(self, text: str, status: str = "info") -> None:
         color = {
@@ -855,6 +863,8 @@ class UDCView(QWidget):
             if self.hide_loading:
                 self.hide_loading()
 
+        self._mark_empty_required_fields()
+
         summary = (
             f"{len(entries)} liberty file(s) configured, "
             f"{len(self.voltage_map_panel.condition_names())} voltage condition(s)"
@@ -870,6 +880,22 @@ class UDCView(QWidget):
             )
             self.next_btn.setEnabled(True)
             self.next_btn.setToolTip("")
+
+    def _mark_empty_required_fields(self) -> None:
+        """
+        비어 있어서 Validate 에러가 난 입력칸을 빨간 테두리 + "Must fill"로 표시한다
+        (채워진 칸은 표시를 지움). 표시된 칸이 있는 liberty setting 카드가 접혀 있으면
+        펼치고, 화면 순서상 첫 번째 칸으로 스크롤한다.
+        """
+        marked = highlight_empty_required_fields(self.common_widgets.values())
+        marked += self.voltage_map_panel.mark_empty_required()
+        for card in self.entry_cards:
+            card_marked = highlight_empty_required_fields(card.required_widgets())
+            if card_marked and not card.is_expanded():
+                card.set_expanded(True)
+            marked += card_marked
+        if marked:
+            scroll_to_widget(marked[0])
 
     def _on_next_clicked(self) -> None:
         self._persist()

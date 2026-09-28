@@ -46,7 +46,9 @@ from step3_settings.constants_field_defs import (
     voltage_map_name_key,
 )
 from ui.theme import MUTED_TEXT_COLOR, TEXT_COLOR
-from ui.ui_common import add_shadow, build_hint, build_section_header
+from ui.ui_common import (
+    add_shadow, build_hint, build_section_header, highlight_empty_required_fields,
+)
 
 _HINT_STYLE = f"color: {MUTED_TEXT_COLOR}; font-size: 11px;"
 
@@ -213,6 +215,12 @@ class _ConditionCard(QFrame):
             for i in range(1, self._power_type_count + 1)
         ]
         self.summary_label.setText(" / ".join(values) if not self.is_expanded() else "")
+
+    def required_widgets(self) -> list[QLineEdit]:
+        """비어 있으면 Validate 에러가 나는 칸(이름 + 현재 Power Type 개수만큼의 값)."""
+        return [self.name_edit] + [
+            self.value_edits[condition_value_key(i)] for i in range(1, self._power_type_count + 1)
+        ]
 
     def collect(self) -> dict:
         return {
@@ -460,6 +468,25 @@ class VoltageMapPanel(QWidget):
                 key: edit.text().strip() for key, edit in self.digital_voltage_edits.items()
             },
         }
+
+    def mark_empty_required(self) -> list[QWidget]:
+        """
+        Voltage Map에서 비어 있는 필수 칸(Power Type name/voltage(digital), condition
+        이름/값)을 "Must fill"로 표시하고 표시한 칸 목록을 돌려준다. 값 칸이 비어 있는
+        condition 카드가 접혀 있으면 펼친다.
+        """
+        count = self.power_type_count_spin.value()
+        widgets: list[QWidget] = []
+        for type_index in range(1, count + 1):
+            widgets.append(self.name_edits.get(voltage_map_name_key(type_index)))
+            widgets.append(self.digital_voltage_edits.get(voltage_map_digital_voltage_key(type_index)))
+        marked = highlight_empty_required_fields(widgets)
+        for card in self.condition_cards:
+            card_marked = highlight_empty_required_fields(card.required_widgets())
+            if any(widget is not card.name_edit for widget in card_marked):
+                card.set_expanded(True)
+            marked += card_marked
+        return marked
 
     def condition_names(self) -> list[str]:
         """지금 화면에 입력돼 있는 condition 이름 목록 (빈 이름 제외, 순서 유지)."""
