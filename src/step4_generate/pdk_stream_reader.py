@@ -15,6 +15,24 @@ lu_table_template(index_1/index_2)을 한 번에 뽑았다. 이제 lu_table_temp
      library 선언 ~ voltage_map ~ input_voltage / output_voltage까지만 필요하다. 이
      값들은 전부 첫 `cell (...)` 선언보다 앞에 있으므로, 첫 cell 선언을 만나는 즉시
      읽기를 멈춘다 - 파일의 압도적인 대부분(cell 본문 수십만 줄)은 아예 읽지 않는다.
+     **`library (...) {` ~ 첫 `voltage_map` 줄 사이는 정해진 접두어로 시작하는 줄만
+     골라서 가져오고 나머지는 전부 버린다**(2026-08 변경 - 예전에는 이 구간 전체를
+     그대로 복사했는데, PDK/DK 파일마다 이 구간에 무엇이 있는지가 제각각이라 우리가
+     모르는/불필요한 내용까지 그대로 딸려 들어오는 문제가 있었다. 그 다음엔 `define`/
+     `define_group`만 남기도록 좁혔었는데, 그것만으로는 부족하다는 실사용 확인을 거쳐
+     아래 `_BODY_KEEP_PREFIXES`로 다시 넓혔다). 가져오는 기준(사용자 지정, 전부 첫
+     토큰이 그 접두어로 **시작**하면 포함 - 정확히 일치가 아님):
+       - `define`(`define_group` 포함) / `delay_model` / `default` / `input_` /
+         `output_` / `slew_` / `nom_`
+       - `voltage_unit` / `current_unit` / `leakage_power_unit` /
+         `capacitive_load_unit` / `library_features` / `time_unit` /
+         `pulling_resistance_unit` / `in_place_swap_mode`
+     이 접두어들은 전부 한 줄짜리 선언(그룹을 여는 게 아님)이라는 전제이므로,
+     안전장치로 그 줄에 `{`가 있으면(그룹을 여는 줄이면) 접두어가 맞아도 가져오지
+     않는다 - 닫는 `}` 없이 통째로 남으면 전체 중괄호 균형이 깨지기 때문
+     (`_should_keep_body_line`). 판단은 원본 순서대로 한 줄씩 스캔하면서 그 자리에서
+     내리고, 살아남은 줄은 PDK에 있던 순서 그대로 이어붙인다 - 별도로 재배열하지
+     않는다.
 
   2. read_lut_table_sections(pdk_path, dff_cell_name, lut_table_name) - 실행당 한 번
      (block3용, worst case PDK 전용) cell 영역만 보므로 body_lines 같은 건 아예 모으지
@@ -29,8 +47,41 @@ from __future__ import annotations
 
 import re
 
-_SKIP_TOKENS_IN_BODY = {"date", "revision", "comment"}
+# library 선언 ~ 첫 voltage_map 줄 사이에서 실제로 가져올 줄의 첫 토큰이 이 중 하나로
+# *시작*하면 포함한다(정확히 일치가 아니라 prefix 기준 - 예: "nom_"은 nom_voltage/
+# nom_temperature/nom_process를 전부 잡는다). 2026-08 사용자 지정. 이 목록에 없으면
+# (date/revision/comment 포함, PDK마다 뭐가 더 있을지 모르는 그 외 전부) 버린다.
+_BODY_KEEP_PREFIXES = (
+    "define",  # define(...) / define_group(...) - define_group도 "define"으로 시작
+    "delay_model",
+    "default",  # default_max_transition, default_fanout_load, ...
+    "voltage_unit",
+    "current_unit",
+    "leakage_power_unit",
+    "capacitive_load_unit",
+    "library_features",
+    "time_unit",
+    "pulling_resistance_unit",
+    "in_place_swap_mode",
+    "input_",  # input_threshold_pct_rise, input_threshold_pct_fall, ...
+    "output_",  # output_threshold_pct_rise, output_threshold_pct_fall, ...
+    "slew_",  # slew_derate_from_library, slew_lower_threshold_pct_rise, ...
+    "nom_",  # nom_process, nom_voltage, nom_temperature
+)
 _PAREN_CONTENT_PATTERN = re.compile(r"\(([^)]*)\)")
+
+
+def _should_keep_body_line(token: str, line: str) -> bool:
+    """
+    library 선언 ~ 첫 voltage_map 줄 사이의 한 줄을 body_lines로 가져올지 판단한다.
+    `_BODY_KEEP_PREFIXES` 중 하나로 시작하는 토큰만 대상이고, 그 중에서도 그룹을 여는
+    줄(`{`가 있는 줄)은 제외한다 - 여기서 가져오는 건 전부 한 줄짜리 선언이라는
+    전제이므로, 혹시라도 여러 줄짜리 그룹의 첫 줄만 집으면 닫는 `}`가 없어 전체
+    중괄호 균형이 깨진다.
+    """
+    if "{" in line:
+        return False
+    return token.startswith(_BODY_KEEP_PREFIXES)
 
 # index_1/index_2 검색을 무한정 계속하지 않도록 하는 안전장치(비정상적으로 큰
 # cell_rise/cell_fall 블록을 만나도 멈추도록).
@@ -142,9 +193,9 @@ def new_library_sections() -> dict:
 
 def read_pdk_library_sections(pdk_path: str) -> dict:
     """
-    block2 작성에 필요한 것만 뽑아낸다 (library 선언 / 본문 / input_voltage /
-    output_voltage). 이 값들은 전부 첫 `cell (...)` 선언 앞에 있으므로, 첫 cell 선언을
-    만나는 즉시 읽기를 멈춘다.
+    block2 작성에 필요한 것만 뽑아낸다 (library 선언 / _BODY_KEEP_PREFIXES로 시작하는
+    줄(define·define_group 포함) / input_voltage / output_voltage). 이 값들은 전부 첫
+    `cell (...)` 선언 앞에 있으므로, 첫 cell 선언을 만나는 즉시 읽기를 멈춘다.
 
     Returns: 위 new_library_sections()가 정의하는 형태의 dict.
     """
@@ -161,16 +212,18 @@ def read_pdk_library_sections(pdk_path: str) -> dict:
         if not result["found_library_decl"]:
             return result
 
-        # 2단계: voltage_map 직전까지 본문 복사 (자체 date/revision/comment는 스킵).
-        # 2026-08 수정: indent는 우리가 항상 2칸 기준으로 새로 입힐 것이므로, PDK
-        # 원본의 들여쓰기는 버리고 내용(텍스트)만 strip해서 저장한다. 빈 줄도
-        # "text가 적힌 부분만 가져온다"는 원칙에 따라 그대로 버린다.
+        # 2단계: voltage_map 직전까지, _BODY_KEEP_PREFIXES로 시작하는 줄만 골라서
+        # 가져온다(2026-08 변경 - 위 모듈 docstring 참고. 그 외 줄은 date/revision/
+        # comment를 포함해 전부 버린다). indent는 우리가 항상 2칸 기준으로 새로 입힐
+        # 것이므로, PDK 원본의 들여쓰기는 버리고 내용(텍스트)만 strip해서 저장한다.
+        # PDK에 있던 순서 그대로 이어붙이고, 한 줄 한 줄 볼 때 가져올지만 판단한다 -
+        # 별도로 재배열하지 않는다.
         for line in it:
             token = _first_token(line)
             if token == "voltage_map":
                 result["found_voltage_map"] = True
                 break
-            if token in _SKIP_TOKENS_IN_BODY:
+            if not _should_keep_body_line(token, line):
                 continue
             stripped = line.strip()
             if stripped:
