@@ -113,4 +113,5 @@ def write_process_prefix_defines(
             continue
         group_name = group if group in ("library", "cell", "pin") else f"{process_prefix}_{group}"
         f_out.write(f"{INDENT_1}define({attr_name}, {group_name}, {value_type}) ;\n")
-    f_out.write("\n")
+    # 끝에 빈 줄을 쓰지 않는다 - 바로 다음 줄(block2의 default_unit_area_cell)이
+    # PDK 본문/define들에 빈 줄 없이 이어지도록.
