@@ -512,26 +512,14 @@ def _close(a: float, b: float) -> bool:
     return abs(a - b) <= INDEX_MATCH_REL_TOLERANCE * max(abs(a), abs(b), 1e-30)
 
 
-def _distinct_in_order(values: list[float]) -> list[float]:
-    kept: list[float] = []
-    for v in values:
-        if not any(_close(v, k) for k in kept):
-            kept.append(v)
-    return kept
-
-
-def _fmt(values: list[float]) -> str:
-    return ", ".join(f"{v:.6g}" for v in values)
-
-
 def validate_worst_case_index(
     scalars: dict, pdk_folder: str, dbs_folder: str, dbs_files: list[str],
 ) -> list[str]:
     """
     Worst case primitive liberty의 lu_table_template index_1/index_2가, liberty 생성에 쓰이는
     모든 DBS output(.mt0) 파일의 slope/cload 값과 일치하는지 검사한다.
-    (mt0의 slope/cload는 각 조합이 여러 번 반복해서 찍히므로, 등장 순서 기준 중복 제거 후
-    index 값 목록과 비교한다.) 다른 필수값이 비어 있어 비교 자체를 할 수 없으면 (다른 검사가
+    (mt0는 결과 N1*N2개가 slope=index_1 값당 N2번 연속 반복, cload=index_2 전체 순환
+    반복 순서로 찍히므로, 그 기대 순서와 레코드 개수까지 그대로 비교한다.) 다른 필수값이 비어 있어 비교 자체를 할 수 없으면 (다른 검사가
     이미 에러를 내므로) 빈 리스트를 반환한다.
     """
     worst = str(scalars.get(_WORST_CASE_PDK_KEY, "")).strip()
@@ -567,13 +555,26 @@ def validate_worst_case_index(
             problems.append(f"'{dbs_file}': non-numeric slope/cload value.")
             continue
 
+        # 기대 순서: slope는 index_1 값 하나당 len(index_2)번씩 연속 반복(바깥 루프),
+        # cload는 index_2 값 8개(=len(index_2))가 순서대로 나오고 처음부터 다시 반복(안쪽 루프).
+        n1, n2 = len(index_1), len(index_2)
+        exp_slopes = [index_1[k // n2] for k in range(n1 * n2)]
+        exp_cloads = [index_2[k % n2] for k in range(n1 * n2)]
+        if len(slopes) != n1 * n2:
+            problems.append(
+                f"'{dbs_file}': {len(slopes)} simulation results found, expected "
+                f"{n1 * n2} (index_1 x index_2 = {n1} x {n2})."
+            )
+            continue
         for name, found, expected, idx_name in (
-            ("slope", _distinct_in_order(slopes), index_1, "index_1"),
-            ("cload", _distinct_in_order(cloads), index_2, "index_2"),
+            ("slope", slopes, exp_slopes, "index_1"),
+            ("cload", cloads, exp_cloads, "index_2"),
         ):
-            if len(found) != len(expected) or not all(_close(a, b) for a, b in zip(found, expected)):
+            bad = next((k for k, (a, b) in enumerate(zip(found, expected)) if not _close(a, b)), None)
+            if bad is not None:
                 problems.append(
-                    f"'{dbs_file}': {name} [{_fmt(found)}] != {idx_name} [{_fmt(expected)}]"
+                    f"'{dbs_file}': {name} of result #{bad + 1} is {found[bad]:.6g}, "
+                    f"expected {expected[bad]:.6g} ({idx_name})"
                 )
 
     if not problems:
