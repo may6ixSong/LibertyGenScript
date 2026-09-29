@@ -67,6 +67,8 @@ from __future__ import annotations
 import fnmatch
 from pathlib import Path
 
+from step4_generate.mt0_reader import read_mt0_columns
+from step4_generate.pdk_stream_reader import parse_index_values, read_lut_table_sections
 from step1_setup.port_list_reader import (
     list_all_pin_bit_info, list_all_pin_names, list_pins_by_port_type, list_port_pins_detailed,
     strip_bit_range_suffix,
@@ -494,3 +496,89 @@ def validate_pin_settings(pins: dict, port_list_file: str) -> list[str]:
     errors += _validate_dbs_related_pins(pins, port_list_file)
 
     return errors
+
+
+# ---------------------------------------------------------------------------
+# Worst case primitive liberty의 index_1/index_2 <-> DBS output(.mt0) slope/cload 일치 검사
+# ---------------------------------------------------------------------------
+# mt0 값은 유효숫자 5자리 정도로 찍히므로(예: 1.1312e-12 vs PDK 0.00113118) 상대 오차로 비교한다.
+INDEX_MATCH_REL_TOLERANCE = 1e-3
+_SLOPE_SCALE = 1e9    # mt0 slope(초) -> PDK index_1(ns)
+_CLOAD_SCALE = 1e12   # mt0 cload(F)  -> PDK index_2(pF)
+_MAX_REPORTED_FILES = 5
+
+
+def _close(a: float, b: float) -> bool:
+    return abs(a - b) <= INDEX_MATCH_REL_TOLERANCE * max(abs(a), abs(b), 1e-30)
+
+
+def _distinct_in_order(values: list[float]) -> list[float]:
+    kept: list[float] = []
+    for v in values:
+        if not any(_close(v, k) for k in kept):
+            kept.append(v)
+    return kept
+
+
+def _fmt(values: list[float]) -> str:
+    return ", ".join(f"{v:.6g}" for v in values)
+
+
+def validate_worst_case_index(
+    scalars: dict, pdk_folder: str, dbs_folder: str, dbs_files: list[str],
+) -> list[str]:
+    """
+    Worst case primitive liberty의 lu_table_template index_1/index_2가, liberty 생성에 쓰이는
+    모든 DBS output(.mt0) 파일의 slope/cload 값과 일치하는지 검사한다.
+    (mt0의 slope/cload는 각 조합이 여러 번 반복해서 찍히므로, 등장 순서 기준 중복 제거 후
+    index 값 목록과 비교한다.) 다른 필수값이 비어 있어 비교 자체를 할 수 없으면 (다른 검사가
+    이미 에러를 내므로) 빈 리스트를 반환한다.
+    """
+    worst = str(scalars.get(_WORST_CASE_PDK_KEY, "")).strip()
+    dff = str(scalars.get("dff_cell_name", "")).strip()
+    lut = str(scalars.get("primitive_cell_name", "")).strip()
+    if not (worst and dff and lut and pdk_folder and dbs_folder):
+        return []
+
+    try:
+        sections = read_lut_table_sections(str(Path(pdk_folder) / worst), dff, lut)
+    except OSError as e:
+        return [f"Cannot read the worst case primitive liberty '{worst}': {e}"]
+    index_1 = parse_index_values(sections.get("index_1_line"))
+    index_2 = parse_index_values(sections.get("index_2_line"))
+    if not index_1 or not index_2:
+        return [
+            f"Cannot find index_1/index_2 for DFF Cell Name '{dff}' / LUT Table '{lut}' in "
+            f"'{worst}', so slope/cload cannot be checked."
+        ]
+
+    problems: list[str] = []
+    for dbs_file in dict.fromkeys(f for f in dbs_files if f):
+        parsed = read_mt0_columns(str(Path(dbs_folder) / dbs_file))
+        lookup = {c.strip().lower(): c for c in parsed["columns"]}
+        slope_key, cload_key = lookup.get("slope"), lookup.get("cload")
+        if slope_key is None or cload_key is None or not parsed["rows"]:
+            problems.append(f"'{dbs_file}': slope/cload columns could not be read.")
+            continue
+        try:
+            slopes = [float(r[slope_key]) * _SLOPE_SCALE for r in parsed["rows"]]
+            cloads = [float(r[cload_key]) * _CLOAD_SCALE for r in parsed["rows"]]
+        except ValueError:
+            problems.append(f"'{dbs_file}': non-numeric slope/cload value.")
+            continue
+
+        for name, found, expected, idx_name in (
+            ("slope", _distinct_in_order(slopes), index_1, "index_1"),
+            ("cload", _distinct_in_order(cloads), index_2, "index_2"),
+        ):
+            if len(found) != len(expected) or not all(_close(a, b) for a, b in zip(found, expected)):
+                problems.append(
+                    f"'{dbs_file}': {name} [{_fmt(found)}] != {idx_name} [{_fmt(expected)}]"
+                )
+
+    if not problems:
+        return []
+    shown = problems[:_MAX_REPORTED_FILES]
+    if len(problems) > len(shown):
+        shown.append(f"... and {len(problems) - len(shown)} more.")
+    return [f"slope/cload do not match the worst case primitive liberty '{worst}' index_1/index_2:"] + shown

@@ -123,6 +123,7 @@ from step1_setup.port_list_reader import (
     strip_bit_range_suffix,
 )
 from step2_udc import udc_manager
+from step2_udc.udc_field_defs import ENTRY_DBS_KEY
 from step2_udc.udc_validator import selected_pdk_files
 from step3_settings import settings_manager
 from step3_settings.constants_field_defs import SCALAR_CONSTANT_DEFS
@@ -139,7 +140,7 @@ from step3_settings.pin_field_defs import (
     split_pattern_and_range,
 )
 from step3_settings.settings_validator import (
-    validate_constants, validate_output_path, validate_pin_settings,
+    validate_constants, validate_output_path, validate_pin_settings, validate_worst_case_index,
 )
 from ui.theme import (
     BORDER_COLOR, ERROR_COLOR, MUTED_TEXT_COLOR, PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR,
@@ -399,7 +400,21 @@ class SettingsView(QWidget):
             self.scalar_widgets[key] = widget
 
             info = _SCALAR_FIELD_INFO.get(key)
-            scalar_form.addRow(build_label_with_info(label, info) if info else label, widget)
+            field: QWidget = widget
+            if kind == "pdk_dropdown":
+                # 입력칸 바로 아래에 slope/cload 불일치 에러를 보여줄 라벨 (평소엔 숨김).
+                field = QWidget()
+                field.setObjectName("transparentRow")
+                field_layout = QVBoxLayout(field)
+                field_layout.setContentsMargins(0, 0, 0, 0)
+                field_layout.setSpacing(4)
+                field_layout.addWidget(widget)
+                self.index_error_label = QLabel("")
+                self.index_error_label.setWordWrap(True)
+                self.index_error_label.setStyleSheet(f"color: {ERROR_COLOR};")
+                self.index_error_label.setVisible(False)
+                field_layout.addWidget(self.index_error_label)
+            scalar_form.addRow(build_label_with_info(label, info) if info else label, field)
         layout.addLayout(scalar_form)
         self._populate_worst_case_pdk_combo()
 
@@ -425,6 +440,13 @@ class SettingsView(QWidget):
         idx = combo.findData(current) if current else 0
         combo.setCurrentIndex(idx if idx >= 0 else 0)
         combo.blockSignals(False)
+
+    def selected_dbs_files(self) -> list[str]:
+        """Step2의 liberty setting들이 고른 DBS(.mt0) 파일명 목록 (항상 새로 읽음)."""
+        return [
+            str(e.get(ENTRY_DBS_KEY, "")).strip()
+            for e in udc_manager.get_entries(udc_manager.load_state())
+        ]
 
     def paired_pdk_files(self) -> list[str]:
         """Step2의 liberty setting들이 고른 PDK 파일명 목록 (항상 새로 읽음)."""
@@ -1361,12 +1383,22 @@ class SettingsView(QWidget):
             # 2026-08 추가: Output Path는 이제 Validate 전에도 자유롭게 입력할 수
             # 있으므로, 채워져 있다면 실제로 존재하는 폴더인지 여기서 확인한다.
             errors += validate_output_path(self.settings.get("output_path", ""))
+            index_errors = validate_worst_case_index(
+                self.settings["scalars"], self.get_pdk_folder(), self.get_dbs_folder(),
+                self.selected_dbs_files(),
+            )
+            if index_errors:
+                errors.append(
+                    "slope/cload mismatch - see below 'Worst case primitive liberty'."
+                )
         finally:
             self.validate_btn.setEnabled(True)
             if self.hide_loading:
                 self.hide_loading()
 
         self._mark_empty_required_fields()
+        self.index_error_label.setText("\n".join(index_errors))
+        self.index_error_label.setVisible(bool(index_errors))
 
         if errors:
             self._settings_validated = False
