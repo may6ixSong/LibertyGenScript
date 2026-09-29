@@ -830,3 +830,10 @@ Next(또는 Generate)는 그 Step의 Validate를 통과하기 전까지 항상 d
 - PyQt5는 Anaconda Python 3.7.6 (`/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7`)에서만
   동작 확인됨. `run_generator.sh`가 자동으로 이 환경으로 실행.
 - `$DISPLAY` 필요 (X11 forwarding).
+## Step 3 Validate — Worst case index_1/index_2 ↔ DBS(.mt0) slope/cload 일치 검사 (2026-09)
+
+`settings_validator.validate_worst_case_index()`: Step2에서 고른 모든 DBS(.mt0)의
+`slope`(×1e9 → ns)/`cload`(×1e12 → pF)를 등장 순서 기준 중복 제거한 목록이 Worst case
+PDK의 index_1/index_2와 (상대오차 1e-3, 개수 포함) 일치하는지 검사한다. 불일치 시
+Worst case primitive liberty 입력칸 아래 빨간 라벨(`index_error_label`)에 영어로 표시하고
+Validate를 실패시킨다.

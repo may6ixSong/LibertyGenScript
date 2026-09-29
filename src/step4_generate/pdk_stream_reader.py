@@ -248,6 +248,16 @@ def parse_index_last_value(index_line: str | None) -> str | None:
     return matches[-1] if matches else None
 
 
+def parse_index_values(index_line: str | None) -> list[float]:
+    """index 줄의 괄호 안 숫자를 전부 float 리스트로 뽑는다 (없으면 빈 리스트)."""
+    if not index_line:
+        return []
+    start = index_line.find("(")
+    end = index_line.rfind(")")
+    body = index_line[start + 1: end] if start != -1 and end > start else index_line
+    return [float(m) for m in _INDEX_VALUE_PATTERN.findall(body)]
+
+
 def read_lut_table_sections(pdk_path: str, dff_cell_name: str, lut_table_name: str) -> dict:
     """
     block3의 lu_table_template에 쓸 index_1/index_2 줄을 뽑아낸다. "cell (DFF Cell
