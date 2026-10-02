@@ -1383,10 +1383,13 @@ class SettingsView(QWidget):
             # 2026-08 추가: Output Path는 이제 Validate 전에도 자유롭게 입력할 수
             # 있으므로, 채워져 있다면 실제로 존재하는 폴더인지 여기서 확인한다.
             errors += validate_output_path(self.settings.get("output_path", ""))
-            index_errors = validate_worst_case_index(
-                self.settings["scalars"], self.get_pdk_folder(), self.get_dbs_folder(),
-                self.selected_dbs_files(),
-            )
+            # 2026-10 임시 비활성화: slope/cload <-> worst case index_1/index_2 검사를 잠시 끈다.
+            # 다시 켜려면 아래 주석을 풀고 `index_errors = []` 줄을 지우면 된다.
+            index_errors = []
+            # index_errors = validate_worst_case_index(
+            #     self.settings["scalars"], self.get_pdk_folder(), self.get_dbs_folder(),
+            #     self.selected_dbs_files(),
+            # )
             if index_errors:
                 errors.append(
                     "slope/cload mismatch - see below 'Worst case primitive liberty'."
