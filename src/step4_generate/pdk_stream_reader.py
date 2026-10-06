@@ -114,6 +114,13 @@ def _paren_content(line: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _unquote(name: str) -> str:
+    """이름 앞뒤 공백과 따옴표('"', "'")를 떼어낸다. PDK마다 `cell ("SVN_FDPQ_2")`처럼
+    따옴표로 감싼 곳과 `cell (SVN_FDPQ_2)`처럼 안 감싼 곳이 섞여 있어서, 이름 비교는
+    항상 양쪽 다 이걸 거친 값으로 한다(2026-10)."""
+    return name.strip().strip('"').strip("'").strip()
+
+
 def _capture_index_lines(it, opening_line: str) -> tuple[str | None, str | None]:
     """
     LUT Table명이 처음 등장한 줄(opening_line, 보통 'cell_rise(LUT) {' 형태)부터
@@ -274,9 +281,16 @@ def read_lut_table_sections(pdk_path: str, dff_cell_name: str, lut_table_name: s
     2026-08 확정: 이 결과는 pair마다 다시 읽지 않고, Step3에서 고른 worst case PDK
     하나에 대해 실행당 한 번만 읽어서 생성하는 모든 liberty에 동일하게 재사용한다.
 
+    cell 이름/LUT Table명은 따옴표 유무와 무관하게 비교한다(2026-10) - PDK의
+    `cell ("X")`와 `cell (X)`, Step3 입력의 `X`와 `"X"`가 모두 같은 이름으로 매칭된다.
+
     Returns: 위 new_lut_sections()가 정의하는 형태의 dict.
     """
     result = new_lut_sections()
+    dff_cell_name = _unquote(dff_cell_name)
+    # LUT Table명은 줄 안에 부분 문자열로 들어 있는지만 보므로, 입력 쪽 따옴표만 떼면
+    # PDK가 `cell_rise("LUT")`든 `cell_rise(LUT)`든 둘 다 잡힌다.
+    lut_table_name = _unquote(lut_table_name)
 
     with open(pdk_path, "r", encoding="utf-8", errors="replace") as f:
         it = iter(f)
@@ -291,7 +305,7 @@ def read_lut_table_sections(pdk_path: str, dff_cell_name: str, lut_table_name: s
                 cell_name_here = _paren_content(line)
                 if cell_name_here and len(result["cell_names_seen"]) < _MAX_CELL_NAMES_TRACKED:
                     result["cell_names_seen"].append(cell_name_here)
-                if cell_name_here == dff_cell_name:
+                if _unquote(cell_name_here) == dff_cell_name:
                     result["dff_found"] = True
                     looking_for_primitive = True
                 continue

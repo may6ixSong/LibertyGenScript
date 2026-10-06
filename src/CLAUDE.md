@@ -641,6 +641,10 @@ forwarding 환경에서 보장할 수 없어서,
   2. `read_lut_table_sections(pdk_path, dff, lut)` — **실행당 한 번**, block3용.
      Step3에서 고른 worst case PDK 하나에서만 읽고, index_1/index_2를 찾는 즉시 중단.
      결과는 모든 job이 그대로 재사용한다.
+     DFF Cell Name / LUT Table명은 **따옴표 유무와 무관하게** 비교한다(2026-10 -
+     `cell ("SVN_FDPQ_2")`처럼 따옴표로 감싼 PDK와 `cell (SVN_FDPQ_2)`인 PDK가 섞여 있어서,
+     예전처럼 그대로 비교하면 따옴표 있는 PDK에서 DFF cell을 못 찾아 lu_table_template
+     index_1/index_2와 block5의 max_capacitance가 연쇄로 결측됐다. `_unquote()`).
 - `write_liberty_file()`은 block2를 다 쓴 직후 `sections.clear()`로 PDK에서 읽어온 값
   (특히 `body_lines`)을 즉시 놓아준다 — block5의 timing 표 작성이 그 뒤에 이어지므로
   그때까지 붙들고 있을 이유가 없다.
