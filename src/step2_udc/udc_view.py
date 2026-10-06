@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PyQt5.QtCore import QRegExp, Qt
+from PyQt5.QtCore import QEvent, QObject, QRegExp, Qt
 from PyQt5.QtGui import QBrush, QColor, QFont, QRegExpValidator
 from PyQt5.QtWidgets import (
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
@@ -44,7 +44,7 @@ from step2_udc.udc_field_defs import (
     ENTRY_CONDITION_KEY, ENTRY_CORNER_KEY, ENTRY_DBS_KEY, ENTRY_FIELD_DEFS, ENTRY_ID_KEY,
     ENTRY_PDK_KEY, ENTRY_TEMPERATURE_KEY, ENTRY_VOLTAGE_KEY, MATCH_EXACT,
     TIMING_STATE_OPTIONS, auto_select_dbs_file, format_temperature_token,
-    format_voltage_token, is_beol_na, join_corner_beol, new_entry, recommend_dbs_files,
+    format_compact_voltage_token, format_voltage_token, is_beol_na, join_corner_beol, new_entry, recommend_dbs_files,
     recommend_pdk_files,
 )
 from step2_udc.udc_validator import validate_common_fields, validate_entries
@@ -71,6 +71,7 @@ _NONE_LABEL = "(None)"
 _RECOMMEND_PREFIX = "★ "  # ★
 _COLLAPSED_SYMBOL = "▶"  # ▶
 _EXPANDED_SYMBOL = "▼"  # ▼
+_REMOVE_SYMBOL = "✕"  # ✕
 
 _COMMON_FIELDS_INFO = (
     "These values are shared by every liberty file generated in this run.\n"
@@ -112,6 +113,20 @@ _ENTRY_FIELD_INFO = {
         "follows it."
     ),
 }
+
+
+class _EnterAcceptsFilter(QObject):
+    """확인창에서 Enter/Return 키가 들어오면 포커스와 무관하게 target 버튼을 누른다."""
+
+    def __init__(self, target: QPushButton, parent=None):
+        super().__init__(parent)
+        self._target = target
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt 오버라이드 시그니처
+        if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self._target.click()
+            return True
+        return False
 
 
 def _apply_number_validator(edit: QLineEdit) -> None:
@@ -281,7 +296,10 @@ class _EntryCard(QFrame):
         self.index_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: 700;")
         row.addWidget(self.index_label, stretch=1)
 
-        remove_btn = QPushButton("🗑")
+        # 2026-10: 🗑(이모지)는 X11 환경에 이모지 글꼴이 없으면 빈칸으로 보여서(테두리만
+        # 보이고 아이콘이 안 보임) 기본 글꼴에도 있는 ✕로 바꿨다. 색은 theme의
+        # iconDangerButton 규칙(ERROR_COLOR)으로 항상 보이게 한다.
+        remove_btn = QPushButton(_REMOVE_SYMBOL)
         remove_btn.setObjectName("iconDangerButton")
         remove_btn.setFixedSize(30, 30)
         remove_btn.setToolTip("Remove this liberty setting")
@@ -318,14 +336,21 @@ class _EntryCard(QFrame):
         self.corner_custom_edit.textChanged.connect(lambda _t: self._refresh_collapsed_label())
 
     def _confirm_remove(self) -> None:
-        # 2026-08 추가: 실수로 setting을 지우는 것을 막기 위해 삭제 전에 확인창을
-        # 띄운다. 되돌릴 방법이 없으므로(입력값이 즉시 사라짐) 기본 선택지는 No.
-        answer = QMessageBox.question(
-            self, "Remove Liberty Setting",
+        # 2026-08 추가: 실수로 setting을 지우는 것을 막기 위해 삭제 전에 확인창을 띄운다.
+        # 2026-10 변경: 키보드 Enter는 (어느 버튼에 포커스가 있든) 항상 Yes로 처리한다.
+        box = QMessageBox(
+            QMessageBox.Question, "Remove Liberty Setting",
             f"Remove Liberty #{self._index + 1}? This cannot be undone.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            QMessageBox.Yes | QMessageBox.No, self,
         )
-        if answer == QMessageBox.Yes:
+        yes_btn = box.button(QMessageBox.Yes)
+        box.setDefaultButton(yes_btn)
+        enter_filter = _EnterAcceptsFilter(yes_btn, box)
+        box.installEventFilter(enter_filter)
+        for button in box.buttons():
+            button.installEventFilter(enter_filter)
+        box.exec_()
+        if box.clickedButton() is yes_btn:
             self._on_remove(self)
 
     # -- 접기/펴기 ------------------------------------------------------------
@@ -832,9 +857,13 @@ class UDCView(QWidget):
 
         # BEOL N/A면 파일명에 BEOL 토큰이 없다 - corner 바로 뒤에 [min|max]/voltage가 온다.
         beol_na = is_beol_na(entry.get(ENTRY_BEOL_KEY, ""))
+        # voltage 자릿수(0p99v/0p9900v)와 temperature 뒤 'c'는 파일마다 다를 수 있어서
+        # 안내 문구에서는 뒤쪽 0을 뗀 짧은 표기로 보여준다 (2026-10).
+        compact_voltage = format_compact_voltage_token(entry.get(ENTRY_VOLTAGE_KEY, ""))
         looking_for = (
-            f"Looking for *_{corner}_{'' if beol_na else '*_'}{voltage_token}_{temperature_token}*"
-            f" ('_' between parts optional{', BEOL ignored' if beol_na else ''})"
+            f"Looking for *_{corner}_{'' if beol_na else '*_'}{compact_voltage}_{temperature_token}*"
+            f" ('_', voltage digit count and trailing 'c' optional"
+            f"{'; BEOL ignored' if beol_na else ''})"
         )
         if not pdk_recommended:
             card.set_match_status(

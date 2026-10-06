@@ -171,6 +171,8 @@ QPushButton#iconDangerButton {{
     border-radius: 8px;
     padding: 0px;
     font-size: 14px;
+    font-weight: 700;
+    color: {ERROR_COLOR};
 }}
 
 QPushButton#iconDangerButton:hover {{
