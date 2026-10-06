@@ -490,14 +490,17 @@ forwarding 환경에서 보장할 수 없어서,
    가져올지만 정하고, 별도로 재배열하지 않는다.
 
    **PDK 형식 차이 대응 (2026-10 보강)**: PDK마다 형식이 달라서 다음을 전제로 하지
-   않는다 - (1) voltage_map의 존재/위치(예전엔 body는 "첫 voltage_map 직전까지",
-   input/output_voltage는 "voltage_map 이후"에서만 찾아서, voltage_map이 없거나
-   input_voltage가 그보다 앞에 있는 PDK는 input/output_voltage를 놓쳤다. 이제
-   voltage_map과 무관하게 cell 직전까지 한 번에 훑는다. PDK의 voltage_map 줄 자체는
-   여전히 가져오지 않는다), (2) 그룹 내부 줄(중괄호 깊이를 추적해 operating_conditions/
-   lu_table_template/wire_load 등 그룹 안의 줄은 접두어가 맞아도 끌어오지 않는다),
-   (3) input/output_voltage 블록 모양(예전엔 "4줄 + `}`" 고정 판독, 이제는 닫는 `}`까지
-   읽으면서 키 이름으로 값을 채우므로 빈 줄/주석/순서 차이/한 줄 블록도 처리).
+   않는다 - (1) voltage_map의 존재/위치(예전엔 body를 "첫 voltage_map 직전까지" 읽어서
+   voltage_map이 없는 PDK는 cell 영역을 지나 파일 끝까지 내려갔다. 이제 voltage_map과
+   무관하게 cell 직전까지 한 번에 훑는다. PDK의 voltage_map 줄 자체는 여전히 가져오지
+   않는다), (2) 그룹 내부 줄(중괄호 깊이를 추적해 operating_conditions/
+   lu_table_template/wire_load 등 그룹 안의 줄은 접두어가 맞아도 끌어오지 않는다).
+
+   **PDK의 `input_voltage`/`output_voltage` 블록은 읽지도 쓰지도 않는다** (2026-10 삭제 -
+   예전에는 Block 2-(4)로 PDK 값을 소수점 5자리로 옮겨 썼는데, 이 블록 없이도 liberty
+   생성/.db 변환에 문제가 없음을 확인했다. block4/block5도 pin에 `input_voltage :`/
+   `output_voltage :`를 쓰지 않으므로 참조가 깨질 일이 없다). Block 2는 operating_conditions
+   다음 바로 Global k factor로 이어진다.
 
    그 다음, 우리 쪽 `voltage_map`(Block 2-(2)) 바로 앞에서
    **이 생성기가 `{process_prefix}_*`로 쓰는 모든 custom attribute/group을
@@ -621,7 +624,7 @@ forwarding 환경에서 보장할 수 없어서,
 값/줄을 못 찾으면 예외를 던지지 않고 빈 자리로 두되, 무엇이 어느 파일에서 빠졌는지
 주석으로 표시:
 ```
-####### input_voltage block(s) is missing in {pdk_filename} #########
+####### PDK body (library declaration) is missing in {pdk_filename} #########
 ```
 (`operating_conditions` library명은 더 이상 PDK에서 읽지 않으므로 이 결측 케이스는
 해당 없음 — Step2 Validate가 corner/beol_inform/voltage/temperature를 이미 필수값으로
@@ -632,8 +635,8 @@ forwarding 환경에서 보장할 수 없어서,
   줄 단위로 스트리밍**하며, 필요한 걸 다 얻는 즉시 읽기를 중단한다.
 - PDK 읽기는 두 갈래로 완전히 분리되어 있다 (`pdk_stream_reader.py`):
   1. `read_pdk_library_sections(pdk_path)` — **liberty 하나당 한 번**, block2용.
-     library 선언 / library 직속의 `_BODY_KEEP_PREFIXES` 줄 / `input_voltage` /
-     `output_voltage`만 필요하고 이것들은 전부 첫 `cell (...)` 선언보다 앞에 있으므로,
+     library 선언 / library 직속의 `_BODY_KEEP_PREFIXES` 줄만 필요하고 이것들은 전부
+     첫 `cell (...)` 선언보다 앞에 있으므로,
      **첫 cell 선언을 만나는 즉시 중단**한다. 파일의 대부분(cell 본문 수십만 줄)은 아예 읽지 않는다.
   2. `read_lut_table_sections(pdk_path, dff, lut)` — **실행당 한 번**, block3용.
      Step3에서 고른 worst case PDK 하나에서만 읽고, index_1/index_2를 찾는 즉시 중단.
@@ -675,7 +678,7 @@ Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
 
 (해결됨) block5의 `{process_prefix}_input_signal_level` 소수점 자리수 — 2026-08 변경:
 `%0.4f`(소수점 4자리)에서 **`%0.5f`(소수점 5자리)**로 맞췄다(`block5_writer._volts_text`).
-block2의 `voltage_map`/`voltage`나 PDK의 `input_voltage`/`output_voltage`가 이미
+block2의 `voltage_map`/`voltage`가 이미
 소수점 5자리로 나가고 있어서, block5의 voltage 값도 그와 자리수를 맞춘 것.
 
 (해결됨) block5의 `{process_prefix}_input_signal_level` 값의 출처 — 2026-08 두 차례
