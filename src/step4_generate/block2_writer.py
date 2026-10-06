@@ -25,7 +25,9 @@ missing_data.py의 규칙대로 `<NOT_FOUND_IN_PDK>` + 안내 주석으로 표�
 
 from __future__ import annotations
 
-from step2_udc.udc_field_defs import format_temperature_token, format_voltage_token
+from step2_udc.udc_field_defs import (
+    format_temperature_token, format_voltage_token, join_corner_beol,
+)
 from step4_generate.kfactor_block import write_k_factor_block
 from step4_generate.missing_data import INDENT_1, INDENT_2, NOT_FOUND_TOKEN, write_missing_comment
 from step4_generate.process_prefix_defines import write_process_prefix_defines
@@ -47,10 +49,13 @@ def _format_oc_library(job: dict) -> str:
     `{corner}_{beol_inform}_{voltage}_{temperature}c` (2026-08 변경 - PDK 파일 내부
     선언에서 읽어오던 값을 대체). voltage는 format_voltage_token()의 '0p{4자리}v'에서
     trailing 'v'만 뗀 형태(0.8 -> '0p8000'), temperature는 format_temperature_token()의
-    'm{n}c'/'{n}c'를 그대로 쓴다(-40 -> 'm40c', 75 -> '75c')."""
+    'm{n}c'/'{n}c'를 그대로 쓴다(-40 -> 'm40c', 75 -> '75c'). BEOL Inform이 N/A면
+    `{corner}_{voltage}_{temperature}c`로 beol 부분이 빠진다(2026-10)."""
     voltage_token = format_voltage_token(job["nom_voltage"])[:-1]
     temperature_token = format_temperature_token(job["nom_temperature"])
-    return f"{job['corner']}_{job['beol_inform']}_{voltage_token}_{temperature_token}"
+    # BEOL Inform이 N/A면(파일명에 BEOL 토큰이 없는 경우, 2026-10 추가) beol 부분을 뺀다.
+    corner_beol = join_corner_beol(job["corner"], job["beol_inform"])
+    return f"{corner_beol}_{voltage_token}_{temperature_token}"
 
 
 def _write_voltage_entries(

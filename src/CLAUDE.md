@@ -65,9 +65,15 @@ here."로 거부해서 .db 변환이 실패한다 - 2026-08에 `{process_prefix}
     그래서 위치(index)로 자르지 않고, `min|max` → `0p..v` → `..c` 세 토큰이 연달아
     오는 덩어리를 먼저 찾은 뒤 그 앞쪽에서 corner/beol을 읽는다.
   - beol은 여러 토큰일 수 있으므로 "corner 다음 ~ `min|max` 직전" 전체를 beol로 본다.
-- **DBS output**: `{prefix}_0p{volt}v_{temp}c.mt0`
-  예: `ffpg_nominal_0p7500v_75c.mt0`
-- `0p{XXX}v` → `0.XXX` (`0p920v` → `0.920`, `0p7500v` → `0.7500`). 자릿수(3~4)가 달라도
+    BEOL Inform이 `N/A`면 파일명에 beol 토큰이 아예 없다(corner 바로 뒤가 min|max/voltage).
+  - **corner/min|max/voltage/temperature 사이의 `_`는 없을 수도 있고, `min|max` 자체가
+    없을 수도 있다** (2026-10 추가). 예: `xxxxxxxx_ffg0p99v125c.lib` (corner=ffg,
+    0.99V, 125c). 그래서 `_`로 토큰을 자르지 않고 stem 문자열에서 정규식
+    (`udc_field_defs._CONDITION_CHUNK_PATTERN`)으로 `[min|max]0p..v..c` 덩어리를 찾고,
+    그 앞부분(prefix)에서 `_` 경계로 구분된 corner를 찾는다(`_find_corner`).
+- **DBS output**: `{prefix}_0p{volt}v_{temp}c.mt0` (PDK와 같이 `_`가 없어도 인식)
+  예: `ffpg_nominal_0p7500v_75c.mt0`, `ffg0p99v125c.mt0`
+- `0p{XXX}v` → `0.XXX` (`0p920v` → `0.920`, `0p7500v` → `0.7500`, `0p99v` → `0.99`). 자릿수가 달라도
   같은 값이면 같은 것으로 본다 — 부동소수점 대신 `Decimal`로 정확히 비교.
 - temperature: `m{n}` → `-n`, `m` 없으면 그대로 양수 (`m40` → `-40`, `75` → `75`)
 - **PDK 파일명의 beol 토큰은 사용자가 고른 beol inform과 다를 확률이 매우 크다**
@@ -130,8 +136,15 @@ PDK/DBS 파일명과 바로 비교해볼 수 있다(`_EntryCard._refresh_collaps
 1. **공통 필드** (전체 조합에 1번만 입력, 1차 재설계 그대로): `area`, `width`, `height`,
    `static_current`, `cell_name`, `MC/HDA/OUT Timing State`
 2. **Liberty Settings**: setting 1개 = liberty 파일 1개. 각 setting의 입력 항목은
-   - `corner` — `ffpg`/`fsg`/`sfg`/`sspg`/`tt` 중 선택
-   - `beol_inform` — `nominal`/`sigcmin`/`sigrcmin`/`sigrcmax`/`sigcmax` 중 선택
+   - `corner` — `ffg`/`ffpg`/`fsg`/`sfg`/`ssg`/`sspg`/`tt` 중 선택, 또는 맨 끝의
+     **`Custom input`**을 고르면 드롭다운 아래 입력칸이 나타나 직접 입력(2026-10 추가,
+     영문/숫자/`-`만 - 파일명 토큰으로 검색되므로 `_` 불가). 저장값은 입력한 문자열
+     자체이며, 고정 선택지에 없는 저장값을 다시 불러오면 자동으로 `Custom input` 상태가
+     된다(`udc_view._fill_corner_combo`).
+   - `beol_inform` — `nominal`/`sigcmin`/`sigrcmin`/`sigrcmax`/`sigcmax`/**`N/A`** 중 선택.
+     `N/A`(2026-10 추가) = PDK/DBS 파일명에 BEOL 토큰이 없음 → 추천 매칭에서 BEOL을
+     전혀 고려하지 않고(corner/voltage/temperature만 맞으면 MATCH_EXACT), 접힌 카드 요약과
+     operating_conditions 이름에서도 beol 부분이 빠진다(`udc_field_defs.join_corner_beol`).
    - `voltage` — 숫자 입력 (화면에 `V` 단위 표시)
    - `temperature` — 숫자 입력 (화면에 `℃` 단위 표시, 파일명 토큰이 정수라 **정수만** 허용)
    - `condition` — **Voltage Map(같은 화면 왼쪽 열)에 정의된 voltage condition 이름**
@@ -491,7 +504,8 @@ forwarding 환경에서 보장할 수 없어서,
    우리 출력 파일도 아니고, PDK 내부 선언에서 추출하지도 않는다(2026-08 3차 재설계) —
    **Step2 liberty setting의 `corner`/`beol_inform`/`voltage`/`temperature`로 직접
    조립**한다: `{corner}_{beol_inform}_{voltage}_{temperature}c`
-   (예: `ffpg_nominal_0p8000_m40c`). voltage는 파일명 토큰과 같은 규칙으로 소수점
+   (예: `ffpg_nominal_0p8000_m40c`). BEOL Inform이 `N/A`면 `{corner}_{voltage}_{temperature}c`
+   (예: `ffg_0p9900_125c`). voltage는 파일명 토큰과 같은 규칙으로 소수점
    4자리(`0.8` → `0p8000`, `udc_field_defs.format_voltage_token`)이지만 trailing
    `v`는 붙이지 않고, temperature는 파일명 토큰 그대로(`format_temperature_token`,
    음수면 `m` 접두 + `c` 접미, `-40` → `m40c`) 쓴다(`block2_writer._format_oc_library`).
