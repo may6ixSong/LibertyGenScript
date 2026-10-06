@@ -72,7 +72,10 @@ here."로 거부해서 .db 변환이 실패한다 - 2026-08에 `{process_prefix}
     (`udc_field_defs._CONDITION_CHUNK_PATTERN`)으로 `[min|max]0p..v..c` 덩어리를 찾고,
     그 앞부분(prefix)에서 `_` 경계로 구분된 corner를 찾는다(`_find_corner`).
 - **DBS output**: `{prefix}_0p{volt}v_{temp}c.mt0` (PDK와 같이 `_`가 없어도 인식)
-  예: `ffpg_nominal_0p7500v_75c.mt0`, `ffg0p99v125c.mt0`
+  예: `ffpg_nominal_0p7500v_75c.mt0`, `ffg0p99v125c.mt0`, `ffg_nominal_min_0p99v_m40.mt0`
+  - temperature 뒤의 `c`는 없을 수도 있다(2026-10, PDK/DBS 공통). BEOL Inform이 `N/A`여도
+    DBS 파일명에는 BEOL/min|max 토큰이 있을 수 있는데, N/A면 BEOL은 아예 보지 않으므로
+    그대로 후보가 된다.
 - `0p{XXX}v` → `0.XXX` (`0p920v` → `0.920`, `0p7500v` → `0.7500`, `0p99v` → `0.99`). 자릿수가 달라도
   같은 값이면 같은 것으로 본다 — 부동소수점 대신 `Decimal`로 정확히 비교.
 - temperature: `m{n}` → `-n`, `m` 없으면 그대로 양수 (`m40` → `-40`, `75` → `75`)
@@ -128,10 +131,11 @@ PDK/DBS 파일명과 바로 비교해볼 수 있다(`_EntryCard._refresh_collaps
 `_collapsed_summary_text`). 접기/펴기 상태는 setting을 추가/삭제해도 entry_id 기준으로
 유지된다(voltage_map_view._ConditionCard와 같은 패턴).
 
-각 Liberty Setting 카드의 **Remove는 휴지통 아이콘 버튼**(`iconDangerButton`, 2026-08
-아이콘화)이며, 클릭 즉시 지우지 않고 확인창(QMessageBox)을 먼저 띄운다
-(`_EntryCard._confirm_remove`) - 삭제를 되돌릴 방법이 없어서 실수로 지우는 것을 막기
-위함이며, 기본 선택지는 "No".
+각 Liberty Setting 카드의 **Remove는 `✕` 아이콘 버튼**(`iconDangerButton`, 2026-08
+아이콘화 → 2026-10 🗑 이모지가 X11 환경에서 글꼴이 없어 안 보이는 문제로 `✕` +
+`ERROR_COLOR` 글자색으로 변경)이며, 클릭 즉시 지우지 않고 확인창(QMessageBox)을 먼저
+띄운다(`_EntryCard._confirm_remove`). 확인창에서 **키보드 Enter/Return은 포커스가 어느
+버튼에 있든 항상 Yes**로 처리된다(2026-10, `_EnterAcceptsFilter`).
 
 1. **공통 필드** (전체 조합에 1번만 입력, 1차 재설계 그대로): `area`, `width`, `height`,
    `static_current`, `cell_name`, `MC/HDA/OUT Timing State`
@@ -837,7 +841,7 @@ Next(또는 Generate)는 그 Step의 Validate를 통과하기 전까지 항상 d
   않도록 청록 쪽으로 튼 `IMPORT_BUTTON_COLOR`(`#0D9488`)를 쓴다.
 - **아이콘 버튼**: 휴지통 아이콘처럼 텍스트 없이 아이콘 하나만 보여주는 버튼은
   `objectName="iconDangerButton"`(hover 시 빨간 테두리/배경)을 쓴다. 별도 아이콘
-  파일/라이브러리 없이 유니코드 글리프(🗑 등)를 버튼 텍스트로 쓴다 - 이 앱의 다른
+  파일/라이브러리 없이 유니코드 글리프(✕ 등 - 이모지는 X11 글꼴에 없을 수 있어 피한다)를 버튼 텍스트로 쓴다 - 이 앱의 다른
   기호(✓/✗/⚠/▶/▼ 등)와 같은 방식.
 
 ## 실행 환경

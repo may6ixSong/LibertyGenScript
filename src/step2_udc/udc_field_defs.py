@@ -159,11 +159,13 @@ def new_entry() -> dict:
 #     자릿수가 달라도 같은 전압이면(0.920 == 0.9200) 같은 것으로 봐야 하므로 부동소수점
 #     대신 Decimal로 정확히 비교한다.
 #   - temperature: m{n} -> -n, m 없으면 그대로 양수 (m40 -> -40, 75 -> 75)
+#   - **2026-10 추가**: temperature 뒤의 'c'는 없을 수도 있다 (특히 DBS output -
+#     예: ffg_nominal_min_0p99v_m40.mt0). voltage 자릿수도 고정이 아니다(0p99v/0p9900v).
 # ---------------------------------------------------------------------------
-# prefix(최단) + [_][min|max][_] 0p{digits}v [_] [m]{n}c + (끝 또는 '_')
+# prefix(최단) + [_][min|max][_] 0p{digits}v [_] [m]{n}[c] + (끝 또는 '_')
 _CONDITION_CHUNK_PATTERN = re.compile(
     r"^(?P<prefix>.*?)_?(?:(?P<minmax>min|max)_?)?"
-    r"0p(?P<digits>\d+)v_?(?P<temp>m?\d+)c(?P<suffix>_.*)?$",
+    r"0p(?P<digits>\d+)v_?(?P<temp>m?\d+)c?(?P<suffix>_.*)?$",
     re.IGNORECASE,
 )
 
@@ -215,6 +217,16 @@ def format_voltage_token(voltage: Decimal | float | str, digits: int = 4) -> str
         return ""
     scaled = int((value * (Decimal(10) ** digits)).to_integral_value())
     return f"0p{scaled:0{digits}d}v"
+
+
+def format_compact_voltage_token(voltage: Decimal | float | str) -> str:
+    """0.99 -> '0p99v', 0.75 -> '0p75v' (뒤쪽 0을 뗀 표기 - 파일명마다 자릿수가 달라서
+    화면 안내 문구에서는 자릿수를 고정하지 않고 보여준다)."""
+    token = format_voltage_token(voltage)
+    if not token:
+        return ""
+    digits = token[2:-1].rstrip("0") or "0"
+    return f"0p{digits}v"
 
 
 def format_temperature_token(temperature: int | str) -> str:
