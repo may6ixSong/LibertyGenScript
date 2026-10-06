@@ -158,14 +158,16 @@ def new_entry() -> dict:
 #   - 0p{digits}v -> 0.{digits} (0p920v -> 0.920, 0p7500v -> 0.7500, 0p99v -> 0.99).
 #     자릿수가 달라도 같은 전압이면(0.920 == 0.9200) 같은 것으로 봐야 하므로 부동소수점
 #     대신 Decimal로 정확히 비교한다.
-#   - temperature: m{n} -> -n, m 없으면 그대로 양수 (m40 -> -40, 75 -> 75)
+#   - temperature: m{n} 또는 n{n} -> -n, 접두어 없으면 그대로 양수
+#     (m40 -> -40, n40 -> -40, 75 -> 75). 음수 표기로 m(minus) 대신 n(negative)을 쓰는
+#     PDK/DBS 파일도 있어서 둘 다 인식한다 (2026-10 추가).
 #   - **2026-10 추가**: temperature 뒤의 'c'는 없을 수도 있다 (특히 DBS output -
 #     예: ffg_nominal_min_0p99v_m40.mt0). voltage 자릿수도 고정이 아니다(0p99v/0p9900v).
 # ---------------------------------------------------------------------------
 # prefix(최단) + [_][min|max][_] 0p{digits}v [_] [m]{n}[c] + (끝 또는 '_')
 _CONDITION_CHUNK_PATTERN = re.compile(
     r"^(?P<prefix>.*?)_?(?:(?P<minmax>min|max)_?)?"
-    r"0p(?P<digits>\d+)v_?(?P<temp>m?\d+)c?(?P<suffix>_.*)?$",
+    r"0p(?P<digits>\d+)v_?(?P<temp>[mn]?\d+)c?(?P<suffix>_.*)?$",
     re.IGNORECASE,
 )
 
@@ -180,7 +182,7 @@ def _voltage_from_digits(digits: str) -> Decimal:
 
 
 def _parse_temperature_token(token: str) -> int:
-    if token.lower().startswith("m"):
+    if token[:1].lower() in ("m", "n"):
         return -int(token[1:])
     return int(token)
 
