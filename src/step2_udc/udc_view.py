@@ -862,7 +862,7 @@ class UDCView(QWidget):
         compact_voltage = format_compact_voltage_token(entry.get(ENTRY_VOLTAGE_KEY, ""))
         looking_for = (
             f"Looking for *_{corner}_{'' if beol_na else '*_'}{compact_voltage}_{temperature_token}*"
-            f" ('_', voltage digit count and trailing 'c' optional"
+            f" ('_', voltage digit count and trailing 'c' optional; m/n both mean minus"
             f"{'; BEOL ignored' if beol_na else ''})"
         )
         if not pdk_recommended:
