@@ -31,8 +31,8 @@ from step3_settings.constants_field_defs import (
 )
 from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_POWER_DOWN_FUNCTION_KEY, DBS_RELATED_PINS_KEY,
-    DBS_SERIAL_CLUSTER_MODE_DEFAULT, DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_NUM_COL_KEY,
-    DBS_SERIAL_RELATED_PATTERN_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
+    DBS_SERIAL_CLUSTER_MODE_DEFAULT, DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_RELATED_PATTERN_KEY,
+    DBS_SERIAL_SETS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
     DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY, ENABLE_SIGNAL_KEY,
     POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY,
     POWER_DOWN_WHEN_KEY, VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY,
@@ -249,6 +249,9 @@ def build_job(
     dbs_serial_related_pattern = pins.get(DBS_SERIAL_RELATED_PATTERN_KEY)
     if not isinstance(dbs_serial_related_pattern, dict):
         dbs_serial_related_pattern = {}
+    dbs_serial_sets = pins.get(DBS_SERIAL_SETS_KEY)
+    if not isinstance(dbs_serial_sets, dict):
+        dbs_serial_sets = {}
 
     return {
         "pdk_path": pdk_path,
@@ -292,8 +295,9 @@ def build_job(
         "dbs_bit_split": dbs_bit_split,
         "dbs_data_transfer_type": str(pins.get(DBS_TRANSFER_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT)),
         "dbs_serial_cluster_mode": str(pins.get(DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT)),
-        "dbs_serial_num_col": pins.get(DBS_SERIAL_NUM_COL_KEY, ""),
         "dbs_serial_related_pattern": dbs_serial_related_pattern,
+        # 2026-10 Split Serial "Bit Set": {DBS output pin name: [{"cols", "related"}, ...]}
+        "dbs_serial_sets": dbs_serial_sets,
         "dbs_power_down_function": pins.get(DBS_POWER_DOWN_FUNCTION_KEY, ""),
         "dbs_timing_sense": pins.get(DBS_TIMING_SENSE_KEY, ""),
         "dbs_timing_type": pins.get(DBS_TIMING_TYPE_KEY, ""),
