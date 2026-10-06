@@ -9,8 +9,10 @@ Step 2 (UDC Settings) 화면의 필드 정의 (2026-08 전면 재설계 -> 2026-
 어떤 조합의 liberty를 만들지 결정할 수 없다는 것이 확인됐다 (2026-08 2차 재설계).
 
 그래서 이제는 **liberty 파일 하나당 setting 1개**를 사용자가 직접 추가한다:
-  - corner        : ffpg / fsg / sfg / sspg / tt 중 선택
-  - beol inform   : nominal / sigcmin / sigrcmax / sigcmax 중 선택
+  - corner        : ffg / ffpg / fsg / sfg / ssg / sspg / tt 중 선택, 또는 "Custom input"을
+                    골라 직접 입력 (2026-10 추가)
+  - beol inform   : nominal / sigcmin / sigrcmin / sigrcmax / sigcmax / N/A 중 선택
+                    (N/A = 파일명에 BEOL 토큰이 없음, 2026-10 추가)
   - voltage       : 숫자 입력 (화면에 V 단위 표시)
   - temperature   : 숫자 입력 (화면에 ℃ 단위 표시)
   - condition     : Voltage Map에 정의된 voltage condition 중 선택 (이름은 사용자 정의)
@@ -50,8 +52,32 @@ TIMING_STATE_OPTIONS = ["rising", "falling"]
 # ---------------------------------------------------------------------------
 # liberty 1개당 setting 필드 (2026-08 2차 재설계)
 # ---------------------------------------------------------------------------
-CORNER_OPTIONS = ["ffpg", "fsg", "sfg", "sspg", "tt"]
-BEOL_OPTIONS = ["nominal", "sigcmin", "sigrcmin", "sigrcmax", "sigcmax"]
+CORNER_OPTIONS = ["ffg", "ffpg", "fsg", "sfg", "ssg", "sspg", "tt"]
+# Corner 드롭다운의 "직접 입력" 항목 (2026-10 추가). 이 항목은 저장되는 값이 아니라
+# 화면 전용 표시이고, 고르면 옆에 입력칸이 나타나 사용자가 적은 문자열 자체가 corner
+# 값으로 저장된다. 그래서 CORNER_OPTIONS에 없는 corner 값 = 직접 입력한 값이다.
+CORNER_CUSTOM_LABEL = "Custom input"
+# 직접 입력한 corner는 파일명 토큰으로 그대로 검색되므로 영문/숫자/'-'만 허용한다
+# ('_'는 파일명 토큰 구분자라 쓸 수 없음).
+CORNER_CUSTOM_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
+
+# N/A (2026-10 추가): PDK/DBS 파일명에 BEOL 토큰 자체가 없는 경우. 이때는 BEOL을 추천
+# 매칭에서 전혀 고려하지 않고(corner/voltage/temperature만 보고 전부 MATCH_EXACT),
+# operating_conditions 이름 등 BEOL을 이어 붙이는 곳에서도 빠진다.
+BEOL_NA = "N/A"
+BEOL_OPTIONS = ["nominal", "sigcmin", "sigrcmin", "sigrcmax", "sigcmax", BEOL_NA]
+
+
+def is_beol_na(value) -> bool:
+    return str(value or "").strip().upper() == BEOL_NA
+
+
+def join_corner_beol(corner: str, beol: str) -> str:
+    """'{corner}_{beol}' - beol이 N/A(또는 빈 값)이면 corner만."""
+    beol = str(beol or "").strip()
+    if not beol or is_beol_na(beol):
+        return corner
+    return f"{corner}_{beol}"
 
 # liberty 1개당 voltage condition 하나를 고른다 -> Voltage Map(같은 화면 왼쪽 열)의 어느
 # condition에서 voltage_map 값을 가져올지 결정한다. PDK 파일명의 min/max와는 무관.
@@ -106,35 +132,43 @@ def new_entry() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 파일명 토큰 규칙 (2026-08 2차 재설계 확정)
+# 파일명 토큰 규칙 (2026-08 2차 재설계 확정 -> 2026-10 붙여쓴 형식 추가)
 #
 #   PDK/DK:
 #     {공정명}lpv_[{??}_{??}_{??}_{??}_c{??}]_{corner}_{beol}_{min|max}_0p{volt}v_{temp}c_[{??}...].lib*
 #     예) cs17lpv_sc_d7p47t_flk_rvt_c90l14_ffpg_nominal_min_0p7500v_75c_lvf_dth.lib
 #         └공정┘ └───── 있을 수도 없을 수도 ─────┘ └corner┘└beol┘└min┘└volt┘└temp┘└추가토큰┘
 #     - 대괄호 구간은 파일마다 있을 수도 없을 수도 있어서 토큰 개수가 고정되지 않는다.
-#       그래서 위치(index)로 자르지 않고, "min|max 다음에 0p...v, 그 다음에 ...c"라는
-#       고정된 세 토큰 덩어리를 먼저 찾은 뒤 그 앞쪽에서 corner/beol을 읽는다.
+#       그래서 위치(index)로 자르지 않고, "[min|max] 0p...v ...c"라는 덩어리를 먼저 찾은
+#       뒤 그 앞쪽(prefix)에서 corner/beol을 읽는다.
 #     - beol은 여러 토큰일 수도 있으므로 "corner 다음 ~ min|max 직전" 전체를 beol로 본다.
+#       BEOL Inform이 N/A면 파일명에 beol 토큰이 아예 없다 (corner 바로 뒤가 min|max).
+#     - **2026-10 추가**: corner/min|max/voltage/temperature 사이의 '_'는 있을 수도 없을
+#       수도 있고, min|max 토큰 자체가 없을 수도 있다.
+#       예) xxxxxxxx_ffg0p99v125c.lib  (corner=ffg, voltage=0.99, temperature=125)
+#       그래서 '_' 단위로 토큰을 자르지 않고 stem 문자열에서 정규식으로 덩어리를 찾는다.
 #     - **PDK 파일의 beol 토큰은 사용자가 고른 beol inform과 다를 확률이 매우 크다**
 #       (2026-08 확인). 그래서 추천 매칭에서 beol은 필수 조건이 아니라 순위 가산점으로만
 #       쓰고, 필수 조건은 corner + voltage + temperature 세 가지다.
 #
 #   DBS output:
-#     {prefix}_0p{volt}v_{temp}c.mt0
-#     예) ffpg_nominal_0p7500v_75c.mt0
+#     {prefix}_0p{volt}v_{temp}c.mt0   (PDK와 마찬가지로 '_'가 없어도 인식)
+#     예) ffpg_nominal_0p7500v_75c.mt0, ffg0p99v125c.mt0
 #
-#   - 0p{digits}v -> 0.{digits} (0p920v -> 0.920, 0p7500v -> 0.7500). 자릿수가 3자리든
-#     4자리든 같은 전압이면(0.920 == 0.9200) 같은 것으로 봐야 하므로 부동소수점 대신
-#     Decimal로 정확히 비교한다.
+#   - 0p{digits}v -> 0.{digits} (0p920v -> 0.920, 0p7500v -> 0.7500, 0p99v -> 0.99).
+#     자릿수가 달라도 같은 전압이면(0.920 == 0.9200) 같은 것으로 봐야 하므로 부동소수점
+#     대신 Decimal로 정확히 비교한다.
 #   - temperature: m{n} -> -n, m 없으면 그대로 양수 (m40 -> -40, 75 -> 75)
 # ---------------------------------------------------------------------------
-_VOLTAGE_TOKEN_PATTERN = re.compile(r"^0p(?P<digits>\d{3,4})v$", re.IGNORECASE)
-_TEMPERATURE_TOKEN_PATTERN = re.compile(r"^(?P<temp>m?\d+)c$", re.IGNORECASE)
-_MINMAX_TOKENS = ("min", "max")
+# prefix(최단) + [_][min|max][_] 0p{digits}v [_] [m]{n}c + (끝 또는 '_')
+_CONDITION_CHUNK_PATTERN = re.compile(
+    r"^(?P<prefix>.*?)_?(?:(?P<minmax>min|max)_?)?"
+    r"0p(?P<digits>\d+)v_?(?P<temp>m?\d+)c(?P<suffix>_.*)?$",
+    re.IGNORECASE,
+)
 
 # 추천 순위: 낮을수록 먼저 보여준다.
-MATCH_EXACT = 0  # corner/voltage/temperature + beol 까지 전부 일치
+MATCH_EXACT = 0  # corner/voltage/temperature + beol 까지 전부 일치 (beol N/A면 beol 무시)
 MATCH_BEOL_DIFFERS = 1  # corner/voltage/temperature 일치, beol만 다름
 
 
@@ -191,83 +225,73 @@ def format_temperature_token(temperature: int | str) -> str:
     return f"m{-value}c" if value < 0 else f"{value}c"
 
 
-def _split_stem_tokens(stem: str) -> list[str]:
-    return stem.split("_")
+def _parse_condition_chunk(stem: str) -> dict | None:
+    """
+    stem에서 "[min|max] 0p..v ..c" 덩어리를 찾아
+    {"prefix", "suffix", "minmax", "voltage", "temperature"}를 반환. 못 찾으면 None.
+    prefix는 덩어리 앞부분(끝의 '_' 제외), suffix는 뒷부분(앞의 '_' 제외)이다.
+    """
+    match = _CONDITION_CHUNK_PATTERN.match(stem)
+    if not match:
+        return None
+    return {
+        "prefix": match.group("prefix"),
+        "suffix": (match.group("suffix") or "")[1:],
+        "minmax": (match.group("minmax") or "").lower(),
+        "voltage": _voltage_from_digits(match.group("digits")),
+        "temperature": _parse_temperature_token(match.group("temp")),
+    }
 
 
 def parse_pdk_filename(filename: str) -> dict | None:
     """
-    PDK/DK 파일명을 토큰으로 분해한다.
+    PDK/DK 파일명에서 corner 앞쪽(prefix)과 min|max/voltage/temperature를 읽는다.
+    '_' 구분자가 있든 없든(xxx_ffg_min_0p9900v_125c / xxx_ffg0p99v125c) 인식한다.
 
     Returns:
-        {
-            "tokens": [...],           # 확장자를 뗀 stem을 '_'로 자른 것
-            "minmax_index": int,       # min|max 토큰의 위치
-            "minmax": "min" | "max",
-            "voltage": Decimal,
-            "temperature": int,
-        }
-        위 고정 3토큰 덩어리(min|max, 0p..v, ..c)를 못 찾으면 None.
+        {"prefix": str, "suffix": str, "minmax": "min"|"max"|"", "voltage": Decimal,
+         "temperature": int}. voltage/temperature 덩어리를 못 찾으면 None.
     """
     from step1_setup.field_defs import strip_pdk_extension
 
     stem = strip_pdk_extension(filename)
     if stem is None:
         return None
-    tokens = _split_stem_tokens(stem)
-
-    for index, token in enumerate(tokens):
-        if token.lower() not in _MINMAX_TOKENS:
-            continue
-        if index + 2 >= len(tokens):
-            continue
-        volt_match = _VOLTAGE_TOKEN_PATTERN.match(tokens[index + 1])
-        temp_match = _TEMPERATURE_TOKEN_PATTERN.match(tokens[index + 2])
-        if not volt_match or not temp_match:
-            continue
-        return {
-            "tokens": tokens,
-            "minmax_index": index,
-            "minmax": token.lower(),
-            "voltage": _voltage_from_digits(volt_match.group("digits")),
-            "temperature": _parse_temperature_token(temp_match.group("temp")),
-        }
-    return None
+    return _parse_condition_chunk(stem)
 
 
 def parse_dbs_filename(filename: str) -> dict | None:
-    """
-    DBS output(.mt0) 파일명을 토큰으로 분해해서
-    {"tokens": [...], "voltage": Decimal, "temperature": int}를 반환. 못 찾으면 None.
-    """
+    """DBS output(.mt0) 파일명을 parse_pdk_filename과 같은 형식의 dict로. 못 찾으면 None."""
     from step1_setup.field_defs import DBS_FILE_EXTENSION
 
     if not filename.lower().endswith(DBS_FILE_EXTENSION):
         return None
-    stem = filename[: -len(DBS_FILE_EXTENSION)]
-    tokens = _split_stem_tokens(stem)
-
-    for index in range(len(tokens) - 1):
-        volt_match = _VOLTAGE_TOKEN_PATTERN.match(tokens[index])
-        temp_match = _TEMPERATURE_TOKEN_PATTERN.match(tokens[index + 1])
-        if not volt_match or not temp_match:
-            continue
-        return {
-            "tokens": tokens,
-            "voltage": _voltage_from_digits(volt_match.group("digits")),
-            "temperature": _parse_temperature_token(temp_match.group("temp")),
-        }
-    return None
+    return _parse_condition_chunk(filename[: -len(DBS_FILE_EXTENSION)])
 
 
-def _corner_index(tokens: list[str], corner: str, before_index: int | None = None) -> int:
-    """tokens 안에서 corner 토큰의 위치. before_index가 주어지면 그 앞에서만 찾는다."""
-    limit = len(tokens) if before_index is None else before_index
+def _find_corner(text: str, corner: str) -> int:
+    """
+    text 안에서 '_' 경계로 구분된 corner의 (마지막) 끝 위치. 없으면 -1.
+    corner 앞은 문자열 시작 또는 '_', 뒤는 문자열 끝 또는 '_'여야 한다
+    ('ffg'가 'xffg'나 'ffgx' 안에서 잘못 잡히지 않도록).
+    """
+    text = text.lower()
     target = corner.lower()
-    for index in range(limit - 1, -1, -1):
-        if tokens[index].lower() == target:
-            return index
+    start = text.rfind(target)
+    while start >= 0:
+        end = start + len(target)
+        if (start == 0 or text[start - 1] == "_") and (end == len(text) or text[end] == "_"):
+            return end
+        start = text.rfind(target, 0, start + len(target) - 1)
     return -1
+
+
+def _entry_conditions(entry: dict):
+    corner = str(entry.get(ENTRY_CORNER_KEY, "")).strip()
+    voltage = parse_voltage_input(entry.get(ENTRY_VOLTAGE_KEY, ""))
+    temperature = parse_temperature_input(entry.get(ENTRY_TEMPERATURE_KEY, ""))
+    beol = str(entry.get(ENTRY_BEOL_KEY, "")).strip()
+    return corner, voltage, temperature, beol
 
 
 def _values_match(
@@ -284,6 +308,7 @@ def match_pdk_file(filename: str, entry: dict) -> int | None:
 
     Returns:
         MATCH_EXACT        - corner/voltage/temperature + beol까지 전부 일치
+                             (BEOL Inform이 N/A면 beol은 보지 않고 바로 MATCH_EXACT)
         MATCH_BEOL_DIFFERS - corner/voltage/temperature는 일치, beol만 다름
         None               - 추천 대상 아님
     """
@@ -291,55 +316,46 @@ def match_pdk_file(filename: str, entry: dict) -> int | None:
     if parsed is None:
         return None
 
-    corner = str(entry.get(ENTRY_CORNER_KEY, "")).strip()
-    if not corner:
+    corner, voltage, temperature, beol_selected = _entry_conditions(entry)
+    if not corner or not _values_match(parsed, voltage, temperature):
         return None
 
-    voltage = parse_voltage_input(entry.get(ENTRY_VOLTAGE_KEY, ""))
-    temperature = parse_temperature_input(entry.get(ENTRY_TEMPERATURE_KEY, ""))
-    if not _values_match(parsed, voltage, temperature):
+    prefix = parsed["prefix"]
+    corner_end = _find_corner(prefix, corner)
+    if corner_end < 0:
         return None
 
-    tokens = parsed["tokens"]
-    minmax_index = parsed["minmax_index"]
-    corner_index = _corner_index(tokens, corner, minmax_index)
-    if corner_index < 0:
-        return None
-
-    beol_in_file = "_".join(tokens[corner_index + 1: minmax_index]).lower()
-    beol_selected = str(entry.get(ENTRY_BEOL_KEY, "")).strip().lower()
-    if beol_selected and beol_in_file == beol_selected:
+    if is_beol_na(beol_selected):
+        return MATCH_EXACT
+    beol_in_file = prefix[corner_end:].strip("_").lower()
+    if beol_selected and beol_in_file == beol_selected.lower():
         return MATCH_EXACT
     return MATCH_BEOL_DIFFERS
 
 
 def match_dbs_file(filename: str, entry: dict) -> int | None:
     """
-    DBS output 파일 하나가 이 setting(entry)에 맞는지 판정한다. PDK와 달리 min/max
-    토큰이 없으므로, corner 토큰이 파일명 어디엔가 있고 voltage/temperature가 일치하면
-    후보로 본다. beol까지 일치하면 MATCH_EXACT.
+    DBS output 파일 하나가 이 setting(entry)에 맞는지 판정한다. corner가 파일명
+    어디엔가('_' 경계로) 있고 voltage/temperature가 일치하면 후보로 본다. corner 뒤쪽에
+    beol 토큰이 있으면 MATCH_EXACT (BEOL Inform이 N/A면 beol은 보지 않고 MATCH_EXACT).
     """
     parsed = parse_dbs_filename(filename)
     if parsed is None:
         return None
 
-    corner = str(entry.get(ENTRY_CORNER_KEY, "")).strip()
-    if not corner:
+    corner, voltage, temperature, beol_selected = _entry_conditions(entry)
+    if not corner or not _values_match(parsed, voltage, temperature):
         return None
 
-    voltage = parse_voltage_input(entry.get(ENTRY_VOLTAGE_KEY, ""))
-    temperature = parse_temperature_input(entry.get(ENTRY_TEMPERATURE_KEY, ""))
-    if not _values_match(parsed, voltage, temperature):
+    text = parsed["prefix"] + "_" + parsed["suffix"]
+    corner_end = _find_corner(text, corner)
+    if corner_end < 0:
         return None
 
-    tokens = parsed["tokens"]
-    corner_index = _corner_index(tokens, corner)
-    if corner_index < 0:
-        return None
-
-    beol_selected = str(entry.get(ENTRY_BEOL_KEY, "")).strip().lower()
-    remaining = [token.lower() for token in tokens[corner_index + 1:]]
-    if beol_selected and beol_selected in remaining:
+    if is_beol_na(beol_selected):
+        return MATCH_EXACT
+    remaining = text[corner_end:].lower().split("_")
+    if beol_selected and beol_selected.lower() in remaining:
         return MATCH_EXACT
     return MATCH_BEOL_DIFFERS
 

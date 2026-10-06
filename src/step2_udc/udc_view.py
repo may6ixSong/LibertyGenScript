@@ -40,10 +40,11 @@ from PyQt5.QtWidgets import (
 from step1_setup.file_scanner import list_dbs_mt0_files, list_pdk_lib_files
 from step2_udc import udc_manager
 from step2_udc.udc_field_defs import (
-    COMMON_FIELD_DEFS, ENTRY_BEOL_KEY, ENTRY_CONDITION_KEY, ENTRY_CORNER_KEY,
-    ENTRY_DBS_KEY, ENTRY_FIELD_DEFS, ENTRY_ID_KEY, ENTRY_PDK_KEY, ENTRY_TEMPERATURE_KEY,
-    ENTRY_VOLTAGE_KEY, MATCH_EXACT, TIMING_STATE_OPTIONS, auto_select_dbs_file,
-    format_temperature_token, format_voltage_token, new_entry, recommend_dbs_files,
+    COMMON_FIELD_DEFS, CORNER_CUSTOM_LABEL, CORNER_OPTIONS, ENTRY_BEOL_KEY,
+    ENTRY_CONDITION_KEY, ENTRY_CORNER_KEY, ENTRY_DBS_KEY, ENTRY_FIELD_DEFS, ENTRY_ID_KEY,
+    ENTRY_PDK_KEY, ENTRY_TEMPERATURE_KEY, ENTRY_VOLTAGE_KEY, MATCH_EXACT,
+    TIMING_STATE_OPTIONS, auto_select_dbs_file, format_temperature_token,
+    format_voltage_token, is_beol_na, join_corner_beol, new_entry, recommend_dbs_files,
     recommend_pdk_files,
 )
 from step2_udc.udc_validator import validate_common_fields, validate_entries
@@ -60,6 +61,11 @@ from ui.ui_common import (
 )
 
 _NUMBER_REGEX = QRegExp(r"^-?\d*\.?\d*$")
+# 직접 입력한 corner: 파일명 토큰으로 그대로 검색되므로 영문/숫자/'-'만 (udc_field_defs
+# .CORNER_CUSTOM_PATTERN과 같은 규칙, '_'는 토큰 구분자라 입력 자체를 막는다).
+_CORNER_CUSTOM_REGEX = QRegExp(r"^[A-Za-z0-9-]*$")
+# Corner 드롭다운의 "Custom input" 항목 data - 저장되는 값이 아니라 화면 전용 표시.
+_CORNER_CUSTOM_DATA = "__custom_corner__"
 _SELECT_LABEL = "(Select)"
 _NONE_LABEL = "(None)"
 _RECOMMEND_PREFIX = "★ "  # ★
@@ -79,16 +85,24 @@ _LIBERTY_SETTINGS_INFO = (
     "'Primitive liberty file' dropdown and highlighted (★).\n\n"
     "A PDK filename's BEOL token often differs from the BEOL Inform you select, so the "
     "search only requires corner + voltage + temperature to match; a BEOL match just "
-    "ranks the file higher.\n\n"
+    "ranks the file higher. Choose BEOL Inform 'N/A' when the filenames have no BEOL "
+    "token - BEOL is then ignored entirely.\n\n"
+    "Both '..._ffg_min_0p9900v_125c...' and '..._ffg0p99v125c...' (no '_' between the "
+    "corner / voltage / temperature) filename styles are recognized.\n\n"
     "Choosing a PDK file auto-selects the DBS output file with the same corner / voltage "
     "/ temperature. If no single file matches, pick one yourself."
 )
 
 _ENTRY_FIELD_INFO = {
-    ENTRY_CORNER_KEY: "Appears verbatim in both the PDK and DBS filenames (e.g. ..._ffpg_...).",
+    ENTRY_CORNER_KEY: (
+        "Appears verbatim in both the PDK and DBS filenames (e.g. ..._ffpg_...). "
+        f"Choose '{CORNER_CUSTOM_LABEL}' to type a corner that is not in the list "
+        "(letters / digits / '-' only)."
+    ),
     ENTRY_BEOL_KEY: (
         "The BEOL token in the actual PDK filename is often different from this value, so "
-        "it is not required to match - it only ranks a candidate higher."
+        "it is not required to match - it only ranks a candidate higher. Choose N/A when "
+        "the filenames have no BEOL token; BEOL is then not considered at all."
     ),
     ENTRY_VOLTAGE_KEY: "Written as 0p####v in filenames (0.72 → 0p7200v).",
     ENTRY_TEMPERATURE_KEY: "Written as ##c / m##c in filenames (40 → 40c, -40 → m40c).",
@@ -128,6 +142,21 @@ def _fill_option_combo(combo: NoWheelComboBox, options: list[str], current: str)
                 index = combo.findData(option)
                 break
     combo.setCurrentIndex(index if index >= 0 else 0)
+
+
+def _fill_corner_combo(combo: NoWheelComboBox, edit: QLineEdit, current: str) -> None:
+    """
+    Corner 드롭다운을 채운다 (2026-10 추가): 고정 선택지 + 맨 끝 "Custom input".
+    저장된 corner가 고정 선택지에 없으면(대소문자 무시) 직접 입력한 값이므로
+    "Custom input"을 고르고 그 값을 입력칸에 넣어 둔다.
+    """
+    _fill_option_combo(combo, CORNER_OPTIONS, current)
+    combo.addItem(CORNER_CUSTOM_LABEL, _CORNER_CUSTOM_DATA)
+    current = str(current or "").strip()
+    if current and not combo.currentData():
+        combo.setCurrentIndex(combo.findData(_CORNER_CUSTOM_DATA))
+        edit.setText(current)
+    edit.setVisible(combo.currentData() == _CORNER_CUSTOM_DATA)
 
 
 def _populate_file_combo(
@@ -182,7 +211,8 @@ def _collapsed_summary_text(entry: dict) -> str:
     beol = str(entry.get(ENTRY_BEOL_KEY, "")).strip() or "?"
     voltage_token = format_voltage_token(entry.get(ENTRY_VOLTAGE_KEY, "")) or "?"
     temperature_token = format_temperature_token(entry.get(ENTRY_TEMPERATURE_KEY, "")) or "?"
-    return f"{corner}_{beol}_{voltage_token}_{temperature_token}"
+    # BEOL N/A면 파일명에 BEOL 토큰이 없으므로 요약에서도 뺀다.
+    return f"{join_corner_beol(corner, beol)}_{voltage_token}_{temperature_token}"
 
 
 class _EntryCard(QFrame):
@@ -285,6 +315,7 @@ class _EntryCard(QFrame):
             edit = self.number_widgets.get(key)
             if edit is not None:
                 edit.textChanged.connect(lambda _t: self._refresh_collapsed_label())
+        self.corner_custom_edit.textChanged.connect(lambda _t: self._refresh_collapsed_label())
 
     def _confirm_remove(self) -> None:
         # 2026-08 추가: 실수로 setting을 지우는 것을 막기 위해 삭제 전에 확인창을
@@ -328,7 +359,9 @@ class _EntryCard(QFrame):
             caption.setToolTip(_ENTRY_FIELD_INFO.get(key, ""))
             grid.addWidget(caption, 0, column)
 
-            if kind in ("select", "condition_select"):
+            if key == ENTRY_CORNER_KEY:
+                grid.addWidget(self._build_corner_field(entry), 1, column)
+            elif kind in ("select", "condition_select"):
                 combo = NoWheelComboBox()
                 combo.setToolTip(_ENTRY_FIELD_INFO.get(key, ""))
                 options = self._condition_names if kind == "condition_select" else list(extra)
@@ -343,6 +376,48 @@ class _EntryCard(QFrame):
             grid.setColumnStretch(column, 1)
 
         return grid
+
+    def _build_corner_field(self, entry: dict) -> QWidget:
+        """
+        Corner 드롭다운 + "Custom input"을 골랐을 때만 보이는 직접 입력칸 (2026-10 추가).
+        직접 입력한 문자열이 그대로 corner 값으로 저장된다 (collect()).
+        """
+        container = QWidget()
+        container.setObjectName("transparentRow")
+        column = QVBoxLayout(container)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(4)
+
+        combo = NoWheelComboBox()
+        combo.setToolTip(_ENTRY_FIELD_INFO.get(ENTRY_CORNER_KEY, ""))
+        self.corner_custom_edit = QLineEdit()
+        self.corner_custom_edit.setPlaceholderText("Enter corner (e.g. ssgnp)")
+        self.corner_custom_edit.setValidator(
+            QRegExpValidator(_CORNER_CUSTOM_REGEX, self.corner_custom_edit)
+        )
+        self.corner_custom_edit.setToolTip(_ENTRY_FIELD_INFO.get(ENTRY_CORNER_KEY, ""))
+        _fill_corner_combo(combo, self.corner_custom_edit, str(entry.get(ENTRY_CORNER_KEY, "")))
+
+        combo.currentIndexChanged.connect(lambda _i: self._on_corner_combo_changed())
+        self.corner_custom_edit.textChanged.connect(lambda _t: self._on_changed(self))
+        self.select_widgets[ENTRY_CORNER_KEY] = combo
+        column.addWidget(combo)
+        column.addWidget(self.corner_custom_edit)
+        return container
+
+    def _on_corner_combo_changed(self) -> None:
+        combo = self.select_widgets[ENTRY_CORNER_KEY]
+        is_custom = combo.currentData() == _CORNER_CUSTOM_DATA
+        self.corner_custom_edit.setVisible(is_custom)
+        if is_custom:
+            self.corner_custom_edit.setFocus()
+        self._on_changed(self)
+
+    def _corner_value(self) -> str:
+        combo = self.select_widgets[ENTRY_CORNER_KEY]
+        if combo.currentData() == _CORNER_CUSTOM_DATA:
+            return self.corner_custom_edit.text().strip()
+        return combo.currentData() or ""
 
     def _build_number_field(self, key: str, unit: str, entry: dict) -> QWidget:
         container = QWidget()
@@ -415,6 +490,7 @@ class _EntryCard(QFrame):
         entry = {ENTRY_ID_KEY: self.entry_id}
         for key, combo in self.select_widgets.items():
             entry[key] = combo.currentData() or ""
+        entry[ENTRY_CORNER_KEY] = self._corner_value()
         for key, edit in self.number_widgets.items():
             entry[key] = edit.text().strip()
         entry[ENTRY_PDK_KEY] = self.pdk_combo.currentData() or ""
@@ -423,10 +499,10 @@ class _EntryCard(QFrame):
 
     def required_widgets(self) -> list[QWidget]:
         """비어 있으면 Validate 에러가 나는 칸 - 이 카드의 입력칸 전부."""
-        return [
-            *self.select_widgets.values(), *self.number_widgets.values(),
-            self.pdk_combo, self.dbs_combo,
-        ]
+        widgets = [*self.select_widgets.values()]
+        if self.select_widgets[ENTRY_CORNER_KEY].currentData() == _CORNER_CUSTOM_DATA:
+            widgets.append(self.corner_custom_edit)
+        return [*widgets, *self.number_widgets.values(), self.pdk_combo, self.dbs_combo]
 
     def set_match_status(self, text: str, status: str = "info") -> None:
         color = {
@@ -754,7 +830,12 @@ class UDCView(QWidget):
             )
             return
 
-        looking_for = f"Looking for *_{corner}_*_{voltage_token}_{temperature_token}*"
+        # BEOL N/A면 파일명에 BEOL 토큰이 없다 - corner 바로 뒤에 [min|max]/voltage가 온다.
+        beol_na = is_beol_na(entry.get(ENTRY_BEOL_KEY, ""))
+        looking_for = (
+            f"Looking for *_{corner}_{'' if beol_na else '*_'}{voltage_token}_{temperature_token}*"
+            f" ('_' between parts optional{', BEOL ignored' if beol_na else ''})"
+        )
         if not pdk_recommended:
             card.set_match_status(
                 f"{looking_for} - no PDK file matched; pick one from the full list manually.",

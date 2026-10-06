@@ -8,7 +8,7 @@ GUI에 의존하지 않는 순수 함수로 작성.
   1. 공통 필드(area/width/height/static_current/cell_name/MC·HDA·OUT Timing State)가
      전부 채워져 있는지 (숫자 필드는 숫자로 파싱 가능한지도 확인)
   2. liberty setting이 1개 이상 있는지
-  3. 각 setting의 corner / beol inform / voltage / temperature / condition /
+  3. 각 setting의 corner(고정 선택지 또는 직접 입력) / beol inform(N/A 포함) / voltage / temperature / condition /
      PDK file / DBS file이 전부 빈 값 없이 채워져 있는지 (voltage/temperature는 숫자로
      읽히는지, condition은 Voltage Map에 정의된 이름인지도 확인)
   4. 각 setting이 고른 PDK/DBS 파일이 현재 폴더에 실제로 존재하는지
@@ -21,15 +21,28 @@ from step1_setup.file_scanner import list_dbs_mt0_files, list_pdk_lib_files
 from step2_udc.udc_field_defs import (
     COMMON_FIELD_DEFS, ENTRY_BEOL_KEY, ENTRY_CONDITION_KEY, ENTRY_CORNER_KEY,
     ENTRY_DBS_KEY, ENTRY_PDK_KEY, ENTRY_TEMPERATURE_KEY, ENTRY_VOLTAGE_KEY,
-    BEOL_OPTIONS, CORNER_OPTIONS, parse_temperature_input, parse_voltage_input,
+    BEOL_OPTIONS, CORNER_CUSTOM_PATTERN, parse_temperature_input, parse_voltage_input,
 )
 
 # condition은 선택지가 코드에 고정돼 있지 않고 Voltage Map에서 오므로 여기 없다
-# (validate_entries의 condition_names 인자로 따로 받는다).
+# (validate_entries의 condition_names 인자로 따로 받는다). corner도 2026-10부터 직접
+# 입력이 가능해져서 고정 목록 검사 대신 _validate_corner로 따로 본다.
 _SELECT_FIELD_RULES = {
-    ENTRY_CORNER_KEY: ("Corner", CORNER_OPTIONS),
     ENTRY_BEOL_KEY: ("BEOL Inform", BEOL_OPTIONS),
 }
+
+
+def _validate_corner(label: str, entry: dict) -> list[str]:
+    """corner는 고정 선택지 또는 직접 입력한 값(영문/숫자/'-'만 - 파일명 토큰으로 검색됨)."""
+    corner = str(entry.get(ENTRY_CORNER_KEY, "")).strip()
+    if not corner:
+        return [f"[{label}] Corner is not selected (or the custom corner is empty)."]
+    if not CORNER_CUSTOM_PATTERN.match(corner):
+        return [
+            f"[{label}] Corner {corner!r} may only contain letters, digits and '-' "
+            "(it is searched for as a filename token)."
+        ]
+    return []
 
 
 def validate_common_fields(common: dict) -> list[str]:
@@ -86,6 +99,7 @@ def validate_entries(
 
     for index, entry in enumerate(entries):
         label = _entry_label(index, entry)
+        errors.extend(_validate_corner(label, entry))
 
         for key, (field_label, options) in _SELECT_FIELD_RULES.items():
             value = str(entry.get(key, "")).strip()
