@@ -109,7 +109,7 @@ from typing import Callable
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QButtonGroup, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
+    QButtonGroup, QCheckBox, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
@@ -118,10 +118,12 @@ from step1_setup.port_list_reader import (
     parse_bit_range, strip_bit_range_suffix,
 )
 from step2_udc import udc_manager
-from step2_udc.udc_field_defs import ENTRY_DBS_KEY
+from step2_udc.udc_field_defs import ENTRY_DBS_KEY, ENTRY_PDK_KEY
 from step2_udc.udc_validator import selected_pdk_files
 from step3_settings import settings_manager
-from step3_settings.constants_field_defs import SCALAR_CONSTANT_DEFS
+from step3_settings.constants_field_defs import (
+    SCALAR_CONSTANT_DEFS, USE_WORST_CASE_PDK_KEY, WORST_CASE_PDK_KEY, uses_worst_case_pdk,
+)
 from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_POWER_DOWN_FUNCTION_KEY, DBS_RELATED_PINS_KEY,
     DBS_SERIAL_CLUSTER_MODE_DEFAULT, DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI,
@@ -192,6 +194,16 @@ _SCALAR_FIELD_INFO = {
     "primitive_cell_name": (
         "The cell_rise/cell_fall block name searched for after the DFF Cell Name "
         "declaration; its index_1/index_2 lines become block3's lu_table_template."
+    ),
+    "use_worst_case_pdk": (
+        "Checked (default): the lu_table_template index_1/index_2 (and block5's "
+        "max_capacitance, the last index_2 value) are read from the ONE worst case "
+        "primitive liberty selected below and reused for every generated liberty. "
+        "Validate compares that index with every selected DBS output (.mt0).\n\n"
+        "Unchecked: each liberty reads them from its own primitive liberty (the PDK file "
+        "chosen in its Step 2 liberty setting). Validate compares each .mt0 only with the "
+        "primitive liberty of the same liberty setting.\n\n"
+        "DFF Cell Name / LUT Table above are used in both cases."
     ),
     "worst_case_pdk": (
         "The lu_table_template is read from THIS PDK file only, once per run, and the same "
@@ -294,6 +306,8 @@ class SettingsView(QWidget):
         self.settings: dict = settings_manager.load_settings()
 
         self.scalar_widgets: dict[str, QWidget] = {}
+        # 폼 행 라벨 위젯(체크박스 제외) - worst case 드롭다운 행을 숨길 때 라벨도 같이 숨긴다.
+        self.scalar_labels: dict[str, QWidget] = {}
         # "Check DBS Output Pins"를 눌러 현재 Port List로 pin을 펼친 상태인지 여부.
         # False인 동안에는 Validate 버튼이 잠겨 있다.
         self._dbs_check_done = False
@@ -379,6 +393,14 @@ class SettingsView(QWidget):
         scalar_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         for key, label, kind, default in SCALAR_CONSTANT_DEFS:
             saved = self.settings["scalars"].get(key, default)
+            info = _SCALAR_FIELD_INFO.get(key)
+            if kind == "checkbox":
+                # 2026-10: 라벨 자리 없이 체크박스 글자 자체가 라벨인 한 줄짜리 행.
+                checkbox = QCheckBox(label)
+                checkbox.setChecked(uses_worst_case_pdk({key: saved}))
+                self.scalar_widgets[key] = checkbox
+                scalar_form.addRow(build_label_with_info(checkbox, info) if info else checkbox)
+                continue
             if kind == "pdk_dropdown":
                 widget: QWidget = NoWheelComboBox()
             else:
@@ -386,26 +408,39 @@ class SettingsView(QWidget):
             widget.setMinimumWidth(120)
             self.scalar_widgets[key] = widget
 
-            info = _SCALAR_FIELD_INFO.get(key)
-            field: QWidget = widget
-            if kind == "pdk_dropdown":
-                # 입력칸 바로 아래에 slope/cload 불일치 에러를 보여줄 라벨 (평소엔 숨김).
-                field = QWidget()
-                field.setObjectName("transparentRow")
-                field_layout = QVBoxLayout(field)
-                field_layout.setContentsMargins(0, 0, 0, 0)
-                field_layout.setSpacing(4)
-                field_layout.addWidget(widget)
-                self.index_error_label = QLabel("")
-                self.index_error_label.setWordWrap(True)
-                self.index_error_label.setStyleSheet(f"color: {ERROR_COLOR};")
-                self.index_error_label.setVisible(False)
-                field_layout.addWidget(self.index_error_label)
-            scalar_form.addRow(build_label_with_info(label, info) if info else label, field)
+            label_widget = build_label_with_info(label, info) if info else QLabel(label)
+            self.scalar_labels[key] = label_widget
+            scalar_form.addRow(label_widget, widget)
+
+        # slope/cload 불일치 에러 라벨(평소엔 숨김). worst case 드롭다운을 숨겨도(체크
+        # 해제) 보이도록 드롭다운 칸 안이 아니라 별도 행으로 둔다.
+        self.index_error_label = QLabel("")
+        self.index_error_label.setWordWrap(True)
+        self.index_error_label.setStyleSheet(f"color: {ERROR_COLOR};")
+        self.index_error_label.setVisible(False)
+        scalar_form.addRow(self.index_error_label)
         layout.addLayout(scalar_form)
         self._populate_worst_case_pdk_combo()
 
+        use_worst_checkbox = self.scalar_widgets[USE_WORST_CASE_PDK_KEY]
+        use_worst_checkbox.toggled.connect(self._on_use_worst_case_toggled)
+        self._apply_worst_case_visibility()
+
         return card
+
+    def _apply_worst_case_visibility(self) -> None:
+        """'Use worst case primitive liberty' 체크일 때만 worst case 드롭다운 행을 보여준다."""
+        visible = self.scalar_widgets[USE_WORST_CASE_PDK_KEY].isChecked()
+        self.scalar_widgets[WORST_CASE_PDK_KEY].setVisible(visible)
+        self.scalar_labels[WORST_CASE_PDK_KEY].setVisible(visible)
+
+    def _on_use_worst_case_toggled(self, _checked: bool) -> None:
+        self._apply_worst_case_visibility()
+        # 비교 기준이 바뀌었으므로 예전 slope/cload 결과/Validate 통과 상태는 무효다.
+        self.index_error_label.setVisible(False)
+        self._settings_validated = False
+        if hasattr(self, "generate_btn"):
+            self._update_generate_button_state()
 
     def _populate_worst_case_pdk_combo(self) -> None:
         """
@@ -432,6 +467,13 @@ class SettingsView(QWidget):
         """Step2의 liberty setting들이 고른 DBS(.mt0) 파일명 목록 (항상 새로 읽음)."""
         return [
             str(e.get(ENTRY_DBS_KEY, "")).strip()
+            for e in udc_manager.get_entries(udc_manager.load_state())
+        ]
+
+    def selected_pdk_dbs_pairs(self) -> list[tuple[str, str]]:
+        """Step2 liberty setting마다 고른 (PDK 파일명, DBS 파일명) 쌍 (항상 새로 읽음)."""
+        return [
+            (str(e.get(ENTRY_PDK_KEY, "")).strip(), str(e.get(ENTRY_DBS_KEY, "")).strip())
             for e in udc_manager.get_entries(udc_manager.load_state())
         ]
 
@@ -1244,6 +1286,8 @@ class SettingsView(QWidget):
             widget = self.scalar_widgets[key]
             if kind == "pdk_dropdown":
                 scalars[key] = widget.currentData() or ""
+            elif kind == "checkbox":
+                scalars[key] = "1" if widget.isChecked() else "0"
             else:
                 scalars[key] = widget.text().strip()
 
@@ -1313,11 +1357,12 @@ class SettingsView(QWidget):
             errors += validate_output_path(self.settings.get("output_path", ""))
             index_errors = validate_worst_case_index(
                 self.settings["scalars"], self.get_pdk_folder(), self.get_dbs_folder(),
-                self.selected_dbs_files(),
+                self.selected_dbs_files(), self.selected_pdk_dbs_pairs(),
             )
             if index_errors:
                 errors.append(
-                    "slope/cload mismatch - see below 'Worst case primitive liberty'."
+                    "slope/cload mismatch - see the details under 'Use worst case primitive "
+                    "liberty' in Constants."
                 )
         finally:
             self.validate_btn.setEnabled(True)
@@ -1351,7 +1396,13 @@ class SettingsView(QWidget):
         Number of Col / Related Pin (wildcard)는 지금 선택된 Data Transfer Type /
         Serial Cluster에서 실제로 쓰이고(칸이 있고) 활성화된 것만 넣는다.
         """
-        widgets: list[QWidget] = [self.scalar_widgets[key] for key, *_ in SCALAR_CONSTANT_DEFS]
+        widgets: list[QWidget] = [
+            self.scalar_widgets[key] for key, _label, kind, _default in SCALAR_CONSTANT_DEFS
+            if kind != "checkbox"
+            # worst case를 안 쓰면 드롭다운은 숨겨져 있고 Validate도 요구하지 않는다.
+            and not (key == WORST_CASE_PDK_KEY
+                     and not self.scalar_widgets[USE_WORST_CASE_PDK_KEY].isChecked())
+        ]
         widgets += [
             self.virtual_power_combo,
             self.enable_signal_edit, self.switch_function_edit, self.pg_function_edit,

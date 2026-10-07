@@ -76,8 +76,8 @@ from step1_setup.port_list_reader import (
 )
 from step3_settings.constants_field_defs import (
     CONDITION_NAME_KEY, CONDITION_VALUES_KEY, VOLTAGE_CONDITIONS_KEY, VOLTAGE_MATCH_TOLERANCE,
-    condition_value_key, power_type_count_of, power_type_label, voltage_map_digital_voltage_key,
-    voltage_map_name_key,
+    condition_value_key, power_type_count_of, power_type_label, uses_worst_case_pdk,
+    voltage_map_digital_voltage_key, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT,
@@ -140,6 +140,11 @@ def validate_constants(scalars: dict, paired_pdk_files: list[str] | None = None)
         value = str(scalars.get(key, "")).strip()
         if not value:
             errors.append(f"{label} is empty.")
+
+    # 2026-10: 'Use worst case primitive liberty'를 해제하면 각 liberty가 자기 PDK에서
+    # index_1/index_2를 읽으므로 worst case 선택 자체가 필요 없다.
+    if not uses_worst_case_pdk(scalars):
+        return errors
 
     worst_case_pdk = str(scalars.get(_WORST_CASE_PDK_KEY, "")).strip()
     if not worst_case_pdk:
@@ -494,74 +499,127 @@ def _close(a: float, b: float) -> bool:
     return abs(a - b) <= INDEX_MATCH_REL_TOLERANCE * max(abs(a), abs(b), 1e-30)
 
 
-def validate_worst_case_index(
-    scalars: dict, pdk_folder: str, dbs_folder: str, dbs_files: list[str],
-) -> list[str]:
-    """
-    Worst case primitive liberty의 lu_table_template index_1/index_2가, liberty 생성에 쓰이는
-    모든 DBS output(.mt0) 파일의 slope/cload 값과 일치하는지 검사한다.
-    (mt0는 결과 N1*N2개가 slope=index_1 값당 N2번 연속 반복, cload=index_2 전체 순환
-    반복 순서로 찍히므로, 그 기대 순서와 레코드 개수까지 그대로 비교한다.) 다른 필수값이 비어 있어 비교 자체를 할 수 없으면 (다른 검사가
-    이미 에러를 내므로) 빈 리스트를 반환한다.
-    """
-    worst = str(scalars.get(_WORST_CASE_PDK_KEY, "")).strip()
-    dff = str(scalars.get("dff_cell_name", "")).strip()
-    lut = str(scalars.get("primitive_cell_name", "")).strip()
-    if not (worst and dff and lut and pdk_folder and dbs_folder):
-        return []
-
+def _read_pdk_index(pdk_folder: str, pdk_file: str, dff: str, lut: str) -> tuple[list[float], list[float], str]:
+    """PDK 하나에서 DFF/LUT의 index_1/index_2 값을 읽는다. 실패하면 (_, _, 에러 문구)."""
     try:
-        sections = read_lut_table_sections(str(Path(pdk_folder) / worst), dff, lut)
+        sections = read_lut_table_sections(str(Path(pdk_folder) / pdk_file), dff, lut)
     except OSError as e:
-        return [f"Cannot read the worst case primitive liberty '{worst}': {e}"]
+        return [], [], f"Cannot read the primitive liberty '{pdk_file}': {e}"
     index_1 = parse_index_values(sections.get("index_1_line"))
     index_2 = parse_index_values(sections.get("index_2_line"))
     if not index_1 or not index_2:
-        return [
+        return [], [], (
             f"Cannot find index_1/index_2 for DFF Cell Name '{dff}' / LUT Table '{lut}' in "
-            f"'{worst}', so slope/cload cannot be checked."
+            f"'{pdk_file}', so slope/cload cannot be checked."
+        )
+    return index_1, index_2, ""
+
+
+def _compare_mt0_with_index(dbs_folder: str, dbs_file: str, index_1: list[float], index_2: list[float]) -> list[str]:
+    """
+    .mt0 하나의 slope/cload가 index_1/index_2와 (순서/개수까지) 일치하는지 검사한다.
+    mt0는 결과 N1*N2개가 slope=index_1 값당 N2번 연속 반복(바깥 루프), cload=index_2 전체
+    순환 반복(안쪽 루프) 순서로 찍힌다.
+    """
+    parsed = read_mt0_columns(str(Path(dbs_folder) / dbs_file))
+    lookup = {c.strip().lower(): c for c in parsed["columns"]}
+    slope_key, cload_key = lookup.get("slope"), lookup.get("cload")
+    if slope_key is None or cload_key is None or not parsed["rows"]:
+        return [f"'{dbs_file}': slope/cload columns could not be read."]
+    try:
+        slopes = [float(r[slope_key]) * _SLOPE_SCALE for r in parsed["rows"]]
+        cloads = [float(r[cload_key]) * _CLOAD_SCALE for r in parsed["rows"]]
+    except ValueError:
+        return [f"'{dbs_file}': non-numeric slope/cload value."]
+
+    n1, n2 = len(index_1), len(index_2)
+    if len(slopes) != n1 * n2:
+        return [
+            f"'{dbs_file}': {len(slopes)} simulation results found, expected "
+            f"{n1 * n2} (index_1 x index_2 = {n1} x {n2})."
         ]
-
+    exp_slopes = [index_1[k // n2] for k in range(n1 * n2)]
+    exp_cloads = [index_2[k % n2] for k in range(n1 * n2)]
     problems: list[str] = []
-    for dbs_file in dict.fromkeys(f for f in dbs_files if f):
-        parsed = read_mt0_columns(str(Path(dbs_folder) / dbs_file))
-        lookup = {c.strip().lower(): c for c in parsed["columns"]}
-        slope_key, cload_key = lookup.get("slope"), lookup.get("cload")
-        if slope_key is None or cload_key is None or not parsed["rows"]:
-            problems.append(f"'{dbs_file}': slope/cload columns could not be read.")
-            continue
-        try:
-            slopes = [float(r[slope_key]) * _SLOPE_SCALE for r in parsed["rows"]]
-            cloads = [float(r[cload_key]) * _CLOAD_SCALE for r in parsed["rows"]]
-        except ValueError:
-            problems.append(f"'{dbs_file}': non-numeric slope/cload value.")
-            continue
-
-        # 기대 순서: slope는 index_1 값 하나당 len(index_2)번씩 연속 반복(바깥 루프),
-        # cload는 index_2 값 8개(=len(index_2))가 순서대로 나오고 처음부터 다시 반복(안쪽 루프).
-        n1, n2 = len(index_1), len(index_2)
-        exp_slopes = [index_1[k // n2] for k in range(n1 * n2)]
-        exp_cloads = [index_2[k % n2] for k in range(n1 * n2)]
-        if len(slopes) != n1 * n2:
+    for name, found, expected, idx_name in (
+        ("slope", slopes, exp_slopes, "index_1"),
+        ("cload", cloads, exp_cloads, "index_2"),
+    ):
+        bad = next((k for k, (a, b) in enumerate(zip(found, expected)) if not _close(a, b)), None)
+        if bad is not None:
             problems.append(
-                f"'{dbs_file}': {len(slopes)} simulation results found, expected "
-                f"{n1 * n2} (index_1 x index_2 = {n1} x {n2})."
+                f"'{dbs_file}': {name} of result #{bad + 1} is {found[bad]:.6g}, "
+                f"expected {expected[bad]:.6g} ({idx_name})"
             )
-            continue
-        for name, found, expected, idx_name in (
-            ("slope", slopes, exp_slopes, "index_1"),
-            ("cload", cloads, exp_cloads, "index_2"),
-        ):
-            bad = next((k for k, (a, b) in enumerate(zip(found, expected)) if not _close(a, b)), None)
-            if bad is not None:
-                problems.append(
-                    f"'{dbs_file}': {name} of result #{bad + 1} is {found[bad]:.6g}, "
-                    f"expected {expected[bad]:.6g} ({idx_name})"
-                )
+    return problems
 
+
+def _cap_problems(header: str, problems: list[str]) -> list[str]:
     if not problems:
         return []
     shown = problems[:_MAX_REPORTED_FILES]
     if len(problems) > len(shown):
         shown.append(f"... and {len(problems) - len(shown)} more.")
-    return [f"slope/cload do not match the worst case primitive liberty '{worst}' index_1/index_2:"] + shown
+    return [header] + shown
+
+
+def validate_worst_case_index(
+    scalars: dict, pdk_folder: str, dbs_folder: str, dbs_files: list[str],
+    pdk_dbs_pairs: list[tuple[str, str]] | None = None,
+) -> list[str]:
+    """
+    lu_table_template index_1/index_2와, liberty 생성에 쓰이는 DBS output(.mt0)의
+    slope/cload 값이 일치하는지 검사한다(2026-10: 비교 기준이 'Use worst case primitive
+    liberty' 체크 여부에 따라 갈린다).
+
+      - 체크(기본): Worst case primitive liberty 하나의 index를, Step2에서 고른 **모든**
+        .mt0(dbs_files)와 비교한다(예전과 동일).
+      - 해제: Step2 liberty setting마다 고른 (PDK, .mt0) 쌍(pdk_dbs_pairs)끼리만 비교한다 -
+        각 .mt0는 같은 setting의 primitive liberty(PDK) index와만 비교된다.
+
+    다른 필수값이 비어 있어 비교 자체를 할 수 없으면 (다른 검사가 이미 에러를 내므로)
+    빈 리스트를 반환한다.
+    """
+    dff = str(scalars.get("dff_cell_name", "")).strip()
+    lut = str(scalars.get("primitive_cell_name", "")).strip()
+    if not (dff and lut and pdk_folder and dbs_folder):
+        return []
+
+    if uses_worst_case_pdk(scalars):
+        worst = str(scalars.get(_WORST_CASE_PDK_KEY, "")).strip()
+        if not worst:
+            return []
+        index_1, index_2, error = _read_pdk_index(pdk_folder, worst, dff, lut)
+        if error:
+            return [error]
+        problems: list[str] = []
+        for dbs_file in dict.fromkeys(f for f in dbs_files if f):
+            problems += _compare_mt0_with_index(dbs_folder, dbs_file, index_1, index_2)
+        return _cap_problems(
+            f"slope/cload do not match the worst case primitive liberty '{worst}' index_1/index_2:",
+            problems,
+        )
+
+    # 체크 해제: setting마다 자기 PDK와 자기 .mt0만 비교한다. 같은 PDK는 한 번만 읽는다.
+    errors: list[str] = []
+    index_cache: dict[str, tuple[list[float], list[float], str]] = {}
+    problems_by_pdk: dict[str, list[str]] = {}
+    for pdk_file, dbs_file in dict.fromkeys(
+        (p, d) for p, d in (pdk_dbs_pairs or []) if p and d
+    ):
+        if pdk_file not in index_cache:
+            index_cache[pdk_file] = _read_pdk_index(pdk_folder, pdk_file, dff, lut)
+            if index_cache[pdk_file][2]:
+                errors.append(index_cache[pdk_file][2])
+        index_1, index_2, error = index_cache[pdk_file]
+        if error:
+            continue
+        problems_by_pdk.setdefault(pdk_file, []).extend(
+            _compare_mt0_with_index(dbs_folder, dbs_file, index_1, index_2)
+        )
+    for pdk_file, problems in problems_by_pdk.items():
+        errors += _cap_problems(
+            f"slope/cload do not match the primitive liberty '{pdk_file}' index_1/index_2:",
+            problems,
+        )
+    return errors

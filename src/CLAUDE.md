@@ -220,7 +220,7 @@ Type 개수 무제한 + voltage(digital) 필드 추가)
 - 스칼라 필드: `class`(기본 `"analog"`), `process_prefix`(기본 `"sec"`, 신규 — liberty
   벤더 커스텀 attribute 접두어, cell/pin 작성 라운드부터 실사용), `output_prefix`(신규 —
   출력 파일명에 사용, 아래 참고), `DFF Cell Name`, `LUT Table`,
-  `Worst case primitive liberty`
+  `Use worst case primitive liberty`(체크박스), `Worst case primitive liberty`
 - **`LUT Table`**: 예전 화면 라벨 `Primitive Cell Name`을 이름만 바꾼 것 (config key는
   호환 때문에 `primitive_cell_name` 그대로). block3의 `lu_table_template`
   index_1/index_2를 PDK/DK 파일에서 찾을 때, `cell (DFF Cell Name)` 선언 다음으로 이
@@ -230,6 +230,19 @@ Type 개수 무제한 + voltage(digital) 필드 추가)
   페어링이 성립한 PDK 목록이었다). 위 `lu_table_template`은 **liberty마다 각자의 PDK에서
   찾지 않고, 여기서 고른 PDK 하나에서 실행당 딱 한 번만 읽어 생성하는 모든 liberty에
   그대로 재사용**한다 (2026-08 확정).
+- **`Use worst case primitive liberty`** (2026-10 추가, 체크박스, config key
+  `use_worst_case_pdk` = `"1"`/`"0"`, 기본 체크 - 이 키가 없는 예전 config도 체크로 읽힘,
+  `constants_field_defs.uses_worst_case_pdk`): lu_table_template의 index_1/index_2와
+  block5 `max_capacitance`(index_2 마지막 값)를 어느 PDK에서 읽을지 정한다.
+  - **체크**: 위 `Worst case primitive liberty` 드롭다운이 보이고, 지금까지처럼 그 PDK
+    하나를 모든 liberty에 쓴다.
+  - **해제**: 드롭다운 행(라벨 포함)이 화면에서 **숨겨지고** Validate도 그 선택을 요구하지
+    않는다. 각 liberty는 **Step2 liberty setting에서 고른 자기 PDK(primitive liberty)**에서
+    읽는다(`generate_view._lut_sections_for_job`, 같은 PDK는 PDK 경로별 캐시로 한 번만
+    읽음). 이때 `job["worst_case_pdk_filename"]`에는 그 job 자신의 PDK 파일명이 들어가
+    block3/block5 결측 주석의 출처로 적힌다(`liberty_assembler`).
+  - DFF Cell Name / LUT Table / max_capacitance 규칙은 두 경우 모두 동일하다(모든
+    primitive liberty에 같은 DFF cell/LUT table이 있다는 전제).
 - **삭제된 필드**: `DKgen_ver`, `portdesc_make`, `mt_make`, `mt_cnt_ref_output`,
   `mt_cnt_ref_input` (liberty 파일 내용에 안 쓰이는 것으로 확인 완료 — 원본 스크립트에서
   주석/로그 전용이거나 별도 문서 생성/검증 임계값 용도였음)
@@ -902,8 +915,12 @@ Next(또는 Generate)는 그 Step의 Validate를 통과하기 전까지 항상 d
 - `$DISPLAY` 필요 (X11 forwarding).
 ## Step 3 Validate — Worst case index_1/index_2 ↔ DBS(.mt0) slope/cload 일치 검사 (2026-09)
 
-`settings_validator.validate_worst_case_index()`: Step2에서 고른 모든 DBS(.mt0)의
-`slope`(×1e9 → ns)/`cload`(×1e12 → pF)를 등장 순서 기준 중복 제거한 목록이 Worst case
-PDK의 index_1/index_2와 (상대오차 1e-3, 개수 포함) 일치하는지 검사한다. 불일치 시
-Worst case primitive liberty 입력칸 아래 빨간 라벨(`index_error_label`)에 영어로 표시하고
-Validate를 실패시킨다.
+`settings_validator.validate_worst_case_index()`: DBS(.mt0)의
+`slope`(×1e9 → ns)/`cload`(×1e12 → pF)가 PDK의 index_1/index_2와 (상대오차 1e-3, 순서와
+개수 포함) 일치하는지 검사한다. 무엇을 무엇과 비교하는지는 `Use worst case primitive
+liberty` 체크 여부로 갈린다(2026-10):
+- **체크**: Worst case PDK 하나를 Step2에서 고른 **모든** .mt0와 비교한다.
+- **해제**: Step2 liberty setting마다 고른 (PDK, .mt0) 쌍끼리만 비교한다 - 각 .mt0는 같은
+  setting의 primitive liberty와만 비교된다(`SettingsView.selected_pdk_dbs_pairs`).
+불일치 시 Constants 카드의 체크박스/드롭다운 아래 빨간 라벨(`index_error_label`, 드롭다운을
+숨겨도 보이도록 별도 행)에 영어로 표시하고 Validate를 실패시킨다.

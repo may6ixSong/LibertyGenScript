@@ -27,7 +27,8 @@ from step2_udc.udc_field_defs import (
 )
 from step3_settings.constants_field_defs import (
     CONDITION_NAME_KEY, CONDITION_VALUES_KEY, condition_value_key, find_condition,
-    power_type_count_of, voltage_map_digital_voltage_key, voltage_map_name_key,
+    power_type_count_of, uses_worst_case_pdk, voltage_map_digital_voltage_key,
+    voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_POWER_DOWN_FUNCTION_KEY, DBS_RELATED_PINS_KEY,
@@ -151,9 +152,16 @@ def build_job(
         errors.append(f"[{pdk_filename}] LUT Table (Step 3 Constants) is empty.")
         return None
 
-    # lu_table_template은 이 pair의 PDK가 아니라 Step3에서 고른 worst case PDK 하나에서만
-    # 읽는다 (generate_view가 실행당 한 번 읽어서 모든 job에 같은 결과를 넘겨줌).
-    worst_case_pdk_filename = str(scalars.get("worst_case_pdk", "")).strip()
+    # lu_table_template(+ block5 max_capacitance)을 읽을 PDK (2026-10):
+    #   - 'Use worst case primitive liberty' 체크: Step3에서 고른 worst case PDK 하나
+    #     (generate_view가 실행당 한 번 읽어서 모든 job에 같은 결과를 넘겨줌).
+    #   - 해제: 이 job(liberty setting)이 고른 자기 PDK.
+    # 키 이름은 호환을 위해 그대로 두지만, 의미는 "index_1/index_2를 읽은 PDK 파일명"이다
+    # (block3/block5의 결측 안내 주석에 출처로 적힘).
+    use_worst_case = uses_worst_case_pdk(scalars)
+    worst_case_pdk_filename = (
+        str(scalars.get("worst_case_pdk", "")).strip() if use_worst_case else pdk_filename
+    )
     if not worst_case_pdk_filename:
         errors.append(
             f"[{pdk_filename}] Worst case primitive liberty (Step 3 Constants) is not selected."
@@ -273,6 +281,7 @@ def build_job(
         "dff_cell_name": dff_cell_name,
         "lut_table_name": lut_table_name,
         "worst_case_pdk_filename": worst_case_pdk_filename,
+        "use_worst_case_pdk": use_worst_case,
         "bits": list(port_bit_values),
         "process_prefix": process_prefix,
         "class_value": class_value,
