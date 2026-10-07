@@ -58,6 +58,7 @@ library 이름의 .db 파일이 "존재하고 크기가 0보다 크면" 변환 �
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from PyQt5.QtCore import QPropertyAnimation, QTimer, Qt
@@ -86,6 +87,10 @@ from ui.ui_common import add_shadow, build_back_button, build_bottom_button_row
 _TILE_WIDTH = 130
 _TICK_INTERVAL_MS = 1000
 _DB_POLL_INTERVAL_MS = 700
+# lc_sub 잡이 끝난 뒤에도 아직 안 보이는 .db를 실패로 확정하기 전에 기다려 주는 시간
+# (2026-10). 마지막 .db는 잡이 끝나기 직전에 써지고, LSF 노드가 쓴 파일이 NFS 캐시
+# 때문에 이 머신에서 몇 초 늦게 보일 수 있다 - 그 사이에 실패로 찍히던 문제가 있었다.
+_DB_FINAL_GRACE_MS = 15000
 _DB_SPINNER_FRAMES = ["◐", "◓", "◑", "◒"]
 
 
@@ -200,6 +205,13 @@ class GenerateView(QWidget):
         self._db_poll_timer = QTimer(self)
         self._db_poll_timer.setInterval(_DB_POLL_INTERVAL_MS)
         self._db_poll_timer.timeout.connect(self._poll_db_files)
+
+        # 잡 종료 후 남은 .db를 잠깐 더 기다리는 재확인 타이머(_finish_convert 참고).
+        self._db_grace_timer = QTimer(self)
+        self._db_grace_timer.setInterval(_DB_POLL_INTERVAL_MS)
+        self._db_grace_timer.timeout.connect(self._check_db_grace)
+        self._db_grace_deadline = 0.0
+        self._db_finish_args: tuple[str, str] = ("", "")
 
         self._db_spinner_timer = QTimer(self)
         self._db_spinner_timer.setInterval(150)
@@ -377,6 +389,7 @@ class GenerateView(QWidget):
         # 재생성(다시 Generate) 대비 db 변환 쪽 상태도 초기화한다. Back 버튼이 변환
         # 도중에는 잠겨 있어 이 경로로 재진입할 일은 없지만, 안전하게 타이머도 멈춘다.
         self._db_poll_timer.stop()
+        self._db_grace_timer.stop()
         self._db_spinner_timer.stop()
         self._clear_layout(self.db_grid_layout)
         self._db_tiles = []
@@ -704,7 +717,30 @@ class GenerateView(QWidget):
             self.db_progress_label.setText(f"{done} of {total} db files converted")
 
     def _finish_convert(self, log_path: str = "", error_message: str = "") -> None:
+        """
+        lc_sub 잡이 끝났을 때. 바로 실패를 확정하지 않고 먼저 폴더를 한 번 더 확인한다 -
+        마지막 .db는 잡 종료 직전에 써지므로 다음 폴링 전에 잡 종료 신호가 먼저 오면
+        놓치기 쉽고, LSF 노드가 쓴 파일은 NFS 캐시 때문에 몇 초 늦게 보일 수 있다
+        (2026-10: 실제로 4개 모두 만들어졌는데 마지막 1개가 실패로 표시됐었다). 그래도
+        남은 게 있으면 _DB_FINAL_GRACE_MS 동안 재확인한 뒤 확정한다(_check_db_grace).
+        """
         self._db_poll_timer.stop()
+        self._poll_db_files()
+        if self._db_pending and not error_message:
+            self._db_finish_args = (log_path, error_message)
+            self._db_grace_deadline = time.monotonic() + _DB_FINAL_GRACE_MS / 1000.0
+            self._db_grace_timer.start()
+            return
+        self._complete_convert(log_path, error_message)
+
+    def _check_db_grace(self) -> None:
+        self._poll_db_files()
+        if self._db_pending and time.monotonic() < self._db_grace_deadline:
+            return
+        self._db_grace_timer.stop()
+        self._complete_convert(*self._db_finish_args)
+
+    def _complete_convert(self, log_path: str = "", error_message: str = "") -> None:
         self._db_spinner_timer.stop()
 
         # 잡이 끝났는데도 여전히 안 만들어진 .db가 있으면 실패로 표시한다.
