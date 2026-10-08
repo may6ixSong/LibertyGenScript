@@ -917,11 +917,24 @@ Next(또는 Generate)는 그 Step의 Validate를 통과하기 전까지 항상 d
   터미널을 바로 돌려준다(`nohup setsid`, 출력은 `logs/run_generator.log`, PID는
   `logs/run_generator.pid`). 이미 떠 있는 앱이 있으면 **먼저 종료한 뒤** 새로 띄운다
   (같은 config를 두 창이 동시에 고치지 않도록). `--stop`(강제 종료: TERM 후 3초 내
-  안 꺼지면 KILL, 프로세스 그룹 전체), `--status`, `--fg`(예전처럼 포그라운드) 옵션이 있다.
+  안 꺼지면 KILL, 프로세스 그룹 전체), `--status`, `--dump`(스택 덤프), `--fg`(예전처럼 포그라운드) 옵션이 있다.
   종료 전에 PID가 정말 `src/main.py`인지 확인해 PID 재사용으로 다른 프로세스를 죽이지
   않는다. 시작 직후 3초 안에 죽으면 로그 마지막 부분을 터미널에 보여준다. 백그라운드
   실행 중에는 그 터미널의 Ctrl+C가 앱에 가지 않으므로 `--stop`을 쓴다.
   `GENERATOR_PYTHON` 환경변수로 python 경로를 지정할 수 있다.
+- **창이 안 뜨고 멈추는 문제 대응 (2026-10)**: HPC에서 src를 바꾼 직후 첫 실행이 창을
+  띄우지 못하고 멈추고, 강제 종료 후 다시 실행하면 뜨는 현상이 있었다(포그라운드 실행
+  때부터 있던 현상, 원인 미확정). 대응:
+  - 앱이 시작 단계마다 `[startup HH:MM:SS +경과초] ...` 줄을 로그에 남긴다(python 시작 →
+    앱 모듈 import → QApplication 생성(X 연결) → 메인 창 생성 → 창 표시,
+    `ui/startup_trace.py`). 마지막으로 찍힌 줄 다음 단계에서 멈춘 것이다.
+  - faulthandler를 SIGUSR1에 걸어 둬서 `kill -USR1 <PID>`(= `run_generator.sh --dump`)를
+    보내면 그 순간 모든 스레드의 파이썬 스택이 로그에 찍힌다.
+  - 창이 실제로 뜨면(이벤트 루프 첫 tick) 앱이 `logs/run_generator.ready` 파일을 만들고,
+    `run_generator.sh`는 이 파일을 기다린다. `GENERATOR_READY_TIMEOUT`초(기본 20) 안에 안
+    뜨면 스택을 로그에 남기고 그 프로세스를 죽인 뒤 **자동으로 한 번 다시 실행**한다. 두 번째도
+    안 뜨면 더 죽이지 않고 안내만 한다(exit 2).
+  - 백그라운드 실행은 `PYTHONUNBUFFERED=1`로 띄워 로그가 즉시 기록된다.
 - **창 X 버튼 종료 (2026-10)**: `gui_app.launch_gui`가 이벤트 루프가 끝나면 `os._exit`로
   즉시 끝낸다. 예전에는 백그라운드 QThread(.db 변환 대기, Port List 파싱 등)가 도는 중에
   창을 닫으면 "QThread: Destroyed while thread is still running"으로 abort(코드 134)됐다.

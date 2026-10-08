@@ -44,6 +44,7 @@ from step1_setup.setup_view import SetupView
 from step2_udc.udc_view import UDCView
 from step3_settings.settings_view import SettingsView
 from step4_generate.generate_view import GenerateView
+from ui import startup_trace
 from ui.force_quit import install_force_quit
 from ui.loading_overlay import LoadingOverlay
 from ui.theme import (
@@ -216,12 +217,17 @@ class MainWindow(QMainWindow):
 
 
 def launch_gui() -> int:
+    startup_trace.mark("creating QApplication (connects to $DISPLAY=%s)" % os.environ.get("DISPLAY", ""))
     app = QApplication(sys.argv)
     app.setStyleSheet(APP_STYLESHEET)
     cursor_filter = _PointerCursorFilter(app)
     app.installEventFilter(cursor_filter)
+    startup_trace.mark("building main window (loads config)")
     window = MainWindow()
+    startup_trace.mark("showing main window")
     window.show()
+    # 이벤트 루프가 실제로 돌기 시작한 첫 tick에 "창이 떴다"를 알린다(run_generator.sh가 기다림).
+    QTimer.singleShot(0, startup_trace.notify_ready)
     exit_code = app.exec_()
     # 2026-10: 창을 X로 닫으면 이벤트 루프가 끝나 여기로 온다. 그 순간 백그라운드
     # QThread(.db 변환 잡 대기, Step1 Port List 파싱 등)가 아직 돌고 있으면 일반 종료

@@ -12,7 +12,16 @@ core/(레거시, 미사용 OUTPUT_DIR 관리 코드)는 삭제됨.
 
 import sys
 
-from ui.gui_app import launch_gui
+# 2026-10: 시작이 어디서 멈추는지 로그로 남긴다(ui/startup_trace.py 참고). PyQt/앱 모듈
+# import보다 먼저 켜야 import 도중 멈춘 경우도 잡힌다.
+from ui import startup_trace
+
+startup_trace.install()
+startup_trace.mark("importing app modules (PyQt5, step1~4)...")
+
+from ui.gui_app import launch_gui  # noqa: E402
+
+startup_trace.mark("app modules imported")
 
 
 def main() -> int:
