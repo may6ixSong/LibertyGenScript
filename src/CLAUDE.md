@@ -470,6 +470,25 @@ Validate를 누르면 에러 목록과 함께, 비어 있어서 에러가 난 �
 
 liberty 내부의 `library (...)` 이름도 이 파일명에서 `.lib`만 뺀 문자열과 동일.
 
+**UDC sweep 데이터 파일 (2026-10 추가)**: Generate 때 liberty와 같은 output path에
+`UDC_{DBS 파일명에서 .mt0 뺀 것}.txt`도 쓴다(`step4_generate/udc_data_writer.py`,
+`GenerateView._write_udc_data`). vim으로 열어 복사해 쓰는 용도의 텍스트 파일이다:
+
+```
+****  UDC condition applied
+.data sweep_data slope Cload
++	0.00113118n	0.000416157p
+...
+.enddata
+```
+
+데이터 줄은 `+<TAB>slope<n><TAB>cload<p>`이고 .mt0 레코드 순서 그대로다. slope는 ×1e9(ns),
+cload는 ×1e12(pF)로, .mt0 원본 텍스트를 Decimal로 자릿수만 옮겨 쓴다(부동소수점 오차 없음).
+- `Use worst case primitive liberty` **체크**: Step3 Validate가 모든 .mt0의 slope/cload가
+  같음을 보장하므로 첫 job의 .mt0 이름으로 **하나만** 쓴다.
+- **해제**: job(.mt0)마다 하나씩 쓴다.
+쓰기에 실패해도 liberty 생성은 계속하고, 끝난 뒤 진행 라벨에 "UDC data file failed: ..."로 표시한다.
+
 ## Step 4 — Liberty 생성
 
 **생성된 파일 열기 (2026-08 추가 → 2026-08 검색 추가)**: 파일 아이콘을 클릭하면 그

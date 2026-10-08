@@ -78,6 +78,7 @@ from step3_settings.constants_field_defs import uses_worst_case_pdk
 from step4_generate import db_converter, liberty_assembler
 from step4_generate.liberty_writter import write_liberty_file
 from step4_generate.pdk_stream_reader import new_lut_sections, read_lut_table_sections
+from step4_generate.udc_data_writer import write_udc_data_file
 from ui.background_task import run_task
 from ui.file_viewer import open_file_viewer
 from ui.theme import (
@@ -184,6 +185,7 @@ class GenerateView(QWidget):
         # 2026-10: 'Use worst case primitive liberty'를 해제하면 job마다 자기 PDK에서
         # 읽는다 - 같은 PDK를 쓰는 job끼리 다시 읽지 않도록 PDK 경로별로 캐시한다.
         self._use_worst_case_pdk = True
+        self._udc_errors: list[str] = []
         self._lut_cache: dict[str, dict] = {}
         self._lut_scalars: dict = {}
         self._output_path: str = ""
@@ -386,6 +388,7 @@ class GenerateView(QWidget):
         self._output_path = output_path
         self._done = 0
         self._failed = 0
+        self._udc_errors: list[str] = []
         self._run_token += 1
         current_token = self._run_token
 
@@ -526,6 +529,7 @@ class GenerateView(QWidget):
         output_file = Path(self._output_path) / job["output_filename"]
 
         success, error_message = self._generate_one(job, output_file)
+        self._write_udc_data(job)
 
         self._done += 1
         if success:
@@ -559,6 +563,11 @@ class GenerateView(QWidget):
             if not self._failed:
                 self.progress_label.setStyleSheet(f"color: {SUCCESS_COLOR}; font-weight: 700;")
                 self.progress_label.setText(f"All {self._total} files generated.")
+            if self._udc_errors:
+                self.progress_label.setStyleSheet(f"color: {ERROR_COLOR}; font-weight: 600;")
+                self.progress_label.setText(
+                    self.progress_label.text() + " UDC data file failed: " + "; ".join(self._udc_errors)
+                )
             self._set_running(False)
             self.convert_btn.setEnabled(bool(self._succeeded_jobs))
             self.convert_btn.setToolTip(
@@ -592,6 +601,18 @@ class GenerateView(QWidget):
     def _forget_viewer(self, viewer) -> None:
         if viewer in self._viewers:
             self._viewers.remove(viewer)
+
+    def _write_udc_data(self, job: dict) -> None:
+        """
+        이 job의 .mt0 slope/cload로 UDC_{mt0 이름}.txt를 output path에 쓴다 (2026-10).
+        worst case 모드면 모든 .mt0의 slope/cload가 같으므로(Step3 Validate가 보장)
+        첫 job의 .mt0로 하나만 쓴다.
+        """
+        if self._use_worst_case_pdk and job is not self._jobs[0]:
+            return
+        _, error = write_udc_data_file(job["dbs_path"], job["dbs_filename"], self._output_path)
+        if error:
+            self._udc_errors.append(error)
 
     def _generate_one(self, job: dict, output_file: Path) -> tuple[bool, str | None]:
         """job 하나를 실제 liberty 파일로 생성. (성공 여부, 에러 메시지)를 반환."""
