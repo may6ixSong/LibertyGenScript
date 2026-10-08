@@ -931,7 +931,7 @@ Next(또는 Generate)는 그 Step의 Validate를 통과하기 전까지 항상 d
   - faulthandler를 SIGUSR1에 걸어 둬서 `kill -USR1 <PID>`(= `run_generator.sh --dump`)를
     보내면 그 순간 모든 스레드의 파이썬 스택이 로그에 찍힌다.
   - 창이 실제로 뜨면(이벤트 루프 첫 tick) 앱이 `logs/run_generator.ready` 파일을 만들고,
-    `run_generator.sh`는 이 파일을 기다린다. `GENERATOR_READY_TIMEOUT`초(기본 20) 안에 안
+    `run_generator.sh`는 이 파일을 기다린다. `GENERATOR_READY_TIMEOUT`초(기본 7) 안에 안
     뜨면 스택을 로그에 남기고 그 프로세스를 죽인 뒤 **자동으로 한 번 다시 실행**한다. 두 번째도
     안 뜨면 더 죽이지 않고 안내만 한다(exit 2).
   - 백그라운드 실행은 `PYTHONUNBUFFERED=1`로 띄워 로그가 즉시 기록된다.

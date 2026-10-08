@@ -22,7 +22,7 @@
 #
 # 2026-10 창이 안 뜨는 문제 대응: HPC에서 src를 바꾼 직후 첫 실행이 창을 띄우지 못하고
 # 멈추는 현상이 있어서(강제 종료 후 다시 실행하면 뜸), 실행 후 "창이 실제로 떴는지"를
-# 앱이 만드는 ready 파일로 확인한다. GENERATOR_READY_TIMEOUT초(기본 20) 안에 안 뜨면
+# 앱이 만드는 ready 파일로 확인한다. GENERATOR_READY_TIMEOUT초(기본 7) 안에 안 뜨면
 #   1) 그 순간 앱이 어디서 멈춰 있는지 스택을 로그에 남기고(SIGUSR1 -> faulthandler),
 #   2) 그 프로세스를 종료한 뒤 자동으로 한 번 다시 실행한다.
 # 다시 실행해도 안 뜨면 더 죽이지 않고(정말 느린 경우일 수 있으므로) 안내만 한다.
@@ -33,7 +33,7 @@ LOG_DIR="$SCRIPT_DIR/logs"
 LOG_FILE="$LOG_DIR/run_generator.log"
 PID_FILE="$LOG_DIR/run_generator.pid"
 READY_FILE="$LOG_DIR/run_generator.ready"
-READY_TIMEOUT="${GENERATOR_READY_TIMEOUT:-20}"
+READY_TIMEOUT="${GENERATOR_READY_TIMEOUT:-7}"
 
 # ---------------------------------------------------------------------------
 # 실행 중인 앱 찾기 / 종료
