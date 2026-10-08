@@ -77,22 +77,23 @@ condition을 직접 추가/삭제하고 이름도 정하는 형태로 바뀜, st
   `pins[DBS_TRANSFER_TYPE_KEY]`로 저장되고, block5가 Parallel일 때만 그 방식으로
   분할하도록 참조한다(block5_writer._dbs_bit_split_groups, liberty_assembler.build_job).
 
-2026-08 추가 - Serial Cluster ("Split Serial") → 2026-10 "Bit Set" 재설계:
+2026-08 추가 - Serial Cluster ("Split Serial") → 2026-10 "Left / Center / Right" 재설계:
   Serial을 고른 뒤 추가로 한 번 더 고르는 전역 라디오(`dbs_serial_cluster_row`,
   `pins[DBS_SERIAL_CLUSTER_MODE_KEY]`, 기본값 Cluster 1) - Data Transfer Type
   라디오와 같은 패턴으로 영구 위젯이고 Check 이후에만 보인다.
     - **Cluster: 1(기본값)**: 이 기능이 생기기 전과 완전히 동일 - 몫 항상 1, pin마다
       섹션에 이름 + Related Pin(Port List 값)만 보여준다.
     - **Cluster: More than 1**: 인식된 DBS output pin마다 이름+Bits 아래
-      `SerialSetEditor`(serial_set_editor.py)를 놓는다 - 그 pin 전용 Related Pin
-      와일드카드(매치된 pin 목록을 바로 아래 보여줌) + 순서대로 추가하는 bit set 표
-      (set마다 Number of Col 입력 + 매치 목록 중 Related Pin 선택, 옆에 시스템이 LSB부터
-      누적 계산한 DBS output pin 범위)와 진행 막대. DBS output pin의 최대 bit를 넘는
-      set는 그 자리에서 빨간 에러로 보인다. 계산은 Validate/block5와 같은
-      pin_field_defs.compute_serial_set_ranges. 예전의 전체 공통 "Number of Col" 칸은
-      없어졌다(저장값은 옛 config를 set 목록으로 변환할 때만 쓴다 - legacy_serial_sets).
-      입력값은 바뀔 때마다 _dbs_row_info에 되써 두므로 Data Transfer Type/Serial
-      Cluster를 오가며 화면을 다시 그려도 유지된다(`_on_serial_editor_changed`).
+      `SerialLayoutEditor`(serial_layout_editor.py)를 놓는다 - 그 pin 전용 Related Pin
+      와일드카드(매치된 pin 목록을 바로 아래 보여줌), Left / Center(각) / Right 크기
+      입력칸, 입력하는 즉시 다시 그려지는 직사각형 그림(칸마다 cluster 번호, 폭은 bit
+      크기에 비례), cluster #1의 Related Pin(첫 pin=오름차순 / 마지막 pin=내림차순)
+      라디오, 결과 미리보기 표. 계산은 Validate/block5와 같은
+      pin_field_defs.compute_serial_layout. 1차 재설계(set 목록)나 그 이전(전체 공통
+      Number of Col)으로 저장된 config는 Left/Center/Right로 표현되면 Check 시 자동
+      변환된다(pin_field_defs.sets_to_serial_layout). 입력값은 바뀔 때마다
+      _dbs_row_info에 되써 두므로 Data Transfer Type/Serial Cluster를 오가며 화면을
+      다시 그려도 유지된다(`_on_serial_editor_changed`).
 
 2026-08 변경 - Output Path는 더 이상 Validate에 종속되지 않음:
   예전에는 Check(1) + Validate(2)를 통과해야만 Output Path 입력칸/Browse가 열렸다.
@@ -128,15 +129,16 @@ from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_POWER_DOWN_FUNCTION_KEY, DBS_RELATED_PINS_KEY,
     DBS_SERIAL_CLUSTER_MODE_DEFAULT, DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI,
     DBS_SERIAL_CLUSTER_SINGLE, DBS_SERIAL_NUM_COL_KEY, DBS_SERIAL_RELATED_PATTERN_KEY,
-    DBS_SERIAL_SETS_KEY, DBS_OUTPUT_PORT_TYPE, DBS_TIMING_SENSE_KEY,
+    DBS_SERIAL_LAYOUT_KEY, DBS_SERIAL_SETS_KEY, DBS_OUTPUT_PORT_TYPE, DBS_TIMING_SENSE_KEY,
     DBS_TIMING_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY,
     DBS_TRANSFER_TYPE_PARALLEL, DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY,
     POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY,
     VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_PORT_TYPE,
     VIRTUAL_POWER_SWITCH_FUNCTION_KEY, expand_dbs_output_pins, legacy_serial_sets,
-    match_digit_wildcard, normalize_serial_sets, split_pattern_and_range,
+    match_digit_wildcard, normalize_serial_layout, normalize_serial_sets,
+    sets_to_serial_layout, split_pattern_and_range,
 )
-from step3_settings.serial_set_editor import SerialSetEditor
+from step3_settings.serial_layout_editor import SerialLayoutEditor
 from step3_settings.settings_validator import (
     validate_constants, validate_output_path, validate_pin_settings, validate_worst_case_index,
 )
@@ -230,19 +232,19 @@ _DBS_TRANSFER_TYPE_INFO = (
     "cluster count) - if either division does not divide evenly, Validate will reject it.\n\n"
     "Serial (ADBUS, default): choose a Serial Cluster below - '1' behaves exactly like "
     "before this feature existed; 'More than 1' (Split Serial) lets you split it too, "
-    "using a wildcard Related Pin and a list of bit sets (Number of Col + Related Pin "
-    "per set) instead of the Port List column."
+    "using a wildcard Related Pin and Left / Center / Right cluster sizes instead of the "
+    "Port List column."
 )
 
 _DBS_SERIAL_CLUSTER_INFO = (
     "Cluster: 1 (default) - the same single-block behavior as before this feature "
     "existed. Related Pin is read from the Port List and shown as-is.\n\n"
     "Cluster: More than 1 (Split Serial) - for each recognized DBS output pin, enter a "
-    "Related Pin wildcard (e.g. RD_EN_*) to list the candidate pins, then add bit sets "
-    "in order. Each set = a Number of Col + one of those Related Pins, and takes that "
-    "many bits of the DBS output pin starting from its LSB - the bit range is filled in "
-    "automatically. Sets may have different Number of Col values. If multiple DBS "
-    "output pins are recognized (e.g. Top/Bottom), each has its own wildcard and sets."
+    "Related Pin wildcard (e.g. RD_EN_*) to list the candidate pins, then the Left, "
+    "Center (each) and Right cluster sizes. Center clusters = (Bits - Left - Right) / "
+    "Center. Cluster #1 (Left) starts at the LSB. Pick whether cluster #1 gets the first "
+    "or the last matched pin; the rest follow in ascending / descending order. If "
+    "multiple DBS output pins are recognized (e.g. Top/Bottom), each has its own inputs."
 )
 
 _DBS_POWER_DOWN_FUNCTION_INFO = (
@@ -953,6 +955,9 @@ class SettingsView(QWidget):
         saved_serial_related = self.settings["pins"].get(DBS_SERIAL_RELATED_PATTERN_KEY) or {}
         if not isinstance(saved_serial_related, dict):
             saved_serial_related = {}
+        saved_serial_layout = self.settings["pins"].get(DBS_SERIAL_LAYOUT_KEY) or {}
+        if not isinstance(saved_serial_layout, dict):
+            saved_serial_layout = {}
         saved_serial_sets = self.settings["pins"].get(DBS_SERIAL_SETS_KEY) or {}
         if not isinstance(saved_serial_sets, dict):
             saved_serial_sets = {}
@@ -976,13 +981,22 @@ class SettingsView(QWidget):
                 # 예전과 동일하게 pin() 하나만 쓰는 동작이 유지된다.
                 default_split = str(related_bits) if related_bits else "1"
             default_serial_related = str(saved_serial_related.get(pin_name, "")).strip()
-            serial_sets = normalize_serial_sets(saved_serial_sets.get(pin_name))
-            if not serial_sets and default_serial_related:
-                # 2026-10 이전 config(전체 공통 Number of Col + 숫자 오름차순 자동 배정)는
-                # 같은 결과의 set 목록으로 바꿔서 보여준다(pin_field_defs.legacy_serial_sets).
-                serial_sets = legacy_serial_sets(
-                    legacy_num_col, dbs_bits,
-                    match_digit_wildcard(default_serial_related, self._dbs_candidate_pins),
+            if isinstance(saved_serial_layout.get(pin_name), dict):
+                serial_layout = normalize_serial_layout(saved_serial_layout[pin_name])
+            else:
+                # 2026-10 "Left/Center/Right" 이전에 저장된 config: 1차 재설계(set 목록) 또는
+                # 그 이전(전체 공통 Number of Col + 숫자 오름차순)을 set 목록으로 맞춘 뒤,
+                # Left/Center/Right로 표현되면 그 레이아웃으로 바꿔 보여준다. 표현이 안 되면
+                # 빈 칸에서 다시 입력한다.
+                matched = [n for _v, n in match_digit_wildcard(
+                    default_serial_related, self._dbs_candidate_pins)] if default_serial_related else []
+                old_sets = normalize_serial_sets(saved_serial_sets.get(pin_name))
+                if not old_sets and default_serial_related:
+                    old_sets = legacy_serial_sets(
+                        legacy_num_col, dbs_bits, list(enumerate(matched)),
+                    )
+                serial_layout = normalize_serial_layout(
+                    sets_to_serial_layout(old_sets, matched) if old_sets else None
                 )
             _msb, dbs_lsb = parse_bit_range(pin_name, dbs_bits or 1)
 
@@ -991,7 +1005,7 @@ class SettingsView(QWidget):
                 "related_pin": related_pin, "related_bits": related_bits,
                 "default_split": default_split,
                 "default_serial_related": default_serial_related,
-                "serial_sets": serial_sets,
+                "serial_layout": serial_layout,
                 "split_edit": None, "result_label": None, "serial_editor": None,
             })
 
@@ -1041,9 +1055,8 @@ class SettingsView(QWidget):
         인식된 DBS output pin 하나.
           - Serial + Cluster 1: 굵은 이름 줄 + "Related Pin" 한 줄뿐(이 기능이 생기기
             전과 동일 - Bits도 보여주지 않는다).
-          - Serial + Cluster "More than 1"(Split Serial, 2026-10 "Bit Set"): 이름+Bits
-            아래 이 pin 전용 SerialSetEditor(와일드카드 + bit set 표) - 다른 pin과
-            공유하지 않는다.
+          - Serial + Cluster "More than 1"(Split Serial, 2026-10 "Left/Center/Right"):
+            이름+Bits 아래 이 pin 전용 SerialLayoutEditor - 다른 pin과 공유하지 않는다.
           - Parallel: 이름+Bits, Related Pin+Bits, 그리고 "Number of Col (#)" 입력칸
             (그 바로 아래 cluster 개수/DBS output pin Bit Depth 계산 결과 문구)까지 -
             Number of Col을 뺀 나머지는 전부 시스템이 채워주는 값이므로 표/카드처럼
@@ -1082,9 +1095,9 @@ class SettingsView(QWidget):
             name_label.setWordWrap(True)
             section_layout.addWidget(name_label)
 
-            editor = SerialSetEditor(
+            editor = SerialLayoutEditor(
                 pin_name, strip_bit_range_suffix(pin_name), dbs_bits, info["dbs_lsb"],
-                self._dbs_candidate_pins, info["default_serial_related"], info["serial_sets"],
+                self._dbs_candidate_pins, info["default_serial_related"], info["serial_layout"],
             )
             # Data Transfer Type/Serial Cluster를 바꿔서 화면을 다시 그려도 입력값이 남도록
             # 바뀔 때마다 _dbs_row_info(원본)에 되써 둔다.
@@ -1214,10 +1227,10 @@ class SettingsView(QWidget):
             SUCCESS_COLOR,
         )
 
-    def _on_serial_editor_changed(self, row: int, editor: SerialSetEditor) -> None:
+    def _on_serial_editor_changed(self, row: int, editor: SerialLayoutEditor) -> None:
         if row < len(self._dbs_row_info) and self._dbs_row_info[row].get("serial_editor") is editor:
             self._dbs_row_info[row]["default_serial_related"] = editor.pattern()
-            self._dbs_row_info[row]["serial_sets"] = editor.sets()
+            self._dbs_row_info[row]["serial_layout"] = editor.layout_value()
 
     def _collect_dbs_related_pins(self) -> dict:
         """
@@ -1254,7 +1267,7 @@ class SettingsView(QWidget):
         """
         Check가 끝난 상태면 저장값에 각 pin의 현재 Related Pin (wildcard) 값을
         덮어써서 돌려준다(_collect_dbs_bit_split과 같은 패턴). 값은 _dbs_row_info(원본,
-        SerialSetEditor가 바뀔 때마다 되써 둠)에서 읽으므로, Parallel/Serial Cluster
+        SerialLayoutEditor가 바뀔 때마다 되써 둠)에서 읽으므로, Parallel/Serial Cluster
         "1"로 전환해 둔 상태여도 마지막 입력값이 그대로 저장된다.
         """
         saved = self.settings["pins"].get(DBS_SERIAL_RELATED_PATTERN_KEY) or {}
@@ -1266,15 +1279,15 @@ class SettingsView(QWidget):
                 result[info["pin_name"]] = info["default_serial_related"]
         return result
 
-    def _collect_dbs_serial_sets(self) -> dict:
-        """{DBS output pin name: [{"cols", "related"}, ...]} - 위와 같은 패턴."""
-        saved = self.settings["pins"].get(DBS_SERIAL_SETS_KEY) or {}
+    def _collect_dbs_serial_layout(self) -> dict:
+        """{DBS output pin name: {"left", "center", "right", "first"}} - 위와 같은 패턴."""
+        saved = self.settings["pins"].get(DBS_SERIAL_LAYOUT_KEY) or {}
         if not isinstance(saved, dict):
             saved = {}
         result = dict(saved)
         if self._dbs_check_done:
             for info in self._dbs_row_info:
-                result[info["pin_name"]] = [dict(item) for item in info["serial_sets"]]
+                result[info["pin_name"]] = dict(info["serial_layout"])
         return result
 
     # ------------------------------------------------------------------
@@ -1315,7 +1328,9 @@ class SettingsView(QWidget):
             # 예전 config 변환용으로만 저장값을 그대로 유지한다.
             DBS_SERIAL_NUM_COL_KEY: str(self.settings["pins"].get(DBS_SERIAL_NUM_COL_KEY, "") or ""),
             DBS_SERIAL_RELATED_PATTERN_KEY: self._collect_dbs_serial_related_pattern(),
-            DBS_SERIAL_SETS_KEY: self._collect_dbs_serial_sets(),
+            # 1차 재설계(set 방식)의 저장값 - 예전 config 변환용으로만 그대로 유지한다.
+            DBS_SERIAL_SETS_KEY: dict(self.settings["pins"].get(DBS_SERIAL_SETS_KEY) or {}),
+            DBS_SERIAL_LAYOUT_KEY: self._collect_dbs_serial_layout(),
         }
 
     def _collect_all(self) -> dict:

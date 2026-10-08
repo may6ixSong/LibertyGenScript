@@ -39,7 +39,8 @@ from step3_settings.constants_field_defs import (
 from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_POWER_DOWN_FUNCTION_KEY, DBS_RELATED_PINS_KEY,
     DBS_SERIAL_CLUSTER_MODE_DEFAULT, DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI,
-    DBS_SERIAL_CLUSTER_SINGLE, DBS_SERIAL_NUM_COL_KEY, DBS_SERIAL_RELATED_PATTERN_KEY, DBS_SERIAL_SETS_KEY,
+    DBS_SERIAL_CLUSTER_SINGLE, DBS_SERIAL_LAYOUT_KEY, DBS_SERIAL_NUM_COL_KEY,
+    DBS_SERIAL_RELATED_PATTERN_KEY, DBS_SERIAL_SETS_KEY,
     DBS_TIMING_SENSE_DEFAULT, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_DEFAULT, DBS_TIMING_TYPE_KEY,
     DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY, DBS_TRANSFER_TYPE_PARALLEL,
     DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY, POWER_DOWN_FALL_POWER_DEFAULT,
@@ -188,6 +189,9 @@ def _default_pins() -> dict:
         # {인식된 DBS output pin name: [{"cols": ..., "related": ...}, ...]} - 2026-10
         # Split Serial "Bit Set" 재설계(pin_field_defs.DBS_SERIAL_SETS_KEY 참고).
         DBS_SERIAL_SETS_KEY: {},
+        # {인식된 DBS output pin name: {"left", "center", "right", "first"}} - 2026-10
+        # Split Serial "Left/Center/Right" 재설계(pin_field_defs.DBS_SERIAL_LAYOUT_KEY 참고).
+        DBS_SERIAL_LAYOUT_KEY: {},
     }
 
 
@@ -223,6 +227,8 @@ def load_settings() -> dict:
                 merged_pins[DBS_SERIAL_RELATED_PATTERN_KEY] = {}
             if not isinstance(merged_pins.get(DBS_SERIAL_SETS_KEY), dict):
                 merged_pins[DBS_SERIAL_SETS_KEY] = {}
+            if not isinstance(merged_pins.get(DBS_SERIAL_LAYOUT_KEY), dict):
+                merged_pins[DBS_SERIAL_LAYOUT_KEY] = {}
             # dbs_data_transfer_type도 두 값 중 하나여야 함 - 아니면 기본값(Serial).
             if merged_pins.get(DBS_TRANSFER_TYPE_KEY) not in (
                 DBS_TRANSFER_TYPE_PARALLEL, DBS_TRANSFER_TYPE_SERIAL,

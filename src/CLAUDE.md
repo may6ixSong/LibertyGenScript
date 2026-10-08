@@ -282,8 +282,7 @@ Type 개수 무제한 + voltage(digital) 필드 추가)
    - 인식된 pin마다 `related pin` 하나씩 — Port List의 'Related Pin' 컬럼 값으로
      **고정**(수정 불가, 아래 "Related Pin은 Port List 값으로 고정" 참고), block5
      `timing()`의 `related_bus_pins`. (Serial Cluster "More than 1"에서는 예외 -
-     아래 "Serial Cluster" 절 참고, Related Pin을 와일드카드 매치 목록에서 set마다
-     고른다.)
+     아래 "Serial Cluster" 절 참고, 와일드카드 매치 목록이 cluster 순서대로 자동 배정된다.)
    - **Data Transfer Type**(2026-08 추가) — 인식된 pin 전체에 공통으로 적용되는
      라디오 버튼 선택 하나, Parallel(DTBUS)/Serial(ADBUS). 아래 "Data Transfer
      Type" 절 참고.
@@ -291,8 +290,8 @@ Type 개수 무제한 + voltage(digital) 필드 추가)
      2026-08 재설계, 옛 "Bit Depth"/"Split into (bits)") — **Related Pin의** 총
      Bits를 몇 개의 칼럼으로 나눌지(아래 "DBS output pin bit 분할" 참고).
    - Serial일 때, **Serial Cluster**(2026-08 추가, "1"/"More than 1") 선택 하나 —
-     "More than 1"이면 인식된 pin마다 `Related Pin (wildcard)` 입력칸과 **bit set
-     표**(set마다 Number of Col + Related Pin)가 나타난다(아래 "Serial Cluster" 절 참고).
+     "More than 1"이면 인식된 pin마다 `Related Pin (wildcard)` 입력칸과 **Left / Center /
+     Right 크기 입력 + 직사각형 그림**이 나타난다(아래 "Serial Cluster" 절 참고).
 
 **Check가 Validate보다 항상 먼저 (2026-08 확정)**: Port List 파일이 바뀌면 같은
 와일드카드라도 인식되는 DBS output pin 집합이 달라진다. 그래서 화면에
@@ -324,8 +323,8 @@ entryCard 스타일 박스 목록으로, 그 박스+스크롤도 "여전히 표 
 제목 줄(이름, Parallel/Serial Cluster "More than 1"이면 + Bits) 아래 `QFormLayout`로
 "Related Pin"(Serial Cluster "1"이면 읽기 전용 텍스트, Parallel이면 + Bits) 행과,
 (Parallel이면) "Number of Col (#)" 행(입력칸 + 그 바로 아래 계산 결과 문구), 또는
-(Serial Cluster "More than 1"이면) 이 pin 전용 `SerialSetEditor`(와일드카드 + bit set
-표, 아래 "Serial Cluster" 절)를 놓는다. pin이 둘 이상이면 사이에 얇은 구분선만 넣는다
+(Serial Cluster "More than 1"이면) 이 pin 전용 `SerialLayoutEditor`(와일드카드 + Left/
+Center/Right, 아래 "Serial Cluster" 절)를 놓는다. pin이 둘 이상이면 사이에 얇은 구분선만 넣는다
 (`SettingsView._build_dbs_pin_section`/`_render_dbs_pin_sections`).
 
 **Data Transfer Type (2026-08 추가)**: `1) Check DBS Output Pins` 성공 후 라디오
@@ -335,53 +334,53 @@ entryCard 스타일 박스 목록으로, 그 박스+스크롤도 "여전히 표 
     `Number of Col (#)`를 입력받고, block5에 여러 `pin()` 범위(cluster)로 나눠 쓴다.
   - **Serial (ADBUS, 기본값)**: 아래 "Serial Cluster" 절 참고 - Cluster "1"이면 이
     DBS output pin bit 분할 기능이 생기기 전과 완전히 동일(몫 항상 1), "More than 1"
-    이면 사용자가 순서대로 추가한 bit set(Number of Col + Related Pin)대로 DBS output
-    pin을 LSB부터 나눈다.
+    이면 Left / Center / Right 크기대로 DBS output pin을 LSB부터 나눈다.
   라디오를 전환해도 Port List를 다시 읽지 않고, Check 시점에 이미 읽어 둔 값을 그
   자리에서 다시 그리기만 한다(`SettingsView._render_dbs_pin_sections`,
   `_on_dbs_transfer_type_changed`). block5는 `job["dbs_data_transfer_type"]`에 따라
   `_parallel_split_groups`/`_serial_split_groups`로 분기하고, 조건이 안 맞으면 항상
   분할 전 원래 동작(pin() 하나)으로 폴백한다(`block5_writer._dbs_bit_split_groups`).
 
-**Serial Cluster (2026-08 추가, "Split Serial" → 2026-10 "Bit Set" 재설계)**: Data
-Transfer Type이 Serial일 때만 보이는 두 번째 전역 라디오
+**Serial Cluster (2026-08 추가, "Split Serial" → 2026-10 "Bit Set" → 2026-10 "Left /
+Center / Right" 재설계)**: Data Transfer Type이 Serial일 때만 보이는 두 번째 전역 라디오
 (`pin_field_defs.DBS_SERIAL_CLUSTER_MODE_KEY`, 기본값 "1") - Data Transfer Type
 라디오와 같은 패턴으로 영구 위젯이고 Check 이후에만 보인다.
   - **Cluster: 1 (기본값)**: 이 DBS output pin bit 분할 기능이 생기기 전과 완전히
     동일 - 몫(cluster 개수)이 항상 1이다. pin마다 이름과 Related Pin(Port List 값)만
     보여준다(Bits 표시도 생략).
   - **Cluster: More than 1**: 인식된 DBS output pin마다 독립적으로
-    (`step3_settings/serial_set_editor.py`의 `SerialSetEditor`):
+    (`step3_settings/serial_layout_editor.py`의 `SerialLayoutEditor`, 사용자 승인 시안):
     1. `Related Pin (wildcard)`(예: `RD_EN_*`, `*`는 숫자만 매칭하고 문자가 섞인 이름은
        무시 - `pin_field_defs.match_digit_wildcard`)를 입력하면 시스템이 Port==PORT pin
        중 매치되는 pin 목록(예: `RD_EN_0[13:0]` ... `RD_EN_15[13:0]`)을 바로 아래에
        보여준다.
-    2. **bit set**를 순서대로 추가한다 - set 하나 = `Number of Col` + 위 매치 목록 중
-       고른 Related Pin 하나(`pin_field_defs.DBS_SERIAL_SETS_KEY`,
-       `{pin name: [{"cols", "related"}, ...]}`). set는 DBS output pin의 **LSB부터
-       순서대로** Number of Col 비트씩 차지하고, 각 set의 범위(start~end bit)는
-       시스템이 그 옆에 자동으로 보여준다. 예: `OUT_ADC[16479:0]`에
-       672/RD_EN_15 → `OUT_ADC[671:0]`, 1056/RD_EN_14 → `OUT_ADC[1727:672]`, ...,
-       1056/RD_EN_1 → `OUT_ADC[15455:14400]`, 1024/RD_EN_0 → `OUT_ADC[16479:15456]`.
-       **set마다 Number of Col이 달라도 된다** - 예전(2026-08)처럼 "DBS output pin
-       Bits가 전체 공통 Number of Col로 딱 나누어떨어지고, 매치된 pin 개수가 그 몫과
-       같아야 하는" 제약이 없다.
-    3. 누적 비트가 DBS output pin의 최대 bit를 넘는 set는 **그 자리에서 바로 빨간
-       에러**로 표시되고, 표 아래 진행 막대/문구가 `N / Bits` 매핑 상태(남은 비트,
-       또는 초과 비트)를 보여준다. 같은 Related Pin을 두 set에 고르면 에러이고,
-       드롭다운에서 이미 다른 set가 쓴 pin에는 `· set #k`가 붙는다.
-    편의 기능: `+ Add set`은 직전 set의 Number of Col을 기본값으로 쓰되 남은 비트보다
-    크면 남은 비트로 줄여 주고(예: 마지막 1024), Related Pin은 직전 선택들의 방향
-    (RD_EN_15 → RD_EN_14면 내림차순)을 이어서 아직 안 쓴 다음 pin을 미리 골라 둔다.
-    마지막 set의 Number of Col 칸에서 Enter를 누르면 비트가 남아 있을 때 다음 set가
-    추가된다. 범위 계산은 화면/Validate/block5 모두 같은 함수
-    (`pin_field_defs.compute_serial_set_ranges`)를 쓴다. 입력값은 바뀔 때마다
+    2. **Cluster size**: `Left` / `Center (each)` / `Right` 세 칸만 입력한다
+       (`pin_field_defs.DBS_SERIAL_LAYOUT_KEY`, `{pin name: {"left", "center", "right",
+       "first"}}`). Left와 Right는 cluster 1개씩(0이면 그 칸 없음), Center는 **같은
+       크기로 반복**되는 cluster 하나의 크기다. Center cluster 개수 = (Bits − Left −
+       Right) / Center이고 **딱 나누어떨어져야 한다** - 안 나누어떨어지면 입력하는 즉시
+       Center 칸이 빨간색이 되고 나머지 bit를 에러로 보여준다. 총 cluster = Left(1) +
+       Center(N) + Right(1). cluster #1 = Left = **LSB 쪽**, 마지막 = Right = MSB 쪽.
+       예: `OUT_ADC[16479:0]`, 672 / 1056 / 1024 → Center 14개, 총 16개.
+    3. **직사각형 그림**: 입력하는 즉시 다시 그려진다. 칸 폭은 bit 크기에 비례하고,
+       Left/Right 경계는 실선, Center 안 구분은 점선, 칸마다 cluster 번호(`#1` …)를
+       표시한다(칸이 좁으면 번호를 일부만 표시, 마우스를 올리면 그 cluster의 bit 범위와
+       Related Pin이 툴팁으로 나온다). 나누어떨어지지 않으면 남는 bit를 Right 앞에 빨간
+       칸으로 그린다.
+    4. **Related Pin of cluster #1**: `First matched pin`(매치 목록의 첫 pin, 나머지는
+       오름차순) / `Last matched pin`(마지막 pin, 나머지는 내림차순) 둘 중 하나. 나머지
+       cluster의 Related Pin은 자동 배정된다. **cluster 개수와 매치된 Related Pin 개수가
+       같아야 한다**(다르면 에러).
+    5. 결과 미리보기 표(`# / Area / Bits / DBS output pin bits / Related Pin`, 많으면 앞
+       3줄 + ⋮ + 뒤 2줄)와 `N / Bits bits mapped` 요약.
+    계산은 화면/Validate/block5 모두 `pin_field_defs.compute_serial_layout`(cluster
+    목록)과 `compute_serial_set_ranges`(범위/중복 검사)를 쓴다. 입력값은 바뀔 때마다
     `_dbs_row_info`에 되써 두므로 Data Transfer Type/Serial Cluster를 오가도 유지된다.
-    **예전 config 호환**: 전체 공통 `Number of Col`(`DBS_SERIAL_NUM_COL_KEY`) +
-    와일드카드로 저장돼 있고 set 목록이 없으면, Check 시 예전 규칙과 같은 결과(공통
-    Number of Col, 매치된 pin 숫자 오름차순)의 set 목록으로 자동 변환해서 보여준다
-    (`pin_field_defs.legacy_serial_sets`). 전체 공통 Number of Col 입력칸 자체는
-    화면에서 없어졌다.
+    **예전 config 호환**: 레이아웃이 저장돼 있지 않으면 1차 재설계의 set 목록
+    (`DBS_SERIAL_SETS_KEY`)이나 그 이전의 전체 공통 `Number of Col`
+    (`DBS_SERIAL_NUM_COL_KEY`)을 set 목록으로 맞춘 뒤, 가운데 set가 전부 같은 크기이고
+    Related Pin이 오름차순/내림차순이면 Left/Center/Right로 자동 변환한다
+    (`pin_field_defs.sets_to_serial_layout`). 표현이 안 되면 빈 칸에서 다시 입력한다.
 
 **DBS output pin bit 분할 (2026-08 추가 → 2026-08 재설계 - Number of Col)**: Data
 Transfer Type이 Parallel일 때, 또는 Serial + Serial Cluster "More than 1"일 때 각각
@@ -401,9 +400,8 @@ Transfer Type이 Parallel일 때, 또는 Serial + Serial Cluster "More than 1"�
     보여준다(`SettingsView._update_dbs_row_result`). Bits가 1인 DBS output pin
     (block5에서 bus가 아니라 pin() 하나로 쓰이는 경우)은 쪼갤 대상이 아니므로 이
     칸이 잠겨 있다.
-  - **Serial + Serial Cluster "More than 1"**: 위 "Serial Cluster" 절 참고 - 사용자가
-    순서대로 추가한 bit set(Number of Col + Related Pin)대로 DBS output pin을 LSB부터
-    나눈다.
+  - **Serial + Serial Cluster "More than 1"**: 위 "Serial Cluster" 절 참고 - Left /
+    Center / Right 크기대로 DBS output pin을 LSB부터 나눈다.
 
 block5가 실제로 여러 `pin()` 범위를 쓰는 방식은 아래 "Step 4 — Block 5" 절 참고.
 
@@ -449,12 +447,12 @@ Validate를 누르면 에러 목록과 함께, 비어 있어서 에러가 난 �
   output pin 자신의 Bit Depth - 자동 계산값이라 사용자가 직접 틀릴 수는 없지만,
   Number of Col과 몫의 조합이 안 맞으면 여전히 에러). **Data Transfer Type이
   Serial이면 ④/⑤ 자체를 건너뛴다.** ⑥ (Data Transfer Type이 Serial이고 Serial
-  Cluster가 "More than 1"일 때만, 2026-10 "Bit Set" 재설계 - pin마다 독립적으로 검사)
-  인식된 pin마다: 1비트를 넘는지, Related Pin 와일드카드가 비어 있지 않고 Port==PORT
-  pin 하나 이상과 매치되는지, bit set가 하나 이상 있는지, 각 set의 Number of Col이
-  양의 정수이고 Related Pin이 그 매치 목록 안에 있으며 다른 set와 겹치지 않는지,
-  set를 LSB부터 누적한 범위가 그 pin의 최대 bit를 넘지 않는지, 합계가 그 pin의 Bits와
-  정확히 같은지(`pin_field_defs.serial_set_errors`). **Serial Cluster가 "1"(기본값)이면 ⑥ 자체를
+  Cluster가 "More than 1"일 때만, 2026-10 "Left/Center/Right" 재설계 - pin마다 독립적으로
+  검사) 인식된 pin마다: 1비트를 넘는지, Related Pin 와일드카드가 비어 있지 않고
+  Port==PORT pin 하나 이상과 매치되는지, Left/Right가 0 이상 정수이고 Center가 양의
+  정수인지, Left+Right가 Bits를 넘지 않는지, (Bits − Left − Right)가 Center로 딱
+  나누어떨어지는지, cluster 개수와 매치된 Related Pin 개수가 같은지, 펼친 cluster의
+  범위/Related Pin이 유효한지(`pin_field_defs.serial_layout_errors`). **Serial Cluster가 "1"(기본값)이면 ⑥ 자체를
   건너뛴다.** (변경 이력 - 2026-08: 한때 "그 DBS output pin이
   있는 Port List 행의 `Related Pin` 컬럼 값과 정확히 일치해야 한다"는 규칙이 있었다가,
   Related Pin을 화면에서 직접 고칠 수 있게 되며 삭제되었고, bit 분할 추가와 함께
@@ -610,13 +608,15 @@ forwarding 환경에서 보장할 수 없어서,
      총 Bits를 나눈 몫이 cluster 개수, 그 DBS output pin 자신의 총 Bits를 그 몫으로
      나눈 값이 cluster당 자신의 Bit Depth(자동 계산). `related_bus_pins`는 Related
      Pin 하나를 그 몫만큼 슬라이스한 범위다.
-   - **Serial + Serial Cluster "More than 1"(2026-10 "Bit Set" 재설계)**: Step3에서
-     이 DBS output pin에 입력한 bit set 목록(`job["dbs_serial_sets"][pin_name]`)을
-     순서대로 LSB부터 배치한다 - set 하나가 `pin()` 하나이고, 그 set의 Related Pin이
-     `related_bus_pins`다(예: `pin(OUT_ADC[671:0])` → `RD_EN_15[13:0]`, ...,
-     `pin(OUT_ADC[16479:15456])` → `RD_EN_0[13:0]`). set마다 cluster 크기가 달라도
-     된다. 범위 계산은 `pin_field_defs.compute_serial_set_ranges`(Step3 화면/Validate와
-     같은 함수)이고, 에러가 하나라도 있거나 합계가 Bits와 다르면 분할하지 않고 폴백한다.
+   - **Serial + Serial Cluster "More than 1"(2026-10 "Left/Center/Right" 재설계)**:
+     Step3에서 이 DBS output pin에 입력한 Left / Center(각) / Right
+     (`job["dbs_serial_layout"][pin_name]`)로 LSB부터 cluster를 나눈다 - cluster 하나가
+     `pin()` 하나이고, Related Pin 와일드카드 매치 목록을 cluster #1부터 오름차순 또는
+     내림차순으로 배정한 것이 각 `related_bus_pins`다(예: 672/1056/1024, 내림차순 →
+     `pin(OUT_ADC[671:0])` → `RD_EN_15[13:0]`, ..., `pin(OUT_ADC[16479:15456])` →
+     `RD_EN_0[13:0]`). 계산은 `pin_field_defs.compute_serial_layout` +
+     `compute_serial_set_ranges`(Step3 화면/Validate와 같은 함수)이고, 에러가 하나라도
+     있으면 분할하지 않고 폴백한다.
    - **Serial + Serial Cluster "1"(기본값)**: 몫은 항상 1 - 이 분할 기능이 생기기
      전과 동일하게 `pin()` 하나만 쓴다.
 
@@ -636,7 +636,7 @@ forwarding 환경에서 보장할 수 없어서,
    Transfer Type 선택값을 `job["dbs_data_transfer_type"]`로, Serial Cluster
    선택값을 `job["dbs_serial_cluster_mode"]`로, pin마다 독립적인 Related Pin
    와일드카드({pin name: 와일드카드} dict)를 `job["dbs_serial_related_pattern"]`로,
-   pin마다의 bit set 목록을 `job["dbs_serial_sets"]`로 실어 보낸다.
+   pin마다의 Left/Center/Right 레이아웃을 `job["dbs_serial_layout"]`으로 실어 보낸다.
 8. **Block 5 `power_down_function`** (2026-08 추가, DBS output pin 전용·선택 입력):
    Step3에서 입력했다면(`job["dbs_power_down_function"]`), Parallel/Serial 및 cluster
    개수와 무관하게 매 DBS output pin() 본문의 `{process_prefix}_input_signal_level`

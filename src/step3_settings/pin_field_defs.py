@@ -114,6 +114,25 @@ DBS_SERIAL_SETS_KEY = "dbs_serial_sets"
 SERIAL_SET_COLS_KEY = "cols"
 SERIAL_SET_RELATED_KEY = "related"
 
+# 2026-10 2차 재설계 - Split Serial "Left / Center / Right" 레이아웃: set를 하나씩 입력하는
+# 대신, DBS output pin마다 Left 크기 1개 + Center 크기 1개(같은 크기로 반복) + Right 크기
+# 1개만 입력한다. Center cluster 개수 = (Bits - Left - Right) / Center (딱 나누어떨어져야
+# 함). cluster 순서는 LSB부터 Left(#1) -> Center... -> Right(마지막). Related Pin은 cluster
+# #1에 와일드카드 매치 목록의 첫 pin(오름차순 배치) 또는 마지막 pin(내림차순 배치)을 두고
+# 나머지 cluster에 자동으로 이어서 배치한다.
+#   {DBS output pin name: {"left": "672", "center": "1056", "right": "1024", "first": "last"}}
+# 저장은 이 레이아웃만 하고, set 목록(DBS_SERIAL_SETS_KEY 형태)은 필요할 때
+# serial_layout_to_sets()로 만들어서 기존 범위 계산(compute_serial_set_ranges)을 그대로 쓴다.
+# DBS_SERIAL_SETS_KEY는 1차 재설계(set 방식)로 저장된 config를 레이아웃으로 바꿀 때만 읽는다.
+DBS_SERIAL_LAYOUT_KEY = "dbs_serial_layout"
+SERIAL_LAYOUT_LEFT_KEY = "left"
+SERIAL_LAYOUT_CENTER_KEY = "center"
+SERIAL_LAYOUT_RIGHT_KEY = "right"
+SERIAL_LAYOUT_FIRST_KEY = "first"
+SERIAL_FIRST_PIN_FIRST = "first"   # cluster #1 = 매치 목록의 첫 pin, 이후 오름차순
+SERIAL_FIRST_PIN_LAST = "last"     # cluster #1 = 매치 목록의 마지막 pin, 이후 내림차순
+SERIAL_FIRST_PIN_DEFAULT = SERIAL_FIRST_PIN_LAST
+
 # 기본값: 2026-08 이전에 block5_writer.py / block5 timing{}에 하드코딩되어 있던 값들.
 # 이제는 전부 사용자 입력이고, 아래 값들은 그 입력의 초기값(default)으로만 쓰인다.
 POWER_DOWN_RISE_POWER_DEFAULT = "30000000.0000"
@@ -357,3 +376,163 @@ def legacy_serial_sets(num_col_text: str, dbs_bits: int | None, matched: list[tu
         {SERIAL_SET_COLS_KEY: str(col_count), SERIAL_SET_RELATED_KEY: name}
         for _value, name in matched
     ]
+
+
+# ---------------------------------------------------------------------------
+# 2026-10 2차 재설계 - Split Serial "Left / Center / Right" 레이아웃 (위 DBS_SERIAL_LAYOUT_KEY).
+# ---------------------------------------------------------------------------
+
+
+def normalize_serial_layout(raw) -> dict:
+    """저장값을 {"left", "center", "right": str, "first": "first"|"last"}로 정리."""
+    raw = raw if isinstance(raw, dict) else {}
+    first = str(raw.get(SERIAL_LAYOUT_FIRST_KEY, "") or "").strip()
+    if first not in (SERIAL_FIRST_PIN_FIRST, SERIAL_FIRST_PIN_LAST):
+        first = SERIAL_FIRST_PIN_DEFAULT
+    return {
+        SERIAL_LAYOUT_LEFT_KEY: str(raw.get(SERIAL_LAYOUT_LEFT_KEY, "") or "").strip(),
+        SERIAL_LAYOUT_CENTER_KEY: str(raw.get(SERIAL_LAYOUT_CENTER_KEY, "") or "").strip(),
+        SERIAL_LAYOUT_RIGHT_KEY: str(raw.get(SERIAL_LAYOUT_RIGHT_KEY, "") or "").strip(),
+        SERIAL_LAYOUT_FIRST_KEY: first,
+    }
+
+
+def _parse_int(text: str):
+    try:
+        return int(str(text).strip())
+    except ValueError:
+        return None
+
+
+def compute_serial_layout(
+    base_name: str, dbs_bits: int, dbs_lsb: int, layout: dict, matched_names: list[str] | None,
+) -> dict:
+    """
+    Left / Center / Right 레이아웃을 cluster 목록으로 펼친다. Step3 화면(그림/미리보기),
+    Validate, block5가 모두 이 결과를 쓴다.
+
+    Args:
+        matched_names: Related Pin 와일드카드 매치 목록('*' 숫자 오름차순). None이면 Related
+            Pin 배치/개수 검사는 하지 않는다(크기만 계산).
+
+    Returns: {
+        "clusters": [{"index": 1.., "area": "Left"|"Center"|"Right", "cols": int,
+                      "msb": int, "lsb": int, "label": "OUT_ADC[671:0]", "related": str|None}],
+        "center_count": int | None,   # Center cluster 개수(계산 불가면 None)
+        "remainder": int,             # Center 영역이 Center 크기로 안 나누어떨어진 나머지
+        "field_errors": {"left"|"center"|"right": str},  # 입력칸별 에러
+        "errors": [str],              # 화면/Validate에 보여줄 에러 문구(입력칸 에러 포함)
+        "sets": [{"cols", "related"}] # 에러가 없을 때만 채움 - compute_serial_set_ranges 입력
+    }
+    """
+    layout = normalize_serial_layout(layout)
+    result = {"clusters": [], "center_count": None, "remainder": 0, "field_errors": {}, "errors": [], "sets": []}
+    fe = result["field_errors"]
+
+    left = _parse_int(layout[SERIAL_LAYOUT_LEFT_KEY])
+    center = _parse_int(layout[SERIAL_LAYOUT_CENTER_KEY])
+    right = _parse_int(layout[SERIAL_LAYOUT_RIGHT_KEY])
+    if left is None or left < 0:
+        fe[SERIAL_LAYOUT_LEFT_KEY] = "Left must be a whole number (0 or more)."
+    if right is None or right < 0:
+        fe[SERIAL_LAYOUT_RIGHT_KEY] = "Right must be a whole number (0 or more)."
+    if center is None or center <= 0:
+        fe[SERIAL_LAYOUT_CENTER_KEY] = "Center must be a positive whole number."
+    if fe:
+        result["errors"] = list(fe.values())
+        return result
+
+    rest = dbs_bits - left - right
+    if rest < 0:
+        msg = f"Left + Right ({left + right} bit) exceed this pin's {dbs_bits} bits."
+        fe[SERIAL_LAYOUT_LEFT_KEY] = fe[SERIAL_LAYOUT_RIGHT_KEY] = msg
+        result["errors"] = [msg]
+        return result
+    count, remainder = divmod(rest, center)
+    result["center_count"] = count
+    result["remainder"] = remainder
+
+    sizes = ([("Left", left)] if left > 0 else []) + [("Center", center)] * count \
+        + ([("Right", right)] if right > 0 else [])
+    lsb = dbs_lsb
+    for i, (area, cols) in enumerate(sizes, start=1):
+        result["clusters"].append({
+            "index": i, "area": area, "cols": cols, "lsb": lsb, "msb": lsb + cols - 1,
+            "label": f"{base_name}[{lsb + cols - 1}:{lsb}]", "related": None,
+        })
+        lsb += cols
+
+    if remainder:
+        msg = (
+            f"Center area {rest} bit (= {dbs_bits} - {left} - {right}) is not divisible by "
+            f"{center} (remainder {remainder})."
+        )
+        fe[SERIAL_LAYOUT_CENTER_KEY] = msg
+        result["errors"].append(msg)
+    if not result["clusters"]:
+        result["errors"].append("No cluster - enter Left / Center / Right sizes.")
+
+    if matched_names is not None:
+        ordered = list(matched_names)
+        if layout[SERIAL_LAYOUT_FIRST_KEY] == SERIAL_FIRST_PIN_LAST:
+            ordered.reverse()
+        for cluster, name in zip(result["clusters"], ordered):
+            cluster["related"] = name
+        if not matched_names:
+            result["errors"].append("The Related Pin wildcard matched no PORT pins.")
+        elif result["clusters"] and len(matched_names) != len(result["clusters"]):
+            result["errors"].append(
+                f"{len(result['clusters'])} cluster(s) but {len(matched_names)} Related Pin(s) "
+                "matched - they must be the same count."
+            )
+
+    if not result["errors"]:
+        result["sets"] = [
+            {SERIAL_SET_COLS_KEY: str(c["cols"]), SERIAL_SET_RELATED_KEY: c["related"] or ""}
+            for c in result["clusters"]
+        ]
+    return result
+
+
+def serial_layout_errors(
+    pin_name: str, base_name: str, dbs_bits: int, dbs_lsb: int, layout: dict, matched_names: list[str],
+) -> list[str]:
+    """Validate용: 레이아웃 에러 + (레이아웃이 유효하면) 펼친 set 목록의 범위/Related Pin 검사."""
+    computed = compute_serial_layout(base_name, dbs_bits, dbs_lsb, layout, matched_names)
+    if computed["errors"]:
+        return [f"DBS output pin '{pin_name}': {e}" for e in computed["errors"]]
+    return serial_set_errors(pin_name, base_name, dbs_bits, dbs_lsb, computed["sets"], matched_names)
+
+
+def sets_to_serial_layout(sets: list[dict], matched_names: list[str]) -> dict | None:
+    """
+    1차 재설계(set 방식) 또는 그 이전 config에서 만든 set 목록이 Left/Center/Right 형태로
+    표현되면 그 레이아웃을, 아니면 None을 돌려준다(예전 config 자동 변환용).
+    - 크기: 맨 앞(Left)/맨 뒤(Right)를 뺀 가운데 set가 전부 같은 크기여야 한다.
+    - Related Pin: 매치 목록 그대로(오름차순) 또는 정반대(내림차순)여야 한다.
+    """
+    sets = normalize_serial_sets(sets)
+    cols = [_parse_int(item[SERIAL_SET_COLS_KEY]) for item in sets]
+    if len(sets) < 2 or any(c is None or c <= 0 for c in cols):
+        return None
+    middle = cols[1:-1]
+    if middle and len(set(middle)) != 1:
+        return None
+    related = [item[SERIAL_SET_RELATED_KEY] for item in sets]
+    if related == list(matched_names):
+        first = SERIAL_FIRST_PIN_FIRST
+    elif related == list(reversed(matched_names)):
+        first = SERIAL_FIRST_PIN_LAST
+    else:
+        return None
+    if middle:
+        left, center, right = cols[0], middle[0], cols[-1]
+    else:
+        left, center, right = cols[0], cols[0], cols[-1]
+        if left != right:
+            return None
+        left = right = 0
+    return {
+        SERIAL_LAYOUT_LEFT_KEY: str(left), SERIAL_LAYOUT_CENTER_KEY: str(center),
+        SERIAL_LAYOUT_RIGHT_KEY: str(right), SERIAL_LAYOUT_FIRST_KEY: first,
+    }

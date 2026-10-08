@@ -82,13 +82,13 @@ from step3_settings.constants_field_defs import (
 from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT,
     DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI, DBS_SERIAL_RELATED_PATTERN_KEY,
-    DBS_SERIAL_SETS_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
+    DBS_SERIAL_LAYOUT_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
     DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY, DBS_TRANSFER_TYPE_PARALLEL,
     DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY, ENABLE_SIGNAL_PORT_TYPE,
     POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY,
     VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_PORT_TYPE,
     VIRTUAL_POWER_SWITCH_FUNCTION_KEY, expand_dbs_output_pins, match_digit_wildcard_pins,
-    normalize_serial_sets, serial_set_errors, split_pattern_and_range,
+    serial_layout_errors, split_pattern_and_range,
 )
 
 _REQUIRED_TEXT_SCALARS = [
@@ -258,9 +258,9 @@ def _validate_serial_split(pins: dict, recognized: list[str], dbs_bits_by_name: 
     related_pattern_map = pins.get(DBS_SERIAL_RELATED_PATTERN_KEY)
     if not isinstance(related_pattern_map, dict):
         related_pattern_map = {}
-    sets_map = pins.get(DBS_SERIAL_SETS_KEY)
-    if not isinstance(sets_map, dict):
-        sets_map = {}
+    layout_map = pins.get(DBS_SERIAL_LAYOUT_KEY)
+    if not isinstance(layout_map, dict):
+        layout_map = {}
 
     for pin_name in recognized:
         dbs_bits = dbs_bits_by_name.get(pin_name)
@@ -287,10 +287,9 @@ def _validate_serial_split(pins: dict, recognized: list[str], dbs_bits_by_name: 
             continue
 
         _msb, dbs_lsb = parse_bit_range(pin_name, dbs_bits)
-        errors += serial_set_errors(
+        errors += serial_layout_errors(
             pin_name, strip_bit_range_suffix(pin_name), dbs_bits, dbs_lsb,
-            normalize_serial_sets(sets_map.get(pin_name)),
-            allowed_related=[name for _value, name in matched],
+            layout_map.get(pin_name), [name for _value, name in matched],
         )
 
     return errors
