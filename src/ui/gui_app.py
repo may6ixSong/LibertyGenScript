@@ -33,6 +33,7 @@ MainWindow 생성자 안에서 UDCView/SettingsView를 앱 시작 시점에 미�
   - $DISPLAY 가 설정되어 있어야 함 (X11 forwarding 필요)
 """
 
+import os
 import sys
 
 from PyQt5.QtCore import QEvent, QObject, Qt, QTimer
@@ -221,4 +222,12 @@ def launch_gui() -> int:
     app.installEventFilter(cursor_filter)
     window = MainWindow()
     window.show()
-    return app.exec_()
+    exit_code = app.exec_()
+    # 2026-10: 창을 X로 닫으면 이벤트 루프가 끝나 여기로 온다. 그 순간 백그라운드
+    # QThread(.db 변환 잡 대기, Step1 Port List 파싱 등)가 아직 돌고 있으면 일반 종료
+    # (sys.exit)는 그 스레드를 기다리거나 "QThread destroyed while running"으로 비정상
+    # 종료할 수 있다. 앱은 run_generator.sh로 백그라운드 실행되므로 프로세스가 확실히
+    # 사라지도록 출력만 비우고 즉시 끝낸다(설정은 각 화면에서 이미 저장됨).
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(exit_code)

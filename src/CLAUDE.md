@@ -913,6 +913,20 @@ Next(또는 Generate)는 그 Step의 Validate를 통과하기 전까지 항상 d
 - PyQt5는 Anaconda Python 3.7.6 (`/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7`)에서만
   동작 확인됨. `run_generator.sh`가 자동으로 이 환경으로 실행.
 - `$DISPLAY` 필요 (X11 forwarding).
+- **백그라운드 실행 (2026-10)**: `run_generator.sh`는 기본적으로 앱을 백그라운드로 띄우고
+  터미널을 바로 돌려준다(`nohup setsid`, 출력은 `logs/run_generator.log`, PID는
+  `logs/run_generator.pid`). 이미 떠 있는 앱이 있으면 **먼저 종료한 뒤** 새로 띄운다
+  (같은 config를 두 창이 동시에 고치지 않도록). `--stop`(강제 종료: TERM 후 3초 내
+  안 꺼지면 KILL, 프로세스 그룹 전체), `--status`, `--fg`(예전처럼 포그라운드) 옵션이 있다.
+  종료 전에 PID가 정말 `src/main.py`인지 확인해 PID 재사용으로 다른 프로세스를 죽이지
+  않는다. 시작 직후 3초 안에 죽으면 로그 마지막 부분을 터미널에 보여준다. 백그라운드
+  실행 중에는 그 터미널의 Ctrl+C가 앱에 가지 않으므로 `--stop`을 쓴다.
+  `GENERATOR_PYTHON` 환경변수로 python 경로를 지정할 수 있다.
+- **창 X 버튼 종료 (2026-10)**: `gui_app.launch_gui`가 이벤트 루프가 끝나면 `os._exit`로
+  즉시 끝낸다. 예전에는 백그라운드 QThread(.db 변환 대기, Port List 파싱 등)가 도는 중에
+  창을 닫으면 "QThread: Destroyed while thread is still running"으로 abort(코드 134)됐다.
+  단, .db 변환 도중 닫으면 이미 제출된 lc_sub 잡 자체는 계속 돈다(`--stop`은 프로세스
+  그룹째 종료하므로 함께 끝난다).
 ## Step 3 Validate — Worst case index_1/index_2 ↔ DBS(.mt0) slope/cload 일치 검사 (2026-09)
 
 `settings_validator.validate_worst_case_index()`: DBS(.mt0)의
