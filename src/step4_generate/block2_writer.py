@@ -11,13 +11,14 @@ Block 2 작성: `library (...) {` 선언부터 시작해서
         전부 작성 - 2026-08 Voltage Map 재설계)
   2-(3) operating_conditions / default_operating_conditions (괄호 안 이름은 PDK가 아니라
         Step2 liberty setting의 corner/beol_inform/voltage/temperature로 조립 - 2026-08 변경)
-  2-(4) input_voltage / output_voltage (PDK/DK 파일에서 그대로 읽어옴, 소수점 5자리)
-  2-(5) Global k factor (하드코딩, kfactor_block.py)
+  2-(4) Global k factor (하드코딩, kfactor_block.py)
 까지를 담당한다.
 
-결측 데이터(input_voltage/output_voltage 블록 자체 또는 그 안의 개별 값)는
-missing_data.py의 규칙대로 `<NOT_FOUND_IN_PDK>` + 안내 주석으로 표시하고 예외를
-던지지 않는다.
+PDK의 input_voltage / output_voltage 블록은 읽지도 쓰지도 않는다(2026-10 삭제 - 이
+블록 없이도 liberty 생성/.db 변환에 문제가 없음을 확인).
+
+결측 데이터(PDK에서 library 선언을 못 찾은 경우)는 missing_data.py의 규칙대로 안내
+주석으로 표시하고 예외를 던지지 않는다.
 
 2026-08 수정: 들여쓰기를 항상 2칸 단위(INDENT_1/INDENT_2)로 통일했다. PDK/DK 파일에서
 읽어온 body_lines도 원본 들여쓰기를 버리고 텍스트만 가져와
@@ -32,19 +33,8 @@ from step2_udc.udc_field_defs import (
     format_temperature_token, format_voltage_token, join_corner_beol,
 )
 from step4_generate.kfactor_block import write_k_factor_block
-from step4_generate.missing_data import INDENT_1, INDENT_2, NOT_FOUND_TOKEN, write_missing_comment
+from step4_generate.missing_data import INDENT_1, INDENT_2, write_missing_comment
 from step4_generate.process_prefix_defines import write_process_prefix_defines
-
-_INPUT_VOLTAGE_KEYS = ["vil", "vih", "vimax", "vimin"]
-_OUTPUT_VOLTAGE_KEYS = ["vol", "voh", "vomax", "vomin"]
-
-
-def _format_value(value: float | None) -> str:
-    """PDK에서 못 찾은 개별 값(None)은 <NOT_FOUND_IN_PDK> 토큰으로, 있으면 소수점
-    5자리(%0.5f)로 표시한다."""
-    if value is None:
-        return NOT_FOUND_TOKEN
-    return "%0.5f" % value
 
 
 def _format_oc_library(job: dict) -> str:
@@ -59,23 +49,6 @@ def _format_oc_library(job: dict) -> str:
     # BEOL Inform이 N/A면(파일명에 BEOL 토큰이 없는 경우, 2026-10 추가) beol 부분을 뺀다.
     corner_beol = join_corner_beol(job["corner"], job["beol_inform"])
     return f"{corner_beol}_{voltage_token}_{temperature_token}"
-
-
-def _write_voltage_entries(
-    f_out, entries: list[dict], keys: list[str], tag: str, pdk_filename: str,
-) -> None:
-    """input_voltage 또는 output_voltage 블록들을 PDK 파일에 등장한 순서 그대로 쓴다."""
-    if not entries:
-        write_missing_comment(f_out, f"{tag} block(s)", pdk_filename)
-        return
-
-    for entry in entries:
-        param = entry.get("param") or NOT_FOUND_TOKEN
-        f_out.write(f"{INDENT_1}{tag}({param}) {{\n")
-        for key in keys:
-            value = entry.get(key)
-            f_out.write(f"{INDENT_2}{key} : {_format_value(value)} ;\n")
-        f_out.write(f"{INDENT_1}}}\n")
 
 
 def write_block2(f_out, job: dict, sections: dict, header_date_parts: tuple) -> None:
@@ -140,14 +113,5 @@ def write_block2(f_out, job: dict, sections: dict, header_date_parts: tuple) -> 
     f_out.write(f"{INDENT_1}default_operating_conditions : {oc_library};\n")
     f_out.write("\n")
 
-    # ---- Block 2-(4): input_voltage / output_voltage (PDK/DK 파일에서 그대로) ----
-    _write_voltage_entries(
-        f_out, sections["input_voltage_entries"], _INPUT_VOLTAGE_KEYS, "input_voltage", pdk_filename,
-    )
-    _write_voltage_entries(
-        f_out, sections["output_voltage_entries"], _OUTPUT_VOLTAGE_KEYS, "output_voltage", pdk_filename,
-    )
-    f_out.write("\n")
-
-    # ---- Block 2-(5): Global k factor (하드코딩) ----
+    # ---- Block 2-(4): Global k factor (하드코딩) ----
     write_k_factor_block(f_out)

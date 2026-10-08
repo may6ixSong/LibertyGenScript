@@ -42,7 +42,18 @@ import uuid
 #   kind: "text"         - 자유 입력
 #         "pdk_dropdown" - PDK Folder 안에서 Step2 페어링에 성공한 PDK 파일 중 하나를
 #                          고르는 드롭다운 (settings_view에서 화면을 열 때마다 채움)
+#         "checkbox"     - 체크박스. 저장값은 문자열 "1"(체크) / "0"(해제)
 # ---------------------------------------------------------------------------
+USE_WORST_CASE_PDK_KEY = "use_worst_case_pdk"
+WORST_CASE_PDK_KEY = "worst_case_pdk"
+
+
+def uses_worst_case_pdk(scalars: dict) -> bool:
+    """'Use worst case primitive liberty' 체크 여부. 값이 없으면(옛 config) True."""
+    value = str(scalars.get(USE_WORST_CASE_PDK_KEY, "1")).strip().lower()
+    return value not in ("0", "false", "no", "")
+
+
 SCALAR_CONSTANT_DEFS = [
     ("class", "class", "text", "analog"),
     # process_prefix: liberty의 벤더 커스텀 attribute 접두어.
@@ -60,11 +71,17 @@ SCALAR_CONSTANT_DEFS = [
     # 그대로 두고 라벨만 바꾼다.
     ("dff_cell_name", "DFF Cell Name", "text", ""),
     ("primitive_cell_name", "LUT Table", "text", ""),
-    # 2026-08 추가 (block3): lu_table_template은 pair마다 각자의 PDK에서 찾는 게 아니라,
-    # 여기서 고른 "worst case" PDK 하나에서만 찾아서 생성하는 모든 liberty에 동일하게
-    # 쓴다. 드롭다운 후보는 Step2에서 DBS output과 1:1 pair가 성립한 PDK 파일들뿐이다.
-    # block5의 max_capacitance 값(index_2의 마지막 값)도 이 파일에서 온다.
-    ("worst_case_pdk", "Worst case primitive liberty", "pdk_dropdown", ""),
+    # 2026-10 추가: lu_table_template(index_1/index_2)과 block5의 max_capacitance(index_2의
+    # 마지막 값)를 어느 PDK에서 읽을지.
+    #   - 체크(기본값 "1", 2026-10 이전 config도 이 동작): 아래 worst case PDK 하나에서만
+    #     읽어 생성하는 모든 liberty에 동일하게 쓴다.
+    #   - 해제("0"): 각 liberty가 Step2(UDC)에서 고른 자기 PDK(primitive liberty)에서
+    #     읽는다. 이때 worst case 드롭다운은 화면에서 숨겨지고 Validate도 요구하지 않는다.
+    # DFF Cell Name / LUT Table은 두 경우 모두 위의 전체 공통 값을 쓴다.
+    (USE_WORST_CASE_PDK_KEY, "Use worst case primitive liberty", "checkbox", "1"),
+    # 2026-08 추가 (block3): 위 체크박스가 체크돼 있을 때만 쓰인다. 드롭다운 후보는
+    # Step2 liberty setting들이 고른 PDK 파일들뿐이다.
+    (WORST_CASE_PDK_KEY, "Worst case primitive liberty", "pdk_dropdown", ""),
 ]
 
 # ---------------------------------------------------------------------------

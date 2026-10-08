@@ -77,27 +77,23 @@ condition을 직접 추가/삭제하고 이름도 정하는 형태로 바뀜, st
   `pins[DBS_TRANSFER_TYPE_KEY]`로 저장되고, block5가 Parallel일 때만 그 방식으로
   분할하도록 참조한다(block5_writer._dbs_bit_split_groups, liberty_assembler.build_job).
 
-2026-08 추가 - Serial Cluster ("Split Serial") → 2026-08 재설계(pin마다 독립 Related
-Pin 와일드카드, Top/Bottom 홀짝 분배 방식 폐기):
+2026-08 추가 - Serial Cluster ("Split Serial") → 2026-10 "Left / Center / Right" 재설계:
   Serial을 고른 뒤 추가로 한 번 더 고르는 전역 라디오(`dbs_serial_cluster_row`,
   `pins[DBS_SERIAL_CLUSTER_MODE_KEY]`, 기본값 Cluster 1) - Data Transfer Type
   라디오와 같은 패턴으로 영구 위젯이고 Check 이후에만 보인다.
     - **Cluster: 1(기본값)**: 이 기능이 생기기 전과 완전히 동일 - 몫 항상 1, pin마다
       섹션에 이름 + Related Pin(Port List 값)만 보여준다.
-    - **Cluster: More than 1**: "Number of Col (#)"는 전체 공통(인식된 pin 전체,
-      `dbs_serial_split_row`) 1개지만, "Related Pin (wildcard)"(예:
-      "RD_EN_*[12:0]", '*'는 숫자만 매칭 - `pin_field_defs.match_digit_wildcard`)는
-      **인식된 DBS output pin마다 독립적으로** 입력받는다(pin이 2개면 와일드카드 칸도
-      2개, "DBS output pin이 1개일 때가 총 N벌"이라고 생각하면 된다) - pin마다
-      섹션에 이름 + Bits + 그 pin 전용 "Related Pin (wildcard)" 입력칸(그 바로 아래
-      계산 결과 문구)이 보인다(`_build_dbs_pin_section`, `info["serial_related_edit"]`/
-      `info["serial_result_label"]`). 각 pin의 Bits를 공통 Number of Col로 나눈
-      몫이 그 pin의 cluster 개수이고(Parallel과 반대 방향), 그 pin 자신의
-      와일드카드로 매치된 Related Pin이 그 개수만큼 있어야 한다 - 매치는 pin마다
-      독립적이며 다른 pin과 결과를 나누지 않는다. 결과 미리보기는
-      `_update_dbs_serial_row_result`가 즉시 계산해 보여준다
-      (settings_validator._validate_serial_split과 같은 규칙). 공통 Number of Col을
-      바꾸면 모든 pin의 결과 문구가 함께 다시 계산된다(`_update_all_dbs_serial_row_results`).
+    - **Cluster: More than 1**: 인식된 DBS output pin마다 이름+Bits 아래
+      `SerialLayoutEditor`(serial_layout_editor.py)를 놓는다 - 그 pin 전용 Related Pin
+      와일드카드(매치된 pin 목록을 바로 아래 보여줌), Left / Center(각) / Right 크기
+      입력칸, 입력하는 즉시 다시 그려지는 직사각형 그림(칸마다 cluster 번호, 폭은 bit
+      크기에 비례), cluster #1의 Related Pin(첫 pin=오름차순 / 마지막 pin=내림차순)
+      라디오, 결과 미리보기 표. 계산은 Validate/block5와 같은
+      pin_field_defs.compute_serial_layout. 1차 재설계(set 목록)나 그 이전(전체 공통
+      Number of Col)으로 저장된 config는 Left/Center/Right로 표현되면 Check 시 자동
+      변환된다(pin_field_defs.sets_to_serial_layout). 입력값은 바뀔 때마다
+      _dbs_row_info에 되써 두므로 Data Transfer Type/Serial Cluster를 오가며 화면을
+      다시 그려도 유지된다(`_on_serial_editor_changed`).
 
 2026-08 변경 - Output Path는 더 이상 Validate에 종속되지 않음:
   예전에는 Check(1) + Validate(2)를 통과해야만 Output Path 입력칸/Browse가 열렸다.
@@ -114,31 +110,35 @@ from typing import Callable
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QButtonGroup, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
+    QButtonGroup, QCheckBox, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from step1_setup.port_list_reader import (
     list_all_pin_bit_info, list_pins_by_port_type, list_port_pins_detailed,
-    strip_bit_range_suffix,
+    parse_bit_range, strip_bit_range_suffix,
 )
 from step2_udc import udc_manager
-from step2_udc.udc_field_defs import ENTRY_DBS_KEY
+from step2_udc.udc_field_defs import ENTRY_DBS_KEY, ENTRY_PDK_KEY
 from step2_udc.udc_validator import selected_pdk_files
 from step3_settings import settings_manager
-from step3_settings.constants_field_defs import SCALAR_CONSTANT_DEFS
+from step3_settings.constants_field_defs import (
+    SCALAR_CONSTANT_DEFS, USE_WORST_CASE_PDK_KEY, WORST_CASE_PDK_KEY, uses_worst_case_pdk,
+)
 from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_POWER_DOWN_FUNCTION_KEY, DBS_RELATED_PINS_KEY,
     DBS_SERIAL_CLUSTER_MODE_DEFAULT, DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI,
     DBS_SERIAL_CLUSTER_SINGLE, DBS_SERIAL_NUM_COL_KEY, DBS_SERIAL_RELATED_PATTERN_KEY,
-    DBS_TIMING_SENSE_KEY,
+    DBS_SERIAL_LAYOUT_KEY, DBS_SERIAL_SETS_KEY, DBS_OUTPUT_PORT_TYPE, DBS_TIMING_SENSE_KEY,
     DBS_TIMING_TYPE_KEY, DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY,
     DBS_TRANSFER_TYPE_PARALLEL, DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY,
     POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY,
     VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_PORT_TYPE,
-    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, expand_dbs_output_pins, match_digit_wildcard_pins,
-    split_pattern_and_range,
+    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, expand_dbs_output_pins, legacy_serial_sets,
+    match_digit_wildcard, normalize_serial_layout, normalize_serial_sets,
+    sets_to_serial_layout, split_pattern_and_range,
 )
+from step3_settings.serial_layout_editor import SerialLayoutEditor
 from step3_settings.settings_validator import (
     validate_constants, validate_output_path, validate_pin_settings, validate_worst_case_index,
 )
@@ -197,6 +197,16 @@ _SCALAR_FIELD_INFO = {
         "The cell_rise/cell_fall block name searched for after the DFF Cell Name "
         "declaration; its index_1/index_2 lines become block3's lu_table_template."
     ),
+    "use_worst_case_pdk": (
+        "Checked (default): the lu_table_template index_1/index_2 (and block5's "
+        "max_capacitance, the last index_2 value) are read from the ONE worst case "
+        "primitive liberty selected below and reused for every generated liberty. "
+        "Validate compares that index with every selected DBS output (.mt0).\n\n"
+        "Unchecked: each liberty reads them from its own primitive liberty (the PDK file "
+        "chosen in its Step 2 liberty setting). Validate compares each .mt0 only with the "
+        "primitive liberty of the same liberty setting.\n\n"
+        "DFF Cell Name / LUT Table above are used in both cases."
+    ),
     "worst_case_pdk": (
         "The lu_table_template is read from THIS PDK file only, once per run, and the same "
         "table is reused for every generated liberty - the other PDK files are never "
@@ -222,28 +232,19 @@ _DBS_TRANSFER_TYPE_INFO = (
     "cluster count) - if either division does not divide evenly, Validate will reject it.\n\n"
     "Serial (ADBUS, default): choose a Serial Cluster below - '1' behaves exactly like "
     "before this feature existed; 'More than 1' (Split Serial) lets you split it too, "
-    "using a shared Number of Col and a wildcard Related Pin instead of the Port List "
-    "column."
+    "using a wildcard Related Pin and Left / Center / Right cluster sizes instead of the "
+    "Port List column."
 )
 
 _DBS_SERIAL_CLUSTER_INFO = (
     "Cluster: 1 (default) - the same single-block behavior as before this feature "
     "existed. Related Pin is read from the Port List and shown as-is.\n\n"
-    "Cluster: More than 1 (Split Serial) - 'Number of Col (#)' below is shared across "
-    "every recognized DBS output pin, but each pin gets its own independent 'Related "
-    "Pin (wildcard)' field (shown in that pin's section). Each DBS output pin's Bits "
-    "divided by Number of Col gives its own cluster count; that many Related Pins "
-    "(matched by that pin's own wildcard) are required for it. If multiple DBS output "
-    "pins are recognized (e.g. Top/Bottom), each is matched independently - think of "
-    "it as running the single-pin case once per recognized pin."
-)
-
-_DBS_SERIAL_RELATED_INFO = (
-    "Wildcard matched against Port==PORT pin names (e.g. 'RD_EN_*[12:0]') - '*' matches "
-    "digits only (a name where '*' would match letters is ignored). The trailing "
-    "'[12:0]' is display-only, like the DBS output pin's own range suffix - it is not "
-    "used for matching. Independent per DBS output pin - other recognized pins have "
-    "their own wildcard here."
+    "Cluster: More than 1 (Split Serial) - for each recognized DBS output pin, enter a "
+    "Related Pin wildcard (e.g. RD_EN_*) to list the candidate pins, then the Left, "
+    "Center (each) and Right cluster sizes. Center clusters = (Bits - Left - Right) / "
+    "Center. Cluster #1 (Left) starts at the LSB. Pick whether cluster #1 gets the first "
+    "or the last matched pin; the rest follow in ascending / descending order. If "
+    "multiple DBS output pins are recognized (e.g. Top/Bottom), each has its own inputs."
 )
 
 _DBS_POWER_DOWN_FUNCTION_INFO = (
@@ -307,6 +308,8 @@ class SettingsView(QWidget):
         self.settings: dict = settings_manager.load_settings()
 
         self.scalar_widgets: dict[str, QWidget] = {}
+        # 폼 행 라벨 위젯(체크박스 제외) - worst case 드롭다운 행을 숨길 때 라벨도 같이 숨긴다.
+        self.scalar_labels: dict[str, QWidget] = {}
         # "Check DBS Output Pins"를 눌러 현재 Port List로 pin을 펼친 상태인지 여부.
         # False인 동안에는 Validate 버튼이 잠겨 있다.
         self._dbs_check_done = False
@@ -392,6 +395,14 @@ class SettingsView(QWidget):
         scalar_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         for key, label, kind, default in SCALAR_CONSTANT_DEFS:
             saved = self.settings["scalars"].get(key, default)
+            info = _SCALAR_FIELD_INFO.get(key)
+            if kind == "checkbox":
+                # 2026-10: 라벨 자리 없이 체크박스 글자 자체가 라벨인 한 줄짜리 행.
+                checkbox = QCheckBox(label)
+                checkbox.setChecked(uses_worst_case_pdk({key: saved}))
+                self.scalar_widgets[key] = checkbox
+                scalar_form.addRow(build_label_with_info(checkbox, info) if info else checkbox)
+                continue
             if kind == "pdk_dropdown":
                 widget: QWidget = NoWheelComboBox()
             else:
@@ -399,26 +410,39 @@ class SettingsView(QWidget):
             widget.setMinimumWidth(120)
             self.scalar_widgets[key] = widget
 
-            info = _SCALAR_FIELD_INFO.get(key)
-            field: QWidget = widget
-            if kind == "pdk_dropdown":
-                # 입력칸 바로 아래에 slope/cload 불일치 에러를 보여줄 라벨 (평소엔 숨김).
-                field = QWidget()
-                field.setObjectName("transparentRow")
-                field_layout = QVBoxLayout(field)
-                field_layout.setContentsMargins(0, 0, 0, 0)
-                field_layout.setSpacing(4)
-                field_layout.addWidget(widget)
-                self.index_error_label = QLabel("")
-                self.index_error_label.setWordWrap(True)
-                self.index_error_label.setStyleSheet(f"color: {ERROR_COLOR};")
-                self.index_error_label.setVisible(False)
-                field_layout.addWidget(self.index_error_label)
-            scalar_form.addRow(build_label_with_info(label, info) if info else label, field)
+            label_widget = build_label_with_info(label, info) if info else QLabel(label)
+            self.scalar_labels[key] = label_widget
+            scalar_form.addRow(label_widget, widget)
+
+        # slope/cload 불일치 에러 라벨(평소엔 숨김). worst case 드롭다운을 숨겨도(체크
+        # 해제) 보이도록 드롭다운 칸 안이 아니라 별도 행으로 둔다.
+        self.index_error_label = QLabel("")
+        self.index_error_label.setWordWrap(True)
+        self.index_error_label.setStyleSheet(f"color: {ERROR_COLOR};")
+        self.index_error_label.setVisible(False)
+        scalar_form.addRow(self.index_error_label)
         layout.addLayout(scalar_form)
         self._populate_worst_case_pdk_combo()
 
+        use_worst_checkbox = self.scalar_widgets[USE_WORST_CASE_PDK_KEY]
+        use_worst_checkbox.toggled.connect(self._on_use_worst_case_toggled)
+        self._apply_worst_case_visibility()
+
         return card
+
+    def _apply_worst_case_visibility(self) -> None:
+        """'Use worst case primitive liberty' 체크일 때만 worst case 드롭다운 행을 보여준다."""
+        visible = self.scalar_widgets[USE_WORST_CASE_PDK_KEY].isChecked()
+        self.scalar_widgets[WORST_CASE_PDK_KEY].setVisible(visible)
+        self.scalar_labels[WORST_CASE_PDK_KEY].setVisible(visible)
+
+    def _on_use_worst_case_toggled(self, _checked: bool) -> None:
+        self._apply_worst_case_visibility()
+        # 비교 기준이 바뀌었으므로 예전 slope/cload 결과/Validate 통과 상태는 무효다.
+        self.index_error_label.setVisible(False)
+        self._settings_validated = False
+        if hasattr(self, "generate_btn"):
+            self._update_generate_button_state()
 
     def _populate_worst_case_pdk_combo(self) -> None:
         """
@@ -445,6 +469,13 @@ class SettingsView(QWidget):
         """Step2의 liberty setting들이 고른 DBS(.mt0) 파일명 목록 (항상 새로 읽음)."""
         return [
             str(e.get(ENTRY_DBS_KEY, "")).strip()
+            for e in udc_manager.get_entries(udc_manager.load_state())
+        ]
+
+    def selected_pdk_dbs_pairs(self) -> list[tuple[str, str]]:
+        """Step2 liberty setting마다 고른 (PDK 파일명, DBS 파일명) 쌍 (항상 새로 읽음)."""
+        return [
+            (str(e.get(ENTRY_PDK_KEY, "")).strip(), str(e.get(ENTRY_DBS_KEY, "")).strip())
             for e in udc_manager.get_entries(udc_manager.load_state())
         ]
 
@@ -557,23 +588,6 @@ class SettingsView(QWidget):
         cluster_row_layout.addWidget(self.dbs_serial_cluster_multi_radio)
         cluster_row_layout.addStretch()
         group.addWidget(self.dbs_serial_cluster_row)
-
-        # Serial Cluster "More than 1"일 때만 보이는 공유(인식된 pin 전체 공통) 입력
-        # 하나 - Related Pin (wildcard)는 더 이상 여기 없다(2026-08 재설계 - pin마다
-        # 독립적인 입력칸으로 옮겨짐, _build_dbs_pin_section 참고).
-        self.dbs_serial_split_row = QWidget()
-        self.dbs_serial_split_row.setObjectName("transparentRow")
-        self.dbs_serial_split_row.setVisible(False)
-        serial_split_form = QFormLayout(self.dbs_serial_split_row)
-        serial_split_form.setSpacing(6)
-        serial_split_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        serial_split_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        self.dbs_serial_num_col_edit = QLineEdit(str(pins.get(DBS_SERIAL_NUM_COL_KEY, "")))
-        self.dbs_serial_num_col_edit.textChanged.connect(
-            lambda _t: self._update_all_dbs_serial_row_results()
-        )
-        serial_split_form.addRow("Number of Col (#)", self.dbs_serial_num_col_edit)
-        group.addWidget(self.dbs_serial_split_row)
 
         # 2026-08 2차 변경: 인식되는 DBS output pin은 보통 1~2개뿐이라 표/카드/스크롤로
         # 감쌀 이유가 없다 - 화면의 다른 입력들과 같은 QFormLayout 흐름으로 그냥
@@ -845,8 +859,6 @@ class SettingsView(QWidget):
             self.dbs_transfer_type_row.setVisible(False)
         if hasattr(self, "dbs_serial_cluster_row"):
             self.dbs_serial_cluster_row.setVisible(False)
-        if hasattr(self, "dbs_serial_split_row"):
-            self.dbs_serial_split_row.setVisible(False)
         if hasattr(self, "dbs_check_status"):
             self.dbs_check_status.setStyleSheet(f"color: {MUTED_TEXT_COLOR}; font-size: 11px;")
             self.dbs_check_status.setText("Not checked yet - Validate is locked.")
@@ -901,6 +913,10 @@ class SettingsView(QWidget):
             item = self.dbs_pins_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                # 이벤트 루프가 돌기 전까지 옛 섹션이 새 섹션 위에 겹쳐 그려지지 않도록
+                # 먼저 숨기고 떼어낸 뒤 지운다.
+                widget.hide()
+                widget.setParent(None)
                 widget.deleteLater()
         self.dbs_pins_layout.addStretch()
 
@@ -939,6 +955,15 @@ class SettingsView(QWidget):
         saved_serial_related = self.settings["pins"].get(DBS_SERIAL_RELATED_PATTERN_KEY) or {}
         if not isinstance(saved_serial_related, dict):
             saved_serial_related = {}
+        saved_serial_layout = self.settings["pins"].get(DBS_SERIAL_LAYOUT_KEY) or {}
+        if not isinstance(saved_serial_layout, dict):
+            saved_serial_layout = {}
+        saved_serial_sets = self.settings["pins"].get(DBS_SERIAL_SETS_KEY) or {}
+        if not isinstance(saved_serial_sets, dict):
+            saved_serial_sets = {}
+        legacy_num_col = str(self.settings["pins"].get(DBS_SERIAL_NUM_COL_KEY, "") or "")
+        # Split Serial의 Related Pin 후보(와일드카드 매칭 대상) - Port==PORT pin 전체.
+        self._dbs_candidate_pins = list_pins_by_port_type(port_list_file, DBS_OUTPUT_PORT_TYPE)
 
         self._dbs_row_info = []
         for pin_name in recognized:
@@ -956,14 +981,32 @@ class SettingsView(QWidget):
                 # 예전과 동일하게 pin() 하나만 쓰는 동작이 유지된다.
                 default_split = str(related_bits) if related_bits else "1"
             default_serial_related = str(saved_serial_related.get(pin_name, "")).strip()
+            if isinstance(saved_serial_layout.get(pin_name), dict):
+                serial_layout = normalize_serial_layout(saved_serial_layout[pin_name])
+            else:
+                # 2026-10 "Left/Center/Right" 이전에 저장된 config: 1차 재설계(set 목록) 또는
+                # 그 이전(전체 공통 Number of Col + 숫자 오름차순)을 set 목록으로 맞춘 뒤,
+                # Left/Center/Right로 표현되면 그 레이아웃으로 바꿔 보여준다. 표현이 안 되면
+                # 빈 칸에서 다시 입력한다.
+                matched = [n for _v, n in match_digit_wildcard(
+                    default_serial_related, self._dbs_candidate_pins)] if default_serial_related else []
+                old_sets = normalize_serial_sets(saved_serial_sets.get(pin_name))
+                if not old_sets and default_serial_related:
+                    old_sets = legacy_serial_sets(
+                        legacy_num_col, dbs_bits, list(enumerate(matched)),
+                    )
+                serial_layout = normalize_serial_layout(
+                    sets_to_serial_layout(old_sets, matched) if old_sets else None
+                )
+            _msb, dbs_lsb = parse_bit_range(pin_name, dbs_bits or 1)
 
             self._dbs_row_info.append({
-                "pin_name": pin_name, "dbs_bits": dbs_bits,
+                "pin_name": pin_name, "dbs_bits": dbs_bits, "dbs_lsb": dbs_lsb,
                 "related_pin": related_pin, "related_bits": related_bits,
                 "default_split": default_split,
                 "default_serial_related": default_serial_related,
-                "split_edit": None, "result_label": None,
-                "serial_related_edit": None, "serial_result_label": None,
+                "serial_layout": serial_layout,
+                "split_edit": None, "result_label": None, "serial_editor": None,
             })
 
         self._render_dbs_pin_sections()
@@ -993,7 +1036,6 @@ class SettingsView(QWidget):
         is_serial = transfer_type == DBS_TRANSFER_TYPE_SERIAL
         cluster_mode = self._current_serial_cluster_mode()
         self.dbs_serial_cluster_row.setVisible(is_serial)
-        self.dbs_serial_split_row.setVisible(is_serial and cluster_mode == DBS_SERIAL_CLUSTER_MULTI)
 
         for index, info in enumerate(self._dbs_row_info):
             if index > 0:
@@ -1004,7 +1046,6 @@ class SettingsView(QWidget):
 
         for row in range(len(self._dbs_row_info)):
             self._update_dbs_row_result(row)
-            self._update_dbs_serial_row_result(row)
 
     def _build_dbs_pin_section(
         self, row: int, info: dict, transfer_type: str,
@@ -1014,17 +1055,16 @@ class SettingsView(QWidget):
         인식된 DBS output pin 하나.
           - Serial + Cluster 1: 굵은 이름 줄 + "Related Pin" 한 줄뿐(이 기능이 생기기
             전과 동일 - Bits도 보여주지 않는다).
-          - Serial + Cluster "More than 1"(Split Serial, 2026-08 재설계): 이름+Bits
-            아래 이 pin 전용 "Related Pin (wildcard)" 입력칸(그 바로 아래 계산 결과
-            문구) - 다른 pin과 공유하지 않는다("DBS output pin이 1개일 때가 총 N벌").
+          - Serial + Cluster "More than 1"(Split Serial, 2026-10 "Left/Center/Right"):
+            이름+Bits 아래 이 pin 전용 SerialLayoutEditor - 다른 pin과 공유하지 않는다.
           - Parallel: 이름+Bits, Related Pin+Bits, 그리고 "Number of Col (#)" 입력칸
             (그 바로 아래 cluster 개수/DBS output pin Bit Depth 계산 결과 문구)까지 -
             Number of Col을 뺀 나머지는 전부 시스템이 채워주는 값이므로 표/카드처럼
             별도 박스로 감싸지 않는다.
 
         info(=self._dbs_row_info[row])에 이 행에서 만든 입력칸 참조를 직접 채워 넣는다
-        (split_edit/result_label은 Parallel 전용, serial_related_edit/
-        serial_result_label은 Serial Cluster "More than 1" 전용 - 그 외 경우엔 전부
+        (split_edit/result_label은 Parallel 전용, serial_editor는 Serial Cluster
+        "More than 1" 전용 - 그 외 경우엔 전부
         None으로 남는다). textChanged 연결도 여기서 바로 한다(row를 알아야 어느
         _dbs_row_info 항목을 다시 계산할지 결정할 수 있으므로).
         """
@@ -1035,8 +1075,7 @@ class SettingsView(QWidget):
 
         info["split_edit"] = None
         info["result_label"] = None
-        info["serial_related_edit"] = None
-        info["serial_result_label"] = None
+        info["serial_editor"] = None
 
         section = QWidget()
         section.setObjectName("transparentRow")
@@ -1056,32 +1095,15 @@ class SettingsView(QWidget):
             name_label.setWordWrap(True)
             section_layout.addWidget(name_label)
 
-            serial_container = QWidget()
-            serial_container.setObjectName("transparentRow")
-            serial_layout = QVBoxLayout(serial_container)
-            serial_layout.setContentsMargins(0, 0, 0, 0)
-            serial_layout.setSpacing(2)
-            can_split = dbs_bits is not None and dbs_bits > 1
-            serial_related_edit = QLineEdit(info["default_serial_related"])
-            serial_related_edit.setEnabled(can_split)
-            if not can_split:
-                serial_related_edit.setToolTip("1 bit - cannot be split.")
-            serial_result_label = QLabel("")
-            serial_result_label.setWordWrap(True)
-            serial_result_label.setStyleSheet("font-size: 11px;")
-            serial_layout.addWidget(serial_related_edit)
-            serial_layout.addWidget(serial_result_label)
-            form.addRow(
-                build_label_with_info("Related Pin (wildcard)", _DBS_SERIAL_RELATED_INFO),
-                serial_container,
+            editor = SerialLayoutEditor(
+                pin_name, strip_bit_range_suffix(pin_name), dbs_bits, info["dbs_lsb"],
+                self._dbs_candidate_pins, info["default_serial_related"], info["serial_layout"],
             )
-            serial_related_edit.textChanged.connect(
-                lambda _t, r=row: self._update_dbs_serial_row_result(r)
-            )
-            info["serial_related_edit"] = serial_related_edit
-            info["serial_result_label"] = serial_result_label
-
-            section_layout.addLayout(form)
+            # Data Transfer Type/Serial Cluster를 바꿔서 화면을 다시 그려도 입력값이 남도록
+            # 바뀔 때마다 _dbs_row_info(원본)에 되써 둔다.
+            editor.changed.connect(lambda r=row, e=editor: self._on_serial_editor_changed(r, e))
+            section_layout.addWidget(editor)
+            info["serial_editor"] = editor
             return section
 
         if transfer_type == DBS_TRANSFER_TYPE_SERIAL:
@@ -1205,61 +1227,10 @@ class SettingsView(QWidget):
             SUCCESS_COLOR,
         )
 
-    def _update_all_dbs_serial_row_results(self) -> None:
-        """공유 'Number of Col'이 바뀌면 모든 pin의 Serial Cluster 결과 문구를 다시 계산."""
-        for row in range(len(self._dbs_row_info)):
-            self._update_dbs_serial_row_result(row)
-
-    def _update_dbs_serial_row_result(self, row: int) -> None:
-        """
-        Serial Cluster "More than 1"(Split Serial)에서 이 pin 전용 "Related Pin
-        (wildcard)" 바로 아래 문구를 현재 입력값으로 다시 계산해 보여준다
-        (settings_validator._validate_serial_split과 같은 규칙 - 즉시 피드백용이고,
-        최종 확정 검사는 여전히 Validate가 한다). 이 pin이 Parallel/Serial Cluster
-        "1"이면 serial_related_edit 자체가 없으므로 아무것도 하지 않는다.
-        """
-        if row >= len(self._dbs_row_info):
-            return
-        info = self._dbs_row_info[row]
-        edit = info["serial_related_edit"]
-        result_label = info["serial_result_label"]
-        if edit is None or result_label is None:
-            return
-
-        def _set(text: str, color: str) -> None:
-            result_label.setStyleSheet(f"color: {color}; font-size: 11px;")
-            result_label.setText(text)
-
-        dbs_bits = info["dbs_bits"]
-        if dbs_bits is None:
-            _set("DBS output pin Bits is unknown.", ERROR_COLOR)
-            return
-        if dbs_bits == 1:
-            _set("1 bit - written as a single pin().", MUTED_TEXT_COLOR)
-            return
-
-        col_text = self.dbs_serial_num_col_edit.text().strip()
-        try:
-            col_count = int(col_text)
-            if col_count <= 0:
-                raise ValueError
-        except ValueError:
-            _set("Enter a positive whole number in 'Number of Col' above.", ERROR_COLOR)
-            return
-        if col_count > dbs_bits or dbs_bits % col_count != 0:
-            _set(f"{dbs_bits} bits do not divide evenly by {col_count}.", ERROR_COLOR)
-            return
-        cluster_count = dbs_bits // col_count
-
-        pattern = edit.text().strip()
-        if not pattern:
-            _set("Enter a Related Pin wildcard (e.g. RD_EN_*[12:0]).", ERROR_COLOR)
-            return
-        matched = match_digit_wildcard_pins(self.get_port_list_file(), pattern)
-        if len(matched) != cluster_count:
-            _set(f"Matched {len(matched)} pin(s), need exactly {cluster_count}.", ERROR_COLOR)
-            return
-        _set(f"✓ {cluster_count} cluster(s) matched.", SUCCESS_COLOR)
+    def _on_serial_editor_changed(self, row: int, editor: SerialLayoutEditor) -> None:
+        if row < len(self._dbs_row_info) and self._dbs_row_info[row].get("serial_editor") is editor:
+            self._dbs_row_info[row]["default_serial_related"] = editor.pattern()
+            self._dbs_row_info[row]["serial_layout"] = editor.layout_value()
 
     def _collect_dbs_related_pins(self) -> dict:
         """
@@ -1294,20 +1265,29 @@ class SettingsView(QWidget):
 
     def _collect_dbs_serial_related_pattern(self) -> dict:
         """
-        Check가 끝난 상태면 저장값에 각 pin의 현재 Related Pin (wildcard) 칸 값을
-        덮어써서 돌려준다(_collect_dbs_bit_split과 같은 패턴). Parallel/Serial
-        Cluster "1"일 때는 이 칸 자체가 없으므로(serial_related_edit이 None) 그
-        pin은 건드리지 않고 저장값을 그대로 둔다.
+        Check가 끝난 상태면 저장값에 각 pin의 현재 Related Pin (wildcard) 값을
+        덮어써서 돌려준다(_collect_dbs_bit_split과 같은 패턴). 값은 _dbs_row_info(원본,
+        SerialLayoutEditor가 바뀔 때마다 되써 둠)에서 읽으므로, Parallel/Serial Cluster
+        "1"로 전환해 둔 상태여도 마지막 입력값이 그대로 저장된다.
         """
         saved = self.settings["pins"].get(DBS_SERIAL_RELATED_PATTERN_KEY) or {}
         if not isinstance(saved, dict):
             saved = {}
-        if not self._dbs_check_done:
-            return dict(saved)
         result = dict(saved)
-        for info in self._dbs_row_info:
-            if info["serial_related_edit"] is not None:
-                result[info["pin_name"]] = info["serial_related_edit"].text().strip()
+        if self._dbs_check_done:
+            for info in self._dbs_row_info:
+                result[info["pin_name"]] = info["default_serial_related"]
+        return result
+
+    def _collect_dbs_serial_layout(self) -> dict:
+        """{DBS output pin name: {"left", "center", "right", "first"}} - 위와 같은 패턴."""
+        saved = self.settings["pins"].get(DBS_SERIAL_LAYOUT_KEY) or {}
+        if not isinstance(saved, dict):
+            saved = {}
+        result = dict(saved)
+        if self._dbs_check_done:
+            for info in self._dbs_row_info:
+                result[info["pin_name"]] = dict(info["serial_layout"])
         return result
 
     # ------------------------------------------------------------------
@@ -1319,6 +1299,8 @@ class SettingsView(QWidget):
             widget = self.scalar_widgets[key]
             if kind == "pdk_dropdown":
                 scalars[key] = widget.currentData() or ""
+            elif kind == "checkbox":
+                scalars[key] = "1" if widget.isChecked() else "0"
             else:
                 scalars[key] = widget.text().strip()
 
@@ -1342,8 +1324,13 @@ class SettingsView(QWidget):
             DBS_BIT_SPLIT_KEY: self._collect_dbs_bit_split(),
             DBS_TRANSFER_TYPE_KEY: self._collect_dbs_transfer_type(),
             DBS_SERIAL_CLUSTER_MODE_KEY: self._current_serial_cluster_mode(),
-            DBS_SERIAL_NUM_COL_KEY: self.dbs_serial_num_col_edit.text().strip(),
+            # 2026-10 "Bit Set" 재설계로 화면에서 사라진 옛 전체 공통 Number of Col -
+            # 예전 config 변환용으로만 저장값을 그대로 유지한다.
+            DBS_SERIAL_NUM_COL_KEY: str(self.settings["pins"].get(DBS_SERIAL_NUM_COL_KEY, "") or ""),
             DBS_SERIAL_RELATED_PATTERN_KEY: self._collect_dbs_serial_related_pattern(),
+            # 1차 재설계(set 방식)의 저장값 - 예전 config 변환용으로만 그대로 유지한다.
+            DBS_SERIAL_SETS_KEY: dict(self.settings["pins"].get(DBS_SERIAL_SETS_KEY) or {}),
+            DBS_SERIAL_LAYOUT_KEY: self._collect_dbs_serial_layout(),
         }
 
     def _collect_all(self) -> dict:
@@ -1385,11 +1372,12 @@ class SettingsView(QWidget):
             errors += validate_output_path(self.settings.get("output_path", ""))
             index_errors = validate_worst_case_index(
                 self.settings["scalars"], self.get_pdk_folder(), self.get_dbs_folder(),
-                self.selected_dbs_files(),
+                self.selected_dbs_files(), self.selected_pdk_dbs_pairs(),
             )
             if index_errors:
                 errors.append(
-                    "slope/cload mismatch - see below 'Worst case primitive liberty'."
+                    "slope/cload mismatch - see the details under 'Use worst case primitive "
+                    "liberty' in Constants."
                 )
         finally:
             self.validate_btn.setEnabled(True)
@@ -1423,7 +1411,13 @@ class SettingsView(QWidget):
         Number of Col / Related Pin (wildcard)는 지금 선택된 Data Transfer Type /
         Serial Cluster에서 실제로 쓰이고(칸이 있고) 활성화된 것만 넣는다.
         """
-        widgets: list[QWidget] = [self.scalar_widgets[key] for key, *_ in SCALAR_CONSTANT_DEFS]
+        widgets: list[QWidget] = [
+            self.scalar_widgets[key] for key, _label, kind, _default in SCALAR_CONSTANT_DEFS
+            if kind != "checkbox"
+            # worst case를 안 쓰면 드롭다운은 숨겨져 있고 Validate도 요구하지 않는다.
+            and not (key == WORST_CASE_PDK_KEY
+                     and not self.scalar_widgets[USE_WORST_CASE_PDK_KEY].isChecked())
+        ]
         widgets += [
             self.virtual_power_combo,
             self.enable_signal_edit, self.switch_function_edit, self.pg_function_edit,
@@ -1434,17 +1428,13 @@ class SettingsView(QWidget):
         if not self._dbs_check_done:
             return widgets
 
-        is_serial_multi = (
-            self._current_transfer_type() == DBS_TRANSFER_TYPE_SERIAL
-            and self._current_serial_cluster_mode() == DBS_SERIAL_CLUSTER_MULTI
-        )
-        if is_serial_multi:
-            widgets.append(self.dbs_serial_num_col_edit)
         for info in self._dbs_row_info:
-            for key in ("split_edit", "serial_related_edit"):
-                edit = info.get(key)
-                if edit is not None and edit.isEnabled():
-                    widgets.append(edit)
+            edit = info.get("split_edit")
+            if edit is not None and edit.isEnabled():
+                widgets.append(edit)
+            editor = info.get("serial_editor")
+            if editor is not None:
+                widgets += editor.required_widgets()
         return widgets
 
     def _mark_empty_required_fields(self) -> None:
