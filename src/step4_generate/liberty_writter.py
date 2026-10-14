@@ -20,7 +20,8 @@ PDK/DK 파일은 pdk_stream_reader.read_pdk_library_sections() 안에서 딱 한
 
 2026-08 재설계 (성능): block3의 lu_table_template은 Step3에서 고른 worst case PDK
 하나에서만 실행당 한 번 읽어(generate_view가 read_lut_table_sections()로 읽어서 이
-함수에 lut_sections로 넘겨줌) 모든 liberty에 재사용한다. 그래서 이 함수가 이 job의
+함수에 lut_sections로 넘겨줌) 모든 liberty에 재사용한다(2026-10: Step3 'Use worst case
+primitive liberty'를 해제하면 generate_view가 job마다 자기 PDK에서 읽은 결과를 넘긴다). 그래서 이 함수가 이 job의
 PDK에서 읽는 범위는 첫 `cell (...)` 선언 앞까지로 줄었고(=파일의 극히 일부),
 block2를 다 쓴 직후에는 그 결과(특히 body_lines)를 즉시 비워서 메모리를 놓아준다 -
 block5의 timing 표 작성이 그 뒤에 이어지므로 그때까지 붙들고 있을 이유가 없다.

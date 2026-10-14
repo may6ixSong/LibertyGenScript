@@ -20,6 +20,10 @@ missing_data.py 규칙대로 표시하고 예외를 던지지 않는다.
 "Worst case primitive liberty" PDK 하나에서만 실행당 한 번 읽어(pdk_stream_reader.
 read_lut_table_sections) 생성하는 모든 liberty에 동일하게 쓴다. 따라서 결측 안내 주석에
 적히는 출처 파일명도 그 worst case PDK 파일명(job["worst_case_pdk_filename"])이다.
+
+2026-10: Step3 'Use worst case primitive liberty'를 해제하면 job마다 자기 PDK(Step2에서 고른
+primitive liberty)에서 읽은 결과가 넘어온다(generate_view._lut_sections_for_job). 이때
+job["worst_case_pdk_filename"]에는 그 job 자신의 PDK 파일명이 들어 있다(liberty_assembler).
 """
 
 from __future__ import annotations

@@ -33,16 +33,17 @@ Col) + Serial Cluster "More than 1"(Split Serial) 추가):
      정확히 나누어떨어져야 한다(나눠떨어진 몫이 cluster당 DBS output pin 자신의 Bit
      Depth - 사용자가 직접 입력하지 않고 자동 계산됨). 어느 한쪽이라도 나누어떨어지지
      않으면 에러. **Data Transfer Type이 Serial이면 이 4번 규칙 자체를 건너뛴다.**
-  5. (Data Transfer Type이 Serial이고 Serial Cluster가 "More than 1"일 때만, 2026-08
-     추가 → 2026-08 재설계 - `_validate_serial_split`) 공통 "Number of Col(#)"은
-     인식된 pin 전체 공통 1개지만, Related Pin은 **인식된 DBS output pin마다 독립적인
-     와일드카드**다(옛 Top/Bottom 홀짝 분배 방식은 폐기 - "DBS output pin이 1개일 때가
-     총 N벌"이라고 생각하면 된다). 인식된 pin마다: 그 pin의 Bits가 공통 Number of
-     Col로 나누어떨어져야(몫 = 그 pin의 cluster 개수) 하고, 그 pin 자신의 Related Pin
-     와일드카드로 Port==PORT pin 중 일치하는 pin이 있어야 하며(`match_digit_wildcard_pins`,
-     '*'는 숫자만 매칭), 매치된 개수가 정확히 그 cluster 개수와 같아야 한다(다른 DBS
-     output pin의 매치 결과와는 무관하게 독립적으로 검사). Serial Cluster가
-     "1"(기본값)이면 이 5번 규칙도 건너뛴다 - 이 기능이 생기기 전과 완전히 동일하다.
+  5. (Data Transfer Type이 Serial이고 Serial Cluster가 "More than 1"일 때만 -
+     `_validate_serial_split`, 2026-10 "Bit Set" 재설계) 인식된 DBS output pin마다
+     독립적으로: 1비트를 넘어야 하고, 그 pin의 Related Pin 와일드카드가 Port==PORT pin
+     중 하나 이상과 매치돼야 하며(`match_digit_wildcard_pins`, '*'는 숫자만 매칭), bit
+     set가 하나 이상 있어야 한다. 각 set는 Number of Col이 양의 정수, Related Pin이 그
+     와일드카드 매치 목록 안의 pin이어야 하고, 같은 Related Pin을 두 set가 쓰면 안 된다.
+     set를 LSB부터 누적한 범위가 DBS output pin의 최대 bit를 넘으면 에러, 합계가 그 pin의
+     Bits와 정확히 같아야 한다(`pin_field_defs.serial_set_errors` - 화면 미리보기/block5와
+     같은 계산). set마다 Number of Col이 달라도 된다(예전의 "Bits가 공통 Number of Col로
+     딱 나누어떨어져야 한다" 제약은 없어짐). Serial Cluster가 "1"(기본값)이면 이 5번
+     규칙도 건너뛴다 - 이 기능이 생기기 전과 완전히 동일하다.
 
   (변경 이력) 예전에는 여기에 "그 DBS output pin이 있는 Port List 행의 'Related Pin'
   컬럼 값과 정확히 일치해야 한다"는 4번째 규칙이 있었다. "Check DBS Output Pins"를
@@ -71,23 +72,23 @@ from step4_generate.mt0_reader import read_mt0_columns
 from step4_generate.pdk_stream_reader import parse_index_values, read_lut_table_sections
 from step1_setup.port_list_reader import (
     list_all_pin_bit_info, list_all_pin_names, list_pins_by_port_type, list_port_pins_detailed,
-    strip_bit_range_suffix,
+    parse_bit_range, strip_bit_range_suffix,
 )
 from step3_settings.constants_field_defs import (
     CONDITION_NAME_KEY, CONDITION_VALUES_KEY, VOLTAGE_CONDITIONS_KEY, VOLTAGE_MATCH_TOLERANCE,
-    condition_value_key, power_type_count_of, power_type_label, voltage_map_digital_voltage_key,
-    voltage_map_name_key,
+    condition_value_key, power_type_count_of, power_type_label, uses_worst_case_pdk,
+    voltage_map_digital_voltage_key, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT,
-    DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI, DBS_SERIAL_NUM_COL_KEY,
-    DBS_SERIAL_RELATED_PATTERN_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
+    DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI, DBS_SERIAL_RELATED_PATTERN_KEY,
+    DBS_SERIAL_LAYOUT_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
     DBS_TRANSFER_TYPE_DEFAULT, DBS_TRANSFER_TYPE_KEY, DBS_TRANSFER_TYPE_PARALLEL,
     DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY, ENABLE_SIGNAL_PORT_TYPE,
     POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY,
     VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_PORT_TYPE,
     VIRTUAL_POWER_SWITCH_FUNCTION_KEY, expand_dbs_output_pins, match_digit_wildcard_pins,
-    split_pattern_and_range,
+    serial_layout_errors, split_pattern_and_range,
 )
 
 _REQUIRED_TEXT_SCALARS = [
@@ -139,6 +140,11 @@ def validate_constants(scalars: dict, paired_pdk_files: list[str] | None = None)
         value = str(scalars.get(key, "")).strip()
         if not value:
             errors.append(f"{label} is empty.")
+
+    # 2026-10: 'Use worst case primitive liberty'를 해제하면 각 liberty가 자기 PDK에서
+    # index_1/index_2를 읽으므로 worst case 선택 자체가 필요 없다.
+    if not uses_worst_case_pdk(scalars):
+        return errors
 
     worst_case_pdk = str(scalars.get(_WORST_CASE_PDK_KEY, "")).strip()
     if not worst_case_pdk:
@@ -243,37 +249,18 @@ def validate_voltage_map(voltage_map: dict) -> list[str]:
 
 def _validate_serial_split(pins: dict, recognized: list[str], dbs_bits_by_name: dict, port_list_file: str) -> list[str]:
     """
-    Serial(ADBUS) + Serial Cluster "More than 1"(Split Serial) 검사 (2026-08 재설계 -
-    Top/Bottom 홀짝 분배 방식 폐기, 자세한 규칙은 이 모듈 docstring "Serial Cluster"
-    절 참고).
-
-    - 전체 공통 'Number of Col (#)'는 인식된 pin 전체에 하나.
-    - Related Pin은 **인식된 DBS output pin마다 독립적인 와일드카드**
-      (`pin_field_defs.DBS_SERIAL_RELATED_PATTERN_KEY`, {pin name: 와일드카드} dict).
-    - 인식된 pin마다 독립적으로 검사한다("DBS output pin이 1개일 때가 총 N벌"):
-      그 pin의 총 Bits가 공통 Number of Col로 나누어떨어져야 하고(몫 = cluster
-      개수, pin은 1비트를 넘어야 함), 그 pin 자신의 Related Pin 와일드카드로 매치된
-      pin이 있어야 하며, 매치된 개수가 정확히 그 cluster 개수와 같아야 한다. 다른
-      DBS output pin의 매치 결과와는 서로 무관하다.
+    Serial(ADBUS) + Serial Cluster "More than 1"(Split Serial) 검사 (2026-10 "Bit Set"
+    재설계, 자세한 규칙은 이 모듈 docstring 5번 참고). 인식된 DBS output pin마다
+    독립적으로 그 pin 자신의 와일드카드와 bit set 목록을 검사한다.
     """
     errors: list[str] = []
-
-    col_text = str(pins.get(DBS_SERIAL_NUM_COL_KEY, "")).strip()
-    if not col_text:
-        errors.append("'Number of Col' is empty.")
-        return errors
-    try:
-        col_count = int(col_text)
-    except ValueError:
-        errors.append(f"'Number of Col' value '{col_text}' is not a whole number.")
-        return errors
-    if col_count <= 0:
-        errors.append("'Number of Col' must be a positive whole number.")
-        return errors
 
     related_pattern_map = pins.get(DBS_SERIAL_RELATED_PATTERN_KEY)
     if not isinstance(related_pattern_map, dict):
         related_pattern_map = {}
+    layout_map = pins.get(DBS_SERIAL_LAYOUT_KEY)
+    if not isinstance(layout_map, dict):
+        layout_map = {}
 
     for pin_name in recognized:
         dbs_bits = dbs_bits_by_name.get(pin_name)
@@ -286,25 +273,24 @@ def _validate_serial_split(pins: dict, recognized: list[str], dbs_bits_by_name: 
                 "'More than 1'."
             )
             continue
-        if col_count > dbs_bits or dbs_bits % col_count != 0:
-            errors.append(
-                f"DBS output pin '{pin_name}': its {dbs_bits} bits do not divide evenly by "
-                f"'Number of Col' ({col_count})."
-            )
-            continue
-        cluster_count = dbs_bits // col_count
 
         related_pattern = str(related_pattern_map.get(pin_name, "")).strip()
         if not related_pattern:
             errors.append(f"DBS output pin '{pin_name}': 'Related Pin (wildcard)' is empty.")
             continue
         matched = match_digit_wildcard_pins(port_list_file, related_pattern)
-        if len(matched) != cluster_count:
+        if not matched:
             errors.append(
                 f"DBS output pin '{pin_name}': Related Pin pattern '{related_pattern}' matched "
-                f"{len(matched)} pin(s), but {cluster_count} are required "
-                "(this pin's Bits / Number of Col)."
+                "no PORT pins."
             )
+            continue
+
+        _msb, dbs_lsb = parse_bit_range(pin_name, dbs_bits)
+        errors += serial_layout_errors(
+            pin_name, strip_bit_range_suffix(pin_name), dbs_bits, dbs_lsb,
+            layout_map.get(pin_name), [name for _value, name in matched],
+        )
 
     return errors
 
@@ -363,8 +349,8 @@ def _validate_dbs_related_pins(pins: dict, port_list_file: str) -> list[str]:
 
         if not is_parallel:
             # Serial(ADBUS) Cluster: 1 (또는 그 외 값): quotient는 항상 1 - Number of
-            # Col을 입력받지도 검사하지도 않는다. Serial Cluster "More than 1"은 pin마다가
-            # 아니라 전체 공통 설정이므로 아래에서 한 번만 검사한다.
+            # Col을 입력받지도 검사하지도 않는다. Serial Cluster "More than 1"은 아래
+            # _validate_serial_split에서 따로 검사한다.
             continue
 
         dbs_bits = dbs_bits_by_name.get(pin_name)
@@ -512,74 +498,127 @@ def _close(a: float, b: float) -> bool:
     return abs(a - b) <= INDEX_MATCH_REL_TOLERANCE * max(abs(a), abs(b), 1e-30)
 
 
-def validate_worst_case_index(
-    scalars: dict, pdk_folder: str, dbs_folder: str, dbs_files: list[str],
-) -> list[str]:
-    """
-    Worst case primitive liberty의 lu_table_template index_1/index_2가, liberty 생성에 쓰이는
-    모든 DBS output(.mt0) 파일의 slope/cload 값과 일치하는지 검사한다.
-    (mt0는 결과 N1*N2개가 slope=index_1 값당 N2번 연속 반복, cload=index_2 전체 순환
-    반복 순서로 찍히므로, 그 기대 순서와 레코드 개수까지 그대로 비교한다.) 다른 필수값이 비어 있어 비교 자체를 할 수 없으면 (다른 검사가
-    이미 에러를 내므로) 빈 리스트를 반환한다.
-    """
-    worst = str(scalars.get(_WORST_CASE_PDK_KEY, "")).strip()
-    dff = str(scalars.get("dff_cell_name", "")).strip()
-    lut = str(scalars.get("primitive_cell_name", "")).strip()
-    if not (worst and dff and lut and pdk_folder and dbs_folder):
-        return []
-
+def _read_pdk_index(pdk_folder: str, pdk_file: str, dff: str, lut: str) -> tuple[list[float], list[float], str]:
+    """PDK 하나에서 DFF/LUT의 index_1/index_2 값을 읽는다. 실패하면 (_, _, 에러 문구)."""
     try:
-        sections = read_lut_table_sections(str(Path(pdk_folder) / worst), dff, lut)
+        sections = read_lut_table_sections(str(Path(pdk_folder) / pdk_file), dff, lut)
     except OSError as e:
-        return [f"Cannot read the worst case primitive liberty '{worst}': {e}"]
+        return [], [], f"Cannot read the primitive liberty '{pdk_file}': {e}"
     index_1 = parse_index_values(sections.get("index_1_line"))
     index_2 = parse_index_values(sections.get("index_2_line"))
     if not index_1 or not index_2:
-        return [
+        return [], [], (
             f"Cannot find index_1/index_2 for DFF Cell Name '{dff}' / LUT Table '{lut}' in "
-            f"'{worst}', so slope/cload cannot be checked."
+            f"'{pdk_file}', so slope/cload cannot be checked."
+        )
+    return index_1, index_2, ""
+
+
+def _compare_mt0_with_index(dbs_folder: str, dbs_file: str, index_1: list[float], index_2: list[float]) -> list[str]:
+    """
+    .mt0 하나의 slope/cload가 index_1/index_2와 (순서/개수까지) 일치하는지 검사한다.
+    mt0는 결과 N1*N2개가 slope=index_1 값당 N2번 연속 반복(바깥 루프), cload=index_2 전체
+    순환 반복(안쪽 루프) 순서로 찍힌다.
+    """
+    parsed = read_mt0_columns(str(Path(dbs_folder) / dbs_file))
+    lookup = {c.strip().lower(): c for c in parsed["columns"]}
+    slope_key, cload_key = lookup.get("slope"), lookup.get("cload")
+    if slope_key is None or cload_key is None or not parsed["rows"]:
+        return [f"'{dbs_file}': slope/cload columns could not be read."]
+    try:
+        slopes = [float(r[slope_key]) * _SLOPE_SCALE for r in parsed["rows"]]
+        cloads = [float(r[cload_key]) * _CLOAD_SCALE for r in parsed["rows"]]
+    except ValueError:
+        return [f"'{dbs_file}': non-numeric slope/cload value."]
+
+    n1, n2 = len(index_1), len(index_2)
+    if len(slopes) != n1 * n2:
+        return [
+            f"'{dbs_file}': {len(slopes)} simulation results found, expected "
+            f"{n1 * n2} (index_1 x index_2 = {n1} x {n2})."
         ]
-
+    exp_slopes = [index_1[k // n2] for k in range(n1 * n2)]
+    exp_cloads = [index_2[k % n2] for k in range(n1 * n2)]
     problems: list[str] = []
-    for dbs_file in dict.fromkeys(f for f in dbs_files if f):
-        parsed = read_mt0_columns(str(Path(dbs_folder) / dbs_file))
-        lookup = {c.strip().lower(): c for c in parsed["columns"]}
-        slope_key, cload_key = lookup.get("slope"), lookup.get("cload")
-        if slope_key is None or cload_key is None or not parsed["rows"]:
-            problems.append(f"'{dbs_file}': slope/cload columns could not be read.")
-            continue
-        try:
-            slopes = [float(r[slope_key]) * _SLOPE_SCALE for r in parsed["rows"]]
-            cloads = [float(r[cload_key]) * _CLOAD_SCALE for r in parsed["rows"]]
-        except ValueError:
-            problems.append(f"'{dbs_file}': non-numeric slope/cload value.")
-            continue
-
-        # 기대 순서: slope는 index_1 값 하나당 len(index_2)번씩 연속 반복(바깥 루프),
-        # cload는 index_2 값 8개(=len(index_2))가 순서대로 나오고 처음부터 다시 반복(안쪽 루프).
-        n1, n2 = len(index_1), len(index_2)
-        exp_slopes = [index_1[k // n2] for k in range(n1 * n2)]
-        exp_cloads = [index_2[k % n2] for k in range(n1 * n2)]
-        if len(slopes) != n1 * n2:
+    for name, found, expected, idx_name in (
+        ("slope", slopes, exp_slopes, "index_1"),
+        ("cload", cloads, exp_cloads, "index_2"),
+    ):
+        bad = next((k for k, (a, b) in enumerate(zip(found, expected)) if not _close(a, b)), None)
+        if bad is not None:
             problems.append(
-                f"'{dbs_file}': {len(slopes)} simulation results found, expected "
-                f"{n1 * n2} (index_1 x index_2 = {n1} x {n2})."
+                f"'{dbs_file}': {name} of result #{bad + 1} is {found[bad]:.6g}, "
+                f"expected {expected[bad]:.6g} ({idx_name})"
             )
-            continue
-        for name, found, expected, idx_name in (
-            ("slope", slopes, exp_slopes, "index_1"),
-            ("cload", cloads, exp_cloads, "index_2"),
-        ):
-            bad = next((k for k, (a, b) in enumerate(zip(found, expected)) if not _close(a, b)), None)
-            if bad is not None:
-                problems.append(
-                    f"'{dbs_file}': {name} of result #{bad + 1} is {found[bad]:.6g}, "
-                    f"expected {expected[bad]:.6g} ({idx_name})"
-                )
+    return problems
 
+
+def _cap_problems(header: str, problems: list[str]) -> list[str]:
     if not problems:
         return []
     shown = problems[:_MAX_REPORTED_FILES]
     if len(problems) > len(shown):
         shown.append(f"... and {len(problems) - len(shown)} more.")
-    return [f"slope/cload do not match the worst case primitive liberty '{worst}' index_1/index_2:"] + shown
+    return [header] + shown
+
+
+def validate_worst_case_index(
+    scalars: dict, pdk_folder: str, dbs_folder: str, dbs_files: list[str],
+    pdk_dbs_pairs: list[tuple[str, str]] | None = None,
+) -> list[str]:
+    """
+    lu_table_template index_1/index_2와, liberty 생성에 쓰이는 DBS output(.mt0)의
+    slope/cload 값이 일치하는지 검사한다(2026-10: 비교 기준이 'Use worst case primitive
+    liberty' 체크 여부에 따라 갈린다).
+
+      - 체크(기본): Worst case primitive liberty 하나의 index를, Step2에서 고른 **모든**
+        .mt0(dbs_files)와 비교한다(예전과 동일).
+      - 해제: Step2 liberty setting마다 고른 (PDK, .mt0) 쌍(pdk_dbs_pairs)끼리만 비교한다 -
+        각 .mt0는 같은 setting의 primitive liberty(PDK) index와만 비교된다.
+
+    다른 필수값이 비어 있어 비교 자체를 할 수 없으면 (다른 검사가 이미 에러를 내므로)
+    빈 리스트를 반환한다.
+    """
+    dff = str(scalars.get("dff_cell_name", "")).strip()
+    lut = str(scalars.get("primitive_cell_name", "")).strip()
+    if not (dff and lut and pdk_folder and dbs_folder):
+        return []
+
+    if uses_worst_case_pdk(scalars):
+        worst = str(scalars.get(_WORST_CASE_PDK_KEY, "")).strip()
+        if not worst:
+            return []
+        index_1, index_2, error = _read_pdk_index(pdk_folder, worst, dff, lut)
+        if error:
+            return [error]
+        problems: list[str] = []
+        for dbs_file in dict.fromkeys(f for f in dbs_files if f):
+            problems += _compare_mt0_with_index(dbs_folder, dbs_file, index_1, index_2)
+        return _cap_problems(
+            f"slope/cload do not match the worst case primitive liberty '{worst}' index_1/index_2:",
+            problems,
+        )
+
+    # 체크 해제: setting마다 자기 PDK와 자기 .mt0만 비교한다. 같은 PDK는 한 번만 읽는다.
+    errors: list[str] = []
+    index_cache: dict[str, tuple[list[float], list[float], str]] = {}
+    problems_by_pdk: dict[str, list[str]] = {}
+    for pdk_file, dbs_file in dict.fromkeys(
+        (p, d) for p, d in (pdk_dbs_pairs or []) if p and d
+    ):
+        if pdk_file not in index_cache:
+            index_cache[pdk_file] = _read_pdk_index(pdk_folder, pdk_file, dff, lut)
+            if index_cache[pdk_file][2]:
+                errors.append(index_cache[pdk_file][2])
+        index_1, index_2, error = index_cache[pdk_file]
+        if error:
+            continue
+        problems_by_pdk.setdefault(pdk_file, []).extend(
+            _compare_mt0_with_index(dbs_folder, dbs_file, index_1, index_2)
+        )
+    for pdk_file, problems in problems_by_pdk.items():
+        errors += _cap_problems(
+            f"slope/cload do not match the primitive liberty '{pdk_file}' index_1/index_2:",
+            problems,
+        )
+    return errors

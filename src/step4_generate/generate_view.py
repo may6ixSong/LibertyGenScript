@@ -21,6 +21,8 @@ liberty_writter.write_liberty_file()가 block1~5를 실제 파일에 쓴다.
 PDK에서 찾지 않고, Step3에서 고른 "Worst case primitive liberty" PDK 하나에서 생성을
 시작할 때 딱 한 번 읽어(read_lut_table_sections) 모든 job에 그대로 재사용한다. 덕분에
 각 tick의 PDK 읽기는 첫 `cell (...)` 선언 앞까지(파일의 극히 일부)로 끝난다.
+2026-10: Step3 'Use worst case primitive liberty'를 해제하면 job마다 자기 PDK에서 읽는다
+(`_lut_sections_for_job`, 같은 PDK는 PDK 경로별 캐시로 한 번만 읽음).
 
 2026-08 수정: 반복(QTimer.start()) 방식 대신, 매번 다음 tick을
 QTimer.singleShot()으로 직접 다시 예약하는 방식으로 바꿨다 - 이전 tick이 끝난
@@ -58,6 +60,7 @@ library 이름의 .db 파일이 "존재하고 크기가 0보다 크면" 변환 �
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from PyQt5.QtCore import QPropertyAnimation, QTimer, Qt
@@ -71,9 +74,11 @@ from step1_setup.port_list_reader import (
 )
 from step2_udc import udc_manager
 from step3_settings import settings_manager
+from step3_settings.constants_field_defs import uses_worst_case_pdk
 from step4_generate import db_converter, liberty_assembler
 from step4_generate.liberty_writter import write_liberty_file
 from step4_generate.pdk_stream_reader import new_lut_sections, read_lut_table_sections
+from step4_generate.udc_data_writer import write_udc_data_file
 from ui.background_task import run_task
 from ui.file_viewer import open_file_viewer
 from ui.theme import (
@@ -86,6 +91,10 @@ from ui.ui_common import add_shadow, build_back_button, build_bottom_button_row
 _TILE_WIDTH = 130
 _TICK_INTERVAL_MS = 1000
 _DB_POLL_INTERVAL_MS = 700
+# lc_sub 잡이 끝난 뒤에도 아직 안 보이는 .db를 실패로 확정하기 전에 기다려 주는 시간
+# (2026-10). 마지막 .db는 잡이 끝나기 직전에 써지고, LSF 노드가 쓴 파일이 NFS 캐시
+# 때문에 이 머신에서 몇 초 늦게 보일 수 있다 - 그 사이에 실패로 찍히던 문제가 있었다.
+_DB_FINAL_GRACE_MS = 15000
 _DB_SPINNER_FRAMES = ["◐", "◓", "◑", "◒"]
 
 
@@ -173,6 +182,12 @@ class GenerateView(QWidget):
         # Step3에서 고른 worst case PDK에서 실행당 한 번만 읽는 lu_table_template 정보.
         # 모든 job이 이 동일한 결과를 그대로 쓴다.
         self._lut_sections: dict = new_lut_sections()
+        # 2026-10: 'Use worst case primitive liberty'를 해제하면 job마다 자기 PDK에서
+        # 읽는다 - 같은 PDK를 쓰는 job끼리 다시 읽지 않도록 PDK 경로별로 캐시한다.
+        self._use_worst_case_pdk = True
+        self._udc_errors: list[str] = []
+        self._lut_cache: dict[str, dict] = {}
+        self._lut_scalars: dict = {}
         self._output_path: str = ""
         self._total = 0
         self._done = 0
@@ -200,6 +215,13 @@ class GenerateView(QWidget):
         self._db_poll_timer = QTimer(self)
         self._db_poll_timer.setInterval(_DB_POLL_INTERVAL_MS)
         self._db_poll_timer.timeout.connect(self._poll_db_files)
+
+        # 잡 종료 후 남은 .db를 잠깐 더 기다리는 재확인 타이머(_finish_convert 참고).
+        self._db_grace_timer = QTimer(self)
+        self._db_grace_timer.setInterval(_DB_POLL_INTERVAL_MS)
+        self._db_grace_timer.timeout.connect(self._check_db_grace)
+        self._db_grace_deadline = 0.0
+        self._db_finish_args: tuple[str, str] = ("", "")
 
         self._db_spinner_timer = QTimer(self)
         self._db_spinner_timer.setInterval(150)
@@ -366,6 +388,7 @@ class GenerateView(QWidget):
         self._output_path = output_path
         self._done = 0
         self._failed = 0
+        self._udc_errors: list[str] = []
         self._run_token += 1
         current_token = self._run_token
 
@@ -377,6 +400,7 @@ class GenerateView(QWidget):
         # 재생성(다시 Generate) 대비 db 변환 쪽 상태도 초기화한다. Back 버튼이 변환
         # 도중에는 잠겨 있어 이 경로로 재진입할 일은 없지만, 안전하게 타이머도 멈춘다.
         self._db_poll_timer.stop()
+        self._db_grace_timer.stop()
         self._db_spinner_timer.stop()
         self._clear_layout(self.db_grid_layout)
         self._db_tiles = []
@@ -415,6 +439,7 @@ class GenerateView(QWidget):
 
         # worst case PDK의 lu_table_template을 여기서 딱 한 번만 읽는다 (job마다 다시
         # 읽지 않음). 실패해도 생성 자체를 막지는 않고, block3가 결측 주석으로 표시한다.
+        self._lut_scalars = settings["scalars"]
         self._load_lut_sections(pdk_folder, settings["scalars"])
 
         self.progress_bar.setMaximum(max(self._total, 1))
@@ -447,6 +472,11 @@ class GenerateView(QWidget):
         않고 빈 결과를 쓰며(=block3가 결측 주석으로 표시), 사유는 prep_errors에 남긴다.
         """
         self._lut_sections = new_lut_sections()
+        self._lut_cache = {}
+        self._use_worst_case_pdk = uses_worst_case_pdk(scalars)
+        if not self._use_worst_case_pdk:
+            # job마다 자기 PDK에서 읽는다(_lut_sections_for_job) - 여기서는 읽지 않는다.
+            return
         worst_case_pdk = str(scalars.get("worst_case_pdk", "")).strip()
         if not worst_case_pdk:
             return
@@ -463,6 +493,27 @@ class GenerateView(QWidget):
                 f"Failed to read the worst case primitive liberty '{worst_case_pdk}': {e}"
             )
 
+    def _lut_sections_for_job(self, job: dict) -> dict:
+        """
+        이 job의 lu_table_template/max_capacitance에 쓸 index_1/index_2. worst case 모드면
+        실행당 한 번 읽어 둔 결과를, 아니면 이 job이 고른 자기 PDK에서 읽은 결과(PDK별
+        캐시)를 돌려준다. 파일을 못 읽으면 빈 결과(=block3/block5가 결측 주석으로 표시).
+        """
+        if self._use_worst_case_pdk:
+            return self._lut_sections
+        pdk_path = job["pdk_path"]
+        if pdk_path not in self._lut_cache:
+            scalars = self._lut_scalars
+            try:
+                self._lut_cache[pdk_path] = read_lut_table_sections(
+                    pdk_path,
+                    str(scalars.get("dff_cell_name", "")).strip(),
+                    str(scalars.get("primitive_cell_name", "")).strip(),
+                )
+            except OSError:
+                self._lut_cache[pdk_path] = new_lut_sections()
+        return self._lut_cache[pdk_path]
+
     def _schedule_tick(self, token: int, delay_ms: int) -> None:
         QTimer.singleShot(delay_ms, lambda: self._on_tick(token))
 
@@ -478,6 +529,7 @@ class GenerateView(QWidget):
         output_file = Path(self._output_path) / job["output_filename"]
 
         success, error_message = self._generate_one(job, output_file)
+        self._write_udc_data(job)
 
         self._done += 1
         if success:
@@ -511,6 +563,11 @@ class GenerateView(QWidget):
             if not self._failed:
                 self.progress_label.setStyleSheet(f"color: {SUCCESS_COLOR}; font-weight: 700;")
                 self.progress_label.setText(f"All {self._total} files generated.")
+            if self._udc_errors:
+                self.progress_label.setStyleSheet(f"color: {ERROR_COLOR}; font-weight: 600;")
+                self.progress_label.setText(
+                    self.progress_label.text() + " UDC data file failed: " + "; ".join(self._udc_errors)
+                )
             self._set_running(False)
             self.convert_btn.setEnabled(bool(self._succeeded_jobs))
             self.convert_btn.setToolTip(
@@ -545,10 +602,22 @@ class GenerateView(QWidget):
         if viewer in self._viewers:
             self._viewers.remove(viewer)
 
+    def _write_udc_data(self, job: dict) -> None:
+        """
+        이 job의 .mt0 slope/cload로 UDC_{mt0 이름}.txt를 output path에 쓴다 (2026-10).
+        worst case 모드면 모든 .mt0의 slope/cload가 같으므로(Step3 Validate가 보장)
+        첫 job의 .mt0로 하나만 쓴다.
+        """
+        if self._use_worst_case_pdk and job is not self._jobs[0]:
+            return
+        _, error = write_udc_data_file(job["dbs_path"], job["dbs_filename"], self._output_path)
+        if error:
+            self._udc_errors.append(error)
+
     def _generate_one(self, job: dict, output_file: Path) -> tuple[bool, str | None]:
         """job 하나를 실제 liberty 파일로 생성. (성공 여부, 에러 메시지)를 반환."""
         try:
-            write_liberty_file(job, str(output_file), self._lut_sections)
+            write_liberty_file(job, str(output_file), self._lut_sections_for_job(job))
         except Exception as e:  # noqa: BLE001 - Step4에서는 모든 실패를 화면에 보여줘야 함
             return False, str(e)
         return True, None
@@ -704,7 +773,30 @@ class GenerateView(QWidget):
             self.db_progress_label.setText(f"{done} of {total} db files converted")
 
     def _finish_convert(self, log_path: str = "", error_message: str = "") -> None:
+        """
+        lc_sub 잡이 끝났을 때. 바로 실패를 확정하지 않고 먼저 폴더를 한 번 더 확인한다 -
+        마지막 .db는 잡 종료 직전에 써지므로 다음 폴링 전에 잡 종료 신호가 먼저 오면
+        놓치기 쉽고, LSF 노드가 쓴 파일은 NFS 캐시 때문에 몇 초 늦게 보일 수 있다
+        (2026-10: 실제로 4개 모두 만들어졌는데 마지막 1개가 실패로 표시됐었다). 그래도
+        남은 게 있으면 _DB_FINAL_GRACE_MS 동안 재확인한 뒤 확정한다(_check_db_grace).
+        """
         self._db_poll_timer.stop()
+        self._poll_db_files()
+        if self._db_pending and not error_message:
+            self._db_finish_args = (log_path, error_message)
+            self._db_grace_deadline = time.monotonic() + _DB_FINAL_GRACE_MS / 1000.0
+            self._db_grace_timer.start()
+            return
+        self._complete_convert(log_path, error_message)
+
+    def _check_db_grace(self) -> None:
+        self._poll_db_files()
+        if self._db_pending and time.monotonic() < self._db_grace_deadline:
+            return
+        self._db_grace_timer.stop()
+        self._complete_convert(*self._db_finish_args)
+
+    def _complete_convert(self, log_path: str = "", error_message: str = "") -> None:
         self._db_spinner_timer.stop()
 
         # 잡이 끝났는데도 여전히 안 만들어진 .db가 있으면 실패로 표시한다.

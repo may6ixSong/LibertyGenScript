@@ -220,7 +220,7 @@ Type 개수 무제한 + voltage(digital) 필드 추가)
 - 스칼라 필드: `class`(기본 `"analog"`), `process_prefix`(기본 `"sec"`, 신규 — liberty
   벤더 커스텀 attribute 접두어, cell/pin 작성 라운드부터 실사용), `output_prefix`(신규 —
   출력 파일명에 사용, 아래 참고), `DFF Cell Name`, `LUT Table`,
-  `Worst case primitive liberty`
+  `Use worst case primitive liberty`(체크박스), `Worst case primitive liberty`
 - **`LUT Table`**: 예전 화면 라벨 `Primitive Cell Name`을 이름만 바꾼 것 (config key는
   호환 때문에 `primitive_cell_name` 그대로). block3의 `lu_table_template`
   index_1/index_2를 PDK/DK 파일에서 찾을 때, `cell (DFF Cell Name)` 선언 다음으로 이
@@ -230,6 +230,19 @@ Type 개수 무제한 + voltage(digital) 필드 추가)
   페어링이 성립한 PDK 목록이었다). 위 `lu_table_template`은 **liberty마다 각자의 PDK에서
   찾지 않고, 여기서 고른 PDK 하나에서 실행당 딱 한 번만 읽어 생성하는 모든 liberty에
   그대로 재사용**한다 (2026-08 확정).
+- **`Use worst case primitive liberty`** (2026-10 추가, 체크박스, config key
+  `use_worst_case_pdk` = `"1"`/`"0"`, 기본 체크 - 이 키가 없는 예전 config도 체크로 읽힘,
+  `constants_field_defs.uses_worst_case_pdk`): lu_table_template의 index_1/index_2와
+  block5 `max_capacitance`(index_2 마지막 값)를 어느 PDK에서 읽을지 정한다.
+  - **체크**: 위 `Worst case primitive liberty` 드롭다운이 보이고, 지금까지처럼 그 PDK
+    하나를 모든 liberty에 쓴다.
+  - **해제**: 드롭다운 행(라벨 포함)이 화면에서 **숨겨지고** Validate도 그 선택을 요구하지
+    않는다. 각 liberty는 **Step2 liberty setting에서 고른 자기 PDK(primitive liberty)**에서
+    읽는다(`generate_view._lut_sections_for_job`, 같은 PDK는 PDK 경로별 캐시로 한 번만
+    읽음). 이때 `job["worst_case_pdk_filename"]`에는 그 job 자신의 PDK 파일명이 들어가
+    block3/block5 결측 주석의 출처로 적힌다(`liberty_assembler`).
+  - DFF Cell Name / LUT Table / max_capacitance 규칙은 두 경우 모두 동일하다(모든
+    primitive liberty에 같은 DFF cell/LUT table이 있다는 전제).
 - **삭제된 필드**: `DKgen_ver`, `portdesc_make`, `mt_make`, `mt_cnt_ref_output`,
   `mt_cnt_ref_input` (liberty 파일 내용에 안 쓰이는 것으로 확인 완료 — 원본 스크립트에서
   주석/로그 전용이거나 별도 문서 생성/검증 임계값 용도였음)
@@ -269,8 +282,7 @@ Type 개수 무제한 + voltage(digital) 필드 추가)
    - 인식된 pin마다 `related pin` 하나씩 — Port List의 'Related Pin' 컬럼 값으로
      **고정**(수정 불가, 아래 "Related Pin은 Port List 값으로 고정" 참고), block5
      `timing()`의 `related_bus_pins`. (Serial Cluster "More than 1"에서는 예외 -
-     아래 "Serial Cluster" 절 참고, Related Pin 자체가 pin마다 독립적인 와일드카드로
-     바뀐다.)
+     아래 "Serial Cluster" 절 참고, 와일드카드 매치 목록이 cluster 순서대로 자동 배정된다.)
    - **Data Transfer Type**(2026-08 추가) — 인식된 pin 전체에 공통으로 적용되는
      라디오 버튼 선택 하나, Parallel(DTBUS)/Serial(ADBUS). 아래 "Data Transfer
      Type" 절 참고.
@@ -278,8 +290,8 @@ Type 개수 무제한 + voltage(digital) 필드 추가)
      2026-08 재설계, 옛 "Bit Depth"/"Split into (bits)") — **Related Pin의** 총
      Bits를 몇 개의 칼럼으로 나눌지(아래 "DBS output pin bit 분할" 참고).
    - Serial일 때, **Serial Cluster**(2026-08 추가, "1"/"More than 1") 선택 하나 —
-     "More than 1"이면 전체 공통 `Number of Col (#)`(아래 "Serial Cluster" 절 참고)
-     와, 인식된 pin마다 독립적인 `Related Pin (wildcard)` 입력칸이 추가로 나타난다.
+     "More than 1"이면 인식된 pin마다 `Related Pin (wildcard)` 입력칸과 **Left / Center /
+     Right 크기 입력 + 직사각형 그림**이 나타난다(아래 "Serial Cluster" 절 참고).
 
 **Check가 Validate보다 항상 먼저 (2026-08 확정)**: Port List 파일이 바뀌면 같은
 와일드카드라도 인식되는 DBS output pin 집합이 달라진다. 그래서 화면에
@@ -310,9 +322,9 @@ entryCard 스타일 박스 목록으로, 그 박스+스크롤도 "여전히 표 
 (인식되는 pin이 보통 1~2개뿐이라 스크롤/높이 제한이 애초에 불필요했다). pin마다 굵은
 제목 줄(이름, Parallel/Serial Cluster "More than 1"이면 + Bits) 아래 `QFormLayout`로
 "Related Pin"(Serial Cluster "1"이면 읽기 전용 텍스트, Parallel이면 + Bits) 행과,
-(Parallel이면) "Number of Col (#)" 행 또는 (Serial Cluster "More than 1"이면) 이
-pin 전용 "Related Pin (wildcard)" 행(둘 다 입력칸 + 그 바로 아래 계산 결과 문구)을
-놓는다. pin이 둘 이상이면 사이에 얇은 구분선만 넣는다
+(Parallel이면) "Number of Col (#)" 행(입력칸 + 그 바로 아래 계산 결과 문구), 또는
+(Serial Cluster "More than 1"이면) 이 pin 전용 `SerialLayoutEditor`(와일드카드 + Left/
+Center/Right, 아래 "Serial Cluster" 절)를 놓는다. pin이 둘 이상이면 사이에 얇은 구분선만 넣는다
 (`SettingsView._build_dbs_pin_section`/`_render_dbs_pin_sections`).
 
 **Data Transfer Type (2026-08 추가)**: `1) Check DBS Output Pins` 성공 후 라디오
@@ -322,35 +334,53 @@ pin 전용 "Related Pin (wildcard)" 행(둘 다 입력칸 + 그 바로 아래 �
     `Number of Col (#)`를 입력받고, block5에 여러 `pin()` 범위(cluster)로 나눠 쓴다.
   - **Serial (ADBUS, 기본값)**: 아래 "Serial Cluster" 절 참고 - Cluster "1"이면 이
     DBS output pin bit 분할 기능이 생기기 전과 완전히 동일(몫 항상 1), "More than 1"
-    이면 Parallel과 반대 방향으로 나누고 Related Pin이 pin마다 독립적인 와일드카드로
-    바뀐다.
+    이면 Left / Center / Right 크기대로 DBS output pin을 LSB부터 나눈다.
   라디오를 전환해도 Port List를 다시 읽지 않고, Check 시점에 이미 읽어 둔 값을 그
   자리에서 다시 그리기만 한다(`SettingsView._render_dbs_pin_sections`,
   `_on_dbs_transfer_type_changed`). block5는 `job["dbs_data_transfer_type"]`에 따라
   `_parallel_split_groups`/`_serial_split_groups`로 분기하고, 조건이 안 맞으면 항상
   분할 전 원래 동작(pin() 하나)으로 폴백한다(`block5_writer._dbs_bit_split_groups`).
 
-**Serial Cluster (2026-08 추가, "Split Serial" → 2026-08 재설계 - Top/Bottom 홀짝
-분배 방식 폐기)**: Data Transfer Type이 Serial일 때만 보이는 두 번째 전역 라디오
+**Serial Cluster (2026-08 추가, "Split Serial" → 2026-10 "Bit Set" → 2026-10 "Left /
+Center / Right" 재설계)**: Data Transfer Type이 Serial일 때만 보이는 두 번째 전역 라디오
 (`pin_field_defs.DBS_SERIAL_CLUSTER_MODE_KEY`, 기본값 "1") - Data Transfer Type
 라디오와 같은 패턴으로 영구 위젯이고 Check 이후에만 보인다.
   - **Cluster: 1 (기본값)**: 이 DBS output pin bit 분할 기능이 생기기 전과 완전히
     동일 - 몫(cluster 개수)이 항상 1이다. pin마다 이름과 Related Pin(Port List 값)만
     보여준다(Bits 표시도 생략).
-  - **Cluster: More than 1**: `Number of Col (#)`는 전체 공통(인식된 pin 전체) 입력
-    하나지만(`dbs_serial_split_row`), `Related Pin (wildcard)`(예: `RD_EN_*[12:0]`,
-    `*`는 숫자만 매칭하고 문자가 섞인 이름은 무시, `pin_field_defs.
-    match_digit_wildcard`)는 **인식된 DBS output pin마다 독립적으로** 입력받는다 -
-    pin이 2개 인식되면 와일드카드 입력칸도 각각 따로 2개("DBS output pin이 1개일
-    때가 총 N벌"이라고 생각하면 된다). 각 pin의 총 Bits를 공통 Number of Col로 나눈
-    몫이 그 pin의 cluster 개수이고(**Parallel과 반대 방향** - Parallel은 Related
-    Pin 쪽을, 이쪽은 DBS output pin 쪽을 나눈다), 그 pin 자신의 와일드카드로 매치된
-    Related Pin이 그 개수만큼 있어야 한다 - 매치는 pin마다 독립적이며 다른 DBS
-    output pin의 매치 결과와는 무관하다(예전의 홀/짝 분배 방식은 폐기됨). pin마다
-    섹션은 이름 + Bits + 그 pin 전용 `Related Pin (wildcard)` 입력칸을 보여주고,
-    즉시 계산되는 결과 미리보기가 그 바로 아래 표시된다
-    (`SettingsView._update_dbs_serial_row_result`, 공통 Number of Col을 바꾸면
-    `_update_all_dbs_serial_row_results`가 모든 pin의 결과를 다시 계산한다).
+  - **Cluster: More than 1**: 인식된 DBS output pin마다 독립적으로
+    (`step3_settings/serial_layout_editor.py`의 `SerialLayoutEditor`, 사용자 승인 시안):
+    1. `Related Pin (wildcard)`(예: `RD_EN_*`, `*`는 숫자만 매칭하고 문자가 섞인 이름은
+       무시 - `pin_field_defs.match_digit_wildcard`)를 입력하면 시스템이 Port==PORT pin
+       중 매치되는 pin 목록(예: `RD_EN_0[13:0]` ... `RD_EN_15[13:0]`)을 바로 아래에
+       보여준다.
+    2. **Cluster size**: `Left` / `Center (each)` / `Right` 세 칸만 입력한다
+       (`pin_field_defs.DBS_SERIAL_LAYOUT_KEY`, `{pin name: {"left", "center", "right",
+       "first"}}`). Left와 Right는 cluster 1개씩(0이면 그 칸 없음), Center는 **같은
+       크기로 반복**되는 cluster 하나의 크기다. Center cluster 개수 = (Bits − Left −
+       Right) / Center이고 **딱 나누어떨어져야 한다** - 안 나누어떨어지면 입력하는 즉시
+       Center 칸이 빨간색이 되고 나머지 bit를 에러로 보여준다. 총 cluster = Left(1) +
+       Center(N) + Right(1). cluster #1 = Left = **LSB 쪽**, 마지막 = Right = MSB 쪽.
+       예: `OUT_ADC[16479:0]`, 672 / 1056 / 1024 → Center 14개, 총 16개.
+    3. **직사각형 그림**: 입력하는 즉시 다시 그려진다. 칸 폭은 bit 크기에 비례하고,
+       Left/Right 경계는 실선, Center 안 구분은 점선, 칸마다 cluster 번호(`#1` …)를
+       표시한다(칸이 좁으면 번호를 일부만 표시, 마우스를 올리면 그 cluster의 bit 범위와
+       Related Pin이 툴팁으로 나온다). 나누어떨어지지 않으면 남는 bit를 Right 앞에 빨간
+       칸으로 그린다.
+    4. **Related Pin of cluster #1**: `First matched pin`(매치 목록의 첫 pin, 나머지는
+       오름차순) / `Last matched pin`(마지막 pin, 나머지는 내림차순) 둘 중 하나. 나머지
+       cluster의 Related Pin은 자동 배정된다. **cluster 개수와 매치된 Related Pin 개수가
+       같아야 한다**(다르면 에러).
+    5. 결과 미리보기 표(`# / Area / Bits / DBS output pin bits / Related Pin`, 많으면 앞
+       3줄 + ⋮ + 뒤 2줄)와 `N / Bits bits mapped` 요약.
+    계산은 화면/Validate/block5 모두 `pin_field_defs.compute_serial_layout`(cluster
+    목록)과 `compute_serial_set_ranges`(범위/중복 검사)를 쓴다. 입력값은 바뀔 때마다
+    `_dbs_row_info`에 되써 두므로 Data Transfer Type/Serial Cluster를 오가도 유지된다.
+    **예전 config 호환**: 레이아웃이 저장돼 있지 않으면 1차 재설계의 set 목록
+    (`DBS_SERIAL_SETS_KEY`)이나 그 이전의 전체 공통 `Number of Col`
+    (`DBS_SERIAL_NUM_COL_KEY`)을 set 목록으로 맞춘 뒤, 가운데 set가 전부 같은 크기이고
+    Related Pin이 오름차순/내림차순이면 Left/Center/Right로 자동 변환한다
+    (`pin_field_defs.sets_to_serial_layout`). 표현이 안 되면 빈 칸에서 다시 입력한다.
 
 **DBS output pin bit 분할 (2026-08 추가 → 2026-08 재설계 - Number of Col)**: Data
 Transfer Type이 Parallel일 때, 또는 Serial + Serial Cluster "More than 1"일 때 각각
@@ -370,9 +400,8 @@ Transfer Type이 Parallel일 때, 또는 Serial + Serial Cluster "More than 1"�
     보여준다(`SettingsView._update_dbs_row_result`). Bits가 1인 DBS output pin
     (block5에서 bus가 아니라 pin() 하나로 쓰이는 경우)은 쪼갤 대상이 아니므로 이
     칸이 잠겨 있다.
-  - **Serial + Serial Cluster "More than 1"**: 위 "Serial Cluster" 절 참고 - 전체
-    공통 `Number of Col`이 DBS output pin 자신의 Bits를 나누고, Related Pin은 공유
-    와일드카드로 매치된 개별 pin들이다.
+  - **Serial + Serial Cluster "More than 1"**: 위 "Serial Cluster" 절 참고 - Left /
+    Center / Right 크기대로 DBS output pin을 LSB부터 나눈다.
 
 block5가 실제로 여러 `pin()` 범위를 쓰는 방식은 아래 "Step 4 — Block 5" 절 참고.
 
@@ -418,11 +447,12 @@ Validate를 누르면 에러 목록과 함께, 비어 있어서 에러가 난 �
   output pin 자신의 Bit Depth - 자동 계산값이라 사용자가 직접 틀릴 수는 없지만,
   Number of Col과 몫의 조합이 안 맞으면 여전히 에러). **Data Transfer Type이
   Serial이면 ④/⑤ 자체를 건너뛴다.** ⑥ (Data Transfer Type이 Serial이고 Serial
-  Cluster가 "More than 1"일 때만, 2026-08 재설계 - pin마다 독립적으로 검사) 인식된
-  pin마다: 공통 `Number of Col`으로 그 pin의 Bits가 나누어떨어지는지(몫 = cluster
-  개수), 그 pin 자신의 Related Pin 와일드카드로 매치된 pin이 있고 그 개수가 그
-  cluster 개수와 정확히 같은지 - 다른 DBS output pin의 매치 결과와는 무관하다(옛
-  Top/Bottom 홀짝 분배 방식은 폐기됨). **Serial Cluster가 "1"(기본값)이면 ⑥ 자체를
+  Cluster가 "More than 1"일 때만, 2026-10 "Left/Center/Right" 재설계 - pin마다 독립적으로
+  검사) 인식된 pin마다: 1비트를 넘는지, Related Pin 와일드카드가 비어 있지 않고
+  Port==PORT pin 하나 이상과 매치되는지, Left/Right가 0 이상 정수이고 Center가 양의
+  정수인지, Left+Right가 Bits를 넘지 않는지, (Bits − Left − Right)가 Center로 딱
+  나누어떨어지는지, cluster 개수와 매치된 Related Pin 개수가 같은지, 펼친 cluster의
+  범위/Related Pin이 유효한지(`pin_field_defs.serial_layout_errors`). **Serial Cluster가 "1"(기본값)이면 ⑥ 자체를
   건너뛴다.** (변경 이력 - 2026-08: 한때 "그 DBS output pin이
   있는 Port List 행의 `Related Pin` 컬럼 값과 정확히 일치해야 한다"는 규칙이 있었다가,
   Related Pin을 화면에서 직접 고칠 수 있게 되며 삭제되었고, bit 분할 추가와 함께
@@ -439,6 +469,25 @@ Validate를 누르면 에러 목록과 함께, 비어 있어서 에러가 난 �
 ```
 
 liberty 내부의 `library (...)` 이름도 이 파일명에서 `.lib`만 뺀 문자열과 동일.
+
+**UDC sweep 데이터 파일 (2026-10 추가)**: Generate 때 liberty와 같은 output path에
+`UDC_{DBS 파일명에서 .mt0 뺀 것}.txt`도 쓴다(`step4_generate/udc_data_writer.py`,
+`GenerateView._write_udc_data`). vim으로 열어 복사해 쓰는 용도의 텍스트 파일이다:
+
+```
+****  UDC condition applied
+.data sweep_data slope Cload
++	0.00113118n	0.000416157p
+...
+.enddata
+```
+
+데이터 줄은 `+<TAB>slope<n><TAB>cload<p>`이고 .mt0 레코드 순서 그대로다. slope는 ×1e9(ns),
+cload는 ×1e12(pF)로, .mt0 원본 텍스트를 Decimal로 자릿수만 옮겨 쓴다(부동소수점 오차 없음).
+- `Use worst case primitive liberty` **체크**: Step3 Validate가 모든 .mt0의 slope/cload가
+  같음을 보장하므로 첫 job의 .mt0 이름으로 **하나만** 쓴다.
+- **해제**: job(.mt0)마다 하나씩 쓴다.
+쓰기에 실패해도 liberty 생성은 계속하고, 끝난 뒤 진행 라벨에 "UDC data file failed: ..."로 표시한다.
 
 ## Step 4 — Liberty 생성
 
@@ -490,14 +539,17 @@ forwarding 환경에서 보장할 수 없어서,
    가져올지만 정하고, 별도로 재배열하지 않는다.
 
    **PDK 형식 차이 대응 (2026-10 보강)**: PDK마다 형식이 달라서 다음을 전제로 하지
-   않는다 - (1) voltage_map의 존재/위치(예전엔 body는 "첫 voltage_map 직전까지",
-   input/output_voltage는 "voltage_map 이후"에서만 찾아서, voltage_map이 없거나
-   input_voltage가 그보다 앞에 있는 PDK는 input/output_voltage를 놓쳤다. 이제
-   voltage_map과 무관하게 cell 직전까지 한 번에 훑는다. PDK의 voltage_map 줄 자체는
-   여전히 가져오지 않는다), (2) 그룹 내부 줄(중괄호 깊이를 추적해 operating_conditions/
-   lu_table_template/wire_load 등 그룹 안의 줄은 접두어가 맞아도 끌어오지 않는다),
-   (3) input/output_voltage 블록 모양(예전엔 "4줄 + `}`" 고정 판독, 이제는 닫는 `}`까지
-   읽으면서 키 이름으로 값을 채우므로 빈 줄/주석/순서 차이/한 줄 블록도 처리).
+   않는다 - (1) voltage_map의 존재/위치(예전엔 body를 "첫 voltage_map 직전까지" 읽어서
+   voltage_map이 없는 PDK는 cell 영역을 지나 파일 끝까지 내려갔다. 이제 voltage_map과
+   무관하게 cell 직전까지 한 번에 훑는다. PDK의 voltage_map 줄 자체는 여전히 가져오지
+   않는다), (2) 그룹 내부 줄(중괄호 깊이를 추적해 operating_conditions/
+   lu_table_template/wire_load 등 그룹 안의 줄은 접두어가 맞아도 끌어오지 않는다).
+
+   **PDK의 `input_voltage`/`output_voltage` 블록은 읽지도 쓰지도 않는다** (2026-10 삭제 -
+   예전에는 Block 2-(4)로 PDK 값을 소수점 5자리로 옮겨 썼는데, 이 블록 없이도 liberty
+   생성/.db 변환에 문제가 없음을 확인했다. block4/block5도 pin에 `input_voltage :`/
+   `output_voltage :`를 쓰지 않으므로 참조가 깨질 일이 없다). Block 2는 operating_conditions
+   다음 바로 Global k factor로 이어진다.
 
    그 다음, 우리 쪽 `voltage_map`(Block 2-(2)) 바로 앞에서
    **이 생성기가 `{process_prefix}_*`로 쓰는 모든 custom attribute/group을
@@ -575,16 +627,15 @@ forwarding 환경에서 보장할 수 없어서,
      총 Bits를 나눈 몫이 cluster 개수, 그 DBS output pin 자신의 총 Bits를 그 몫으로
      나눈 값이 cluster당 자신의 Bit Depth(자동 계산). `related_bus_pins`는 Related
      Pin 하나를 그 몫만큼 슬라이스한 범위다.
-   - **Serial + Serial Cluster "More than 1"(2026-08 재설계 - Top/Bottom 홀짝 분배
-     방식 폐기)**: 전체 공통 `Number of Col`로 이 DBS output pin 자신의 총 Bits를
-     나눈 몫이 cluster 개수(Parallel과 반대 방향). `related_bus_pins`는 Related Pin
-     하나를 슬라이스하는 게 아니라, **이 DBS output pin 자신의** Related Pin
-     와일드카드(`job["dbs_serial_related_pattern"][pin_name]`,
-     `pin_field_defs.match_digit_wildcard` - `*`는 숫자만 매칭)로
-     `job["port_pins"]`(Port==PORT) 중 매치된 개별 pin들을 `*` 숫자값 오름차순으로
-     이 pin의 cluster에 배정한 것이다. 인식된 DBS output pin이 여러 개(예:
-     Top/Bottom)여도 각자 자신의 와일드카드로 독립적으로 매치할 뿐, 서로 결과를
-     나누지 않는다("DBS output pin이 1개일 때가 총 N벌"이라고 생각하면 된다).
+   - **Serial + Serial Cluster "More than 1"(2026-10 "Left/Center/Right" 재설계)**:
+     Step3에서 이 DBS output pin에 입력한 Left / Center(각) / Right
+     (`job["dbs_serial_layout"][pin_name]`)로 LSB부터 cluster를 나눈다 - cluster 하나가
+     `pin()` 하나이고, Related Pin 와일드카드 매치 목록을 cluster #1부터 오름차순 또는
+     내림차순으로 배정한 것이 각 `related_bus_pins`다(예: 672/1056/1024, 내림차순 →
+     `pin(OUT_ADC[671:0])` → `RD_EN_15[13:0]`, ..., `pin(OUT_ADC[16479:15456])` →
+     `RD_EN_0[13:0]`). 계산은 `pin_field_defs.compute_serial_layout` +
+     `compute_serial_set_ranges`(Step3 화면/Validate와 같은 함수)이고, 에러가 하나라도
+     있으면 분할하지 않고 폴백한다.
    - **Serial + Serial Cluster "1"(기본값)**: 몫은 항상 1 - 이 분할 기능이 생기기
      전과 동일하게 `pin()` 하나만 쓴다.
 
@@ -602,10 +653,9 @@ forwarding 환경에서 보장할 수 없어서,
    `port_list_reader.list_all_pin_bit_info()` 결과를 `job["pin_bit_info"]`로,
    Step3에서 pin마다 설정한 `Number of Col` 값을 `job["dbs_bit_split"]`로, Data
    Transfer Type 선택값을 `job["dbs_data_transfer_type"]`로, Serial Cluster
-   선택값/공유 Number of Col을 `job["dbs_serial_cluster_mode"]`/
-   `job["dbs_serial_num_col"]`로, pin마다 독립적인 Related Pin 와일드카드
-   ({pin name: 와일드카드} dict)를 `job["dbs_serial_related_pattern"]`로 실어
-   보낸다.
+   선택값을 `job["dbs_serial_cluster_mode"]`로, pin마다 독립적인 Related Pin
+   와일드카드({pin name: 와일드카드} dict)를 `job["dbs_serial_related_pattern"]`로,
+   pin마다의 Left/Center/Right 레이아웃을 `job["dbs_serial_layout"]`으로 실어 보낸다.
 8. **Block 5 `power_down_function`** (2026-08 추가, DBS output pin 전용·선택 입력):
    Step3에서 입력했다면(`job["dbs_power_down_function"]`), Parallel/Serial 및 cluster
    개수와 무관하게 매 DBS output pin() 본문의 `{process_prefix}_input_signal_level`
@@ -621,7 +671,7 @@ forwarding 환경에서 보장할 수 없어서,
 값/줄을 못 찾으면 예외를 던지지 않고 빈 자리로 두되, 무엇이 어느 파일에서 빠졌는지
 주석으로 표시:
 ```
-####### input_voltage block(s) is missing in {pdk_filename} #########
+####### PDK body (library declaration) is missing in {pdk_filename} #########
 ```
 (`operating_conditions` library명은 더 이상 PDK에서 읽지 않으므로 이 결측 케이스는
 해당 없음 — Step2 Validate가 corner/beol_inform/voltage/temperature를 이미 필수값으로
@@ -632,12 +682,16 @@ forwarding 환경에서 보장할 수 없어서,
   줄 단위로 스트리밍**하며, 필요한 걸 다 얻는 즉시 읽기를 중단한다.
 - PDK 읽기는 두 갈래로 완전히 분리되어 있다 (`pdk_stream_reader.py`):
   1. `read_pdk_library_sections(pdk_path)` — **liberty 하나당 한 번**, block2용.
-     library 선언 / library 직속의 `_BODY_KEEP_PREFIXES` 줄 / `input_voltage` /
-     `output_voltage`만 필요하고 이것들은 전부 첫 `cell (...)` 선언보다 앞에 있으므로,
+     library 선언 / library 직속의 `_BODY_KEEP_PREFIXES` 줄만 필요하고 이것들은 전부
+     첫 `cell (...)` 선언보다 앞에 있으므로,
      **첫 cell 선언을 만나는 즉시 중단**한다. 파일의 대부분(cell 본문 수십만 줄)은 아예 읽지 않는다.
   2. `read_lut_table_sections(pdk_path, dff, lut)` — **실행당 한 번**, block3용.
      Step3에서 고른 worst case PDK 하나에서만 읽고, index_1/index_2를 찾는 즉시 중단.
      결과는 모든 job이 그대로 재사용한다.
+     DFF Cell Name / LUT Table명은 **따옴표 유무와 무관하게** 비교한다(2026-10 -
+     `cell ("SVN_FDPQ_2")`처럼 따옴표로 감싼 PDK와 `cell (SVN_FDPQ_2)`인 PDK가 섞여 있어서,
+     예전처럼 그대로 비교하면 따옴표 있는 PDK에서 DFF cell을 못 찾아 lu_table_template
+     index_1/index_2와 block5의 max_capacitance가 연쇄로 결측됐다. `_unquote()`).
 - `write_liberty_file()`은 block2를 다 쓴 직후 `sections.clear()`로 PDK에서 읽어온 값
   (특히 `body_lines`)을 즉시 놓아준다 — block5의 timing 표 작성이 그 뒤에 이어지므로
   그때까지 붙들고 있을 이유가 없다.
@@ -675,7 +729,7 @@ Step3 Pin Settings의 연계 입력으로 대체되어 제거됨.
 
 (해결됨) block5의 `{process_prefix}_input_signal_level` 소수점 자리수 — 2026-08 변경:
 `%0.4f`(소수점 4자리)에서 **`%0.5f`(소수점 5자리)**로 맞췄다(`block5_writer._volts_text`).
-block2의 `voltage_map`/`voltage`나 PDK의 `input_voltage`/`output_voltage`가 이미
+block2의 `voltage_map`/`voltage`가 이미
 소수점 5자리로 나가고 있어서, block5의 voltage 값도 그와 자리수를 맞춘 것.
 
 (해결됨) block5의 `{process_prefix}_input_signal_level` 값의 출처 — 2026-08 두 차례
@@ -878,10 +932,41 @@ Next(또는 Generate)는 그 Step의 Validate를 통과하기 전까지 항상 d
 - PyQt5는 Anaconda Python 3.7.6 (`/appl/CAEutil/LINUX/local/Anaconda/Anaconda3.7`)에서만
   동작 확인됨. `run_generator.sh`가 자동으로 이 환경으로 실행.
 - `$DISPLAY` 필요 (X11 forwarding).
+- **백그라운드 실행 (2026-10)**: `run_generator.sh`는 기본적으로 앱을 백그라운드로 띄우고
+  터미널을 바로 돌려준다(`nohup setsid`, 출력은 `logs/run_generator.log`, PID는
+  `logs/run_generator.pid`). 이미 떠 있는 앱이 있으면 **먼저 종료한 뒤** 새로 띄운다
+  (같은 config를 두 창이 동시에 고치지 않도록). `--stop`(강제 종료: TERM 후 3초 내
+  안 꺼지면 KILL, 프로세스 그룹 전체), `--status`, `--dump`(스택 덤프), `--fg`(예전처럼 포그라운드) 옵션이 있다.
+  종료 전에 PID가 정말 `src/main.py`인지 확인해 PID 재사용으로 다른 프로세스를 죽이지
+  않는다. 시작 직후 3초 안에 죽으면 로그 마지막 부분을 터미널에 보여준다. 백그라운드
+  실행 중에는 그 터미널의 Ctrl+C가 앱에 가지 않으므로 `--stop`을 쓴다.
+  `GENERATOR_PYTHON` 환경변수로 python 경로를 지정할 수 있다.
+- **창이 안 뜨고 멈추는 문제 대응 (2026-10)**: HPC에서 src를 바꾼 직후 첫 실행이 창을
+  띄우지 못하고 멈추고, 강제 종료 후 다시 실행하면 뜨는 현상이 있었다(포그라운드 실행
+  때부터 있던 현상, 원인 미확정). 대응:
+  - 앱이 시작 단계마다 `[startup HH:MM:SS +경과초] ...` 줄을 로그에 남긴다(python 시작 →
+    앱 모듈 import → QApplication 생성(X 연결) → 메인 창 생성 → 창 표시,
+    `ui/startup_trace.py`). 마지막으로 찍힌 줄 다음 단계에서 멈춘 것이다.
+  - faulthandler를 SIGUSR1에 걸어 둬서 `kill -USR1 <PID>`(= `run_generator.sh --dump`)를
+    보내면 그 순간 모든 스레드의 파이썬 스택이 로그에 찍힌다.
+  - 창이 실제로 뜨면(이벤트 루프 첫 tick) 앱이 `logs/run_generator.ready` 파일을 만들고,
+    `run_generator.sh`는 이 파일을 기다린다. `GENERATOR_READY_TIMEOUT`초(기본 7) 안에 안
+    뜨면 스택을 로그에 남기고 그 프로세스를 죽인 뒤 **자동으로 한 번 다시 실행**한다. 두 번째도
+    안 뜨면 더 죽이지 않고 안내만 한다(exit 2).
+  - 백그라운드 실행은 `PYTHONUNBUFFERED=1`로 띄워 로그가 즉시 기록된다.
+- **창 X 버튼 종료 (2026-10)**: `gui_app.launch_gui`가 이벤트 루프가 끝나면 `os._exit`로
+  즉시 끝낸다. 예전에는 백그라운드 QThread(.db 변환 대기, Port List 파싱 등)가 도는 중에
+  창을 닫으면 "QThread: Destroyed while thread is still running"으로 abort(코드 134)됐다.
+  단, .db 변환 도중 닫으면 이미 제출된 lc_sub 잡 자체는 계속 돈다(`--stop`은 프로세스
+  그룹째 종료하므로 함께 끝난다).
 ## Step 3 Validate — Worst case index_1/index_2 ↔ DBS(.mt0) slope/cload 일치 검사 (2026-09)
 
-`settings_validator.validate_worst_case_index()`: Step2에서 고른 모든 DBS(.mt0)의
-`slope`(×1e9 → ns)/`cload`(×1e12 → pF)를 등장 순서 기준 중복 제거한 목록이 Worst case
-PDK의 index_1/index_2와 (상대오차 1e-3, 개수 포함) 일치하는지 검사한다. 불일치 시
-Worst case primitive liberty 입력칸 아래 빨간 라벨(`index_error_label`)에 영어로 표시하고
-Validate를 실패시킨다.
+`settings_validator.validate_worst_case_index()`: DBS(.mt0)의
+`slope`(×1e9 → ns)/`cload`(×1e12 → pF)가 PDK의 index_1/index_2와 (상대오차 1e-3, 순서와
+개수 포함) 일치하는지 검사한다. 무엇을 무엇과 비교하는지는 `Use worst case primitive
+liberty` 체크 여부로 갈린다(2026-10):
+- **체크**: Worst case PDK 하나를 Step2에서 고른 **모든** .mt0와 비교한다.
+- **해제**: Step2 liberty setting마다 고른 (PDK, .mt0) 쌍끼리만 비교한다 - 각 .mt0는 같은
+  setting의 primitive liberty와만 비교된다(`SettingsView.selected_pdk_dbs_pairs`).
+불일치 시 Constants 카드의 체크박스/드롭다운 아래 빨간 라벨(`index_error_label`, 드롭다운을
+숨겨도 보이도록 별도 행)에 영어로 표시하고 Validate를 실패시킨다.

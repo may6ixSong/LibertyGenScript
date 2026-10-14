@@ -14,34 +14,31 @@ lu_table_template(index_1/index_2)을 한 번에 뽑았다. 이제 lu_table_temp
   1. read_pdk_library_sections(pdk_path)  - liberty 하나당 한 번 (block2용)
      `library (...) {` 줄부터 **첫 `cell (...)` 선언 직전까지만** 읽고, cell 선언을
      만나는 즉시 읽기를 멈춘다 - 파일의 압도적인 대부분(cell 본문 수십만 줄)은 아예
-     읽지 않는다. 이 구간에서 가져오는 것은 딱 두 종류다:
-       (a) body_lines: **library{} 직속(중괄호 깊이 1)의 한 줄짜리 선언 중 첫 토큰이
+     읽지 않는다. 이 구간에서 가져오는 것은 body_lines 하나뿐이다:
+       body_lines: **library{} 직속(중괄호 깊이 1)의 한 줄짜리 선언 중 첫 토큰이
            `_BODY_KEEP_PREFIXES`로 시작하는 줄만** (나머지는 전부 버림):
-             - `define`(`define_group` 포함) / `delay_model` / `default` / `input_` /
-               `output_` / `slew_` / `nom_`
-             - `voltage_unit` / `current_unit` / `leakage_power_unit` /
-               `capacitive_load_unit` / `library_features` / `time_unit` /
-               `pulling_resistance_unit` / `in_place_swap_mode`
-           접두어(시작 문자열) 기준이라 정확히 일치가 아니어도 잡힌다(예: `nom_`은
-           nom_voltage/nom_temperature/nom_process를 모두 잡음). 단 `{`가 있는 줄(그룹을
-           여는 줄)과 `_BODY_SKIP_TOKENS`(우리가 직접 쓰는 default_operating_conditions)
-           는 접두어가 맞아도 버린다.
-       (b) input_voltage / output_voltage 블록(library 직속, `{`가 있는 진짜 블록 선언).
+           - `define`(`define_group` 포함) / `delay_model` / `default` / `input_` /
+             `output_` / `slew_` / `nom_`
+           - `voltage_unit` / `current_unit` / `leakage_power_unit` /
+             `capacitive_load_unit` / `library_features` / `time_unit` /
+             `pulling_resistance_unit` / `in_place_swap_mode`
+         접두어(시작 문자열) 기준이라 정확히 일치가 아니어도 잡힌다(예: `nom_`은
+         nom_voltage/nom_temperature/nom_process를 모두 잡음). 단 `{`가 있는 줄(그룹을
+         여는 줄)과 `_BODY_SKIP_TOKENS`(우리가 직접 쓰는 default_operating_conditions)
+         는 접두어가 맞아도 버린다.
+     input_voltage / output_voltage 블록은 읽지 않는다(2026-10 삭제 - block2에서 쓰지
+     않아도 liberty 생성/.db 변환에 문제가 없음을 확인). `{`로 여는 그룹이므로 위 규칙에
+     따라 블록 전체가 그냥 버려진다.
      판단은 원본 순서대로 한 줄씩 스캔하면서 그 자리에서 내리고, 살아남은 body_lines는
      PDK에 있던 순서 그대로 이어붙인다 - 별도로 재배열하지 않는다.
 
      PDK마다 형식이 제각각이라(2026-10 보강) 다음을 전제로 하지 않는다:
-       - voltage_map의 존재/위치: 예전에는 body를 "첫 voltage_map 직전까지"로, input/
-         output_voltage를 "첫 voltage_map 이후"에서만 찾았다. 그래서 voltage_map이 없는
-         PDK는 input/output_voltage를 통째로 놓쳤고(심지어 body 스캔이 cell 영역까지
-         파일 끝까지 내려갔다), input_voltage가 voltage_map보다 앞에 있는 PDK도 놓쳤다.
+       - voltage_map의 존재/위치: 예전에는 body를 "첫 voltage_map 직전까지"로 읽어서
+         voltage_map이 없는 PDK는 body 스캔이 cell 영역을 지나 파일 끝까지 내려갔다.
          이제는 voltage_map과 무관하게 cell 직전까지 한 번에 훑는다.
        - 그룹 내부 줄: 중괄호 깊이를 추적해서 library 직속 줄만 본다. 예전에는
          operating_conditions / lu_table_template / wire_load 같은 그룹 안의 줄이라도
          접두어만 맞으면 library 직속으로 끌려 나올 수 있었다.
-       - input/output_voltage 블록 모양: 예전에는 여는 줄 다음 "정확히 4줄 + `}` 1줄"
-         고정 판독이었다. 이제는 블록을 닫는 `}`까지 읽으면서 키 이름으로 값을 채우므로
-         빈 줄/주석/순서 차이/`}`가 값 줄에 붙어 있는 경우도 처리된다.
 
   2. read_lut_table_sections(pdk_path, dff_cell_name, lut_table_name) - 실행당 한 번
      (block3용, worst case PDK 전용) cell 영역만 보므로 body_lines 같은 건 아예 모으지
@@ -117,46 +114,11 @@ def _paren_content(line: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def _apply_voltage_subline(entry: dict, line: str) -> None:
-    """'vil : 0.80000 ;' 형태의 줄에서 key/value를 뽑아 entry에 채운다."""
-    cleaned = line.replace(":", " ").replace(";", " ")
-    tokens = cleaned.split()
-    if len(tokens) < 2:
-        return
-    try:
-        entry[tokens[0]] = float(tokens[1])
-    except ValueError:
-        pass
-
-
-def _read_voltage_block(it, first_line: str) -> dict:
-    """
-    'input_voltage(NAME) {' 또는 'output_voltage(NAME) {' 줄(first_line)부터 이 블록을
-    닫는 '}'까지 읽어서 vil/vih/vimax/vimin(또는 vol/voh/vomax/vomin) 값을 dict로 반환.
-    닫는 '}'까지 여기서 소비하므로 호출 측 iterator에 블록 잔여물이 남지 않는다.
-
-    2026-10 보강 (PDK마다 형식이 다름): 예전에는 레거시 make_liberty.py처럼 여는 줄 다음
-    "정확히 4줄 + '}' 1줄"을 고정으로 읽었다. 그래서 블록 안에 빈 줄/주석이 끼거나 값이
-    5줄 이상이면 엉뚱한 줄을 '}'로 소비해 이후 스캔이 어긋났다. 이제는 중괄호 깊이를
-    추적해 블록이 끝날 때까지 읽고, 값은 키 이름으로 채운다(순서 무관, 모르는 키는
-    무시 - block2_writer가 정해진 4개 키만 쓴다). 한 줄에 'vil : 0.1 ; vih : 0.9 ;'처럼
-    여러 개가 있어도 처리된다.
-    """
-    entry: dict = {"param": _paren_content(first_line)}
-    # 여는 줄 자체에 값/닫는 '}'까지 있는 한 줄짜리 블록도 처리한다.
-    line = first_line[first_line.find("{") + 1:]
-    depth = 1
-    while True:
-        depth += line.count("{") - line.count("}")
-        for statement in line.replace("{", ";").replace("}", ";").split(";"):
-            _apply_voltage_subline(entry, statement)
-        if depth <= 0:
-            break
-        nxt = next(it, None)
-        if nxt is None:
-            break
-        line = nxt
-    return entry
+def _unquote(name: str) -> str:
+    """이름 앞뒤 공백과 따옴표('"', "'")를 떼어낸다. PDK마다 `cell ("SVN_FDPQ_2")`처럼
+    따옴표로 감싼 곳과 `cell (SVN_FDPQ_2)`처럼 안 감싼 곳이 섞여 있어서, 이름 비교는
+    항상 양쪽 다 이걸 거친 값으로 한다(2026-10)."""
+    return name.strip().strip('"').strip("'").strip()
 
 
 def _capture_index_lines(it, opening_line: str) -> tuple[str | None, str | None]:
@@ -207,16 +169,13 @@ def new_library_sections() -> dict:
         "found_library_decl": False,
         "body_lines": [],
         "found_voltage_map": False,
-        "input_voltage_entries": [],
-        "output_voltage_entries": [],
     }
 
 
 def read_pdk_library_sections(pdk_path: str) -> dict:
     """
     block2 작성에 필요한 것만 뽑아낸다 (library 선언 / library 직속의
-    _BODY_KEEP_PREFIXES로 시작하는 한 줄 선언들 / input_voltage / output_voltage). 이
-    값들은 전부 첫 `cell (...)` 선언 앞에 있으므로, 첫 cell 선언을 만나는 즉시 읽기를
+    _BODY_KEEP_PREFIXES로 시작하는 한 줄 선언들). 이 값들은 전부 첫 `cell (...)` 선언 앞에 있으므로, 첫 cell 선언을 만나는 즉시 읽기를
     멈춘다. 자세한 기준은 모듈 docstring 참고.
 
     Returns: 위 new_library_sections()가 정의하는 형태의 dict.
@@ -251,16 +210,6 @@ def read_pdk_library_sections(pdk_path: str) -> dict:
                 break
 
             if depth == 1:
-                # input_voltage/output_voltage는 "블록 선언"(input_voltage(NAME) {)과
-                # 핀 안의 "단순 값 대입"(input_voltage : NAME ;) 둘 다 첫 토큰이
-                # 같으므로, '{'가 있어야만 블록으로 취급한다. 블록은 닫는 '}'까지
-                # _read_voltage_block이 소비하므로 depth는 그대로다.
-                if token == "input_voltage" and "{" in line:
-                    result["input_voltage_entries"].append(_read_voltage_block(it, line))
-                    continue
-                if token == "output_voltage" and "{" in line:
-                    result["output_voltage_entries"].append(_read_voltage_block(it, line))
-                    continue
                 # PDK 자체의 voltage_map 줄은 가져오지 않는다 - block2가 Step2/Step3
                 # 값으로 직접 쓴다. 존재 여부만 진단용으로 남긴다.
                 if token == "voltage_map":
@@ -332,9 +281,16 @@ def read_lut_table_sections(pdk_path: str, dff_cell_name: str, lut_table_name: s
     2026-08 확정: 이 결과는 pair마다 다시 읽지 않고, Step3에서 고른 worst case PDK
     하나에 대해 실행당 한 번만 읽어서 생성하는 모든 liberty에 동일하게 재사용한다.
 
+    cell 이름/LUT Table명은 따옴표 유무와 무관하게 비교한다(2026-10) - PDK의
+    `cell ("X")`와 `cell (X)`, Step3 입력의 `X`와 `"X"`가 모두 같은 이름으로 매칭된다.
+
     Returns: 위 new_lut_sections()가 정의하는 형태의 dict.
     """
     result = new_lut_sections()
+    dff_cell_name = _unquote(dff_cell_name)
+    # LUT Table명은 줄 안에 부분 문자열로 들어 있는지만 보므로, 입력 쪽 따옴표만 떼면
+    # PDK가 `cell_rise("LUT")`든 `cell_rise(LUT)`든 둘 다 잡힌다.
+    lut_table_name = _unquote(lut_table_name)
 
     with open(pdk_path, "r", encoding="utf-8", errors="replace") as f:
         it = iter(f)
@@ -349,7 +305,7 @@ def read_lut_table_sections(pdk_path: str, dff_cell_name: str, lut_table_name: s
                 cell_name_here = _paren_content(line)
                 if cell_name_here and len(result["cell_names_seen"]) < _MAX_CELL_NAMES_TRACKED:
                     result["cell_names_seen"].append(cell_name_here)
-                if cell_name_here == dff_cell_name:
+                if _unquote(cell_name_here) == dff_cell_name:
                     result["dff_found"] = True
                     looking_for_primitive = True
                 continue
