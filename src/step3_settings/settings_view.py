@@ -1291,6 +1291,25 @@ class SettingsView(QWidget):
         return result
 
     # ------------------------------------------------------------------
+    # Step1 Sweep Data export와 DFF Cell Name / LUT Table 공유 (2026-11)
+    # ------------------------------------------------------------------
+    def primitive_cell_names(self) -> tuple:
+        """화면에 지금 입력돼 있는 (DFF Cell Name, LUT Table) - 아직 저장 전인 값 포함."""
+        return (
+            self.scalar_widgets[settings_manager.DFF_CELL_NAME_KEY].text().strip(),
+            self.scalar_widgets[settings_manager.LUT_TABLE_KEY].text().strip(),
+        )
+
+    def set_primitive_cell_names(self, dff_cell_name: str, lut_table_name: str) -> None:
+        """
+        Step1에서 고친 값을 이 화면의 입력칸에도 반영한다. 이 화면은 저장할 때 입력칸
+        값으로 파일을 통째로 쓰므로, 입력칸을 안 고치면 Step1에서 저장한 값이 옛 값으로
+        다시 덮어써진다.
+        """
+        self.scalar_widgets[settings_manager.DFF_CELL_NAME_KEY].setText(dff_cell_name)
+        self.scalar_widgets[settings_manager.LUT_TABLE_KEY].setText(lut_table_name)
+
+    # ------------------------------------------------------------------
     # 값 수집 / 저장
     # ------------------------------------------------------------------
     def _collect_constants(self) -> dict:

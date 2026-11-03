@@ -165,6 +165,20 @@ QPushButton#importButton:hover {{
     background-color: {IMPORT_BUTTON_COLOR_HOVER};
 }}
 
+QPushButton#outlineToggleButton {{
+    background-color: {CARD_COLOR};
+    color: {PRIMARY_COLOR};
+    border: 1px solid {PRIMARY_COLOR};
+    font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 8px;
+}}
+
+QPushButton#outlineToggleButton:hover,
+QPushButton#outlineToggleButton:checked {{
+    background-color: {PRIMARY_TINT};
+}}
+
 QPushButton#iconDangerButton {{
     background-color: transparent;
     border: 1px solid {BORDER_COLOR};

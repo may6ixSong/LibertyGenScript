@@ -261,14 +261,22 @@ def parse_index_last_value(index_line: str | None) -> str | None:
     return matches[-1] if matches else None
 
 
-def parse_index_values(index_line: str | None) -> list[float]:
-    """index 줄의 괄호 안 숫자를 전부 float 리스트로 뽑는다 (없으면 빈 리스트)."""
+def parse_index_tokens(index_line: str | None) -> list[str]:
+    """
+    index 줄의 괄호 안 숫자를 원문 표기 그대로(문자열) 전부 뽑는다 (없으면 빈 리스트).
+    Step1 Sweep Data export(2026-11)가 부동소수점 오차 없이 값을 옮겨 쓰는 데 쓴다.
+    """
     if not index_line:
         return []
     start = index_line.find("(")
     end = index_line.rfind(")")
     body = index_line[start + 1: end] if start != -1 and end > start else index_line
-    return [float(m) for m in _INDEX_VALUE_PATTERN.findall(body)]
+    return _INDEX_VALUE_PATTERN.findall(body)
+
+
+def parse_index_values(index_line: str | None) -> list[float]:
+    """index 줄의 괄호 안 숫자를 전부 float 리스트로 뽑는다 (없으면 빈 리스트)."""
+    return [float(m) for m in parse_index_tokens(index_line)]
 
 
 def read_lut_table_sections(pdk_path: str, dff_cell_name: str, lut_table_name: str) -> dict:
