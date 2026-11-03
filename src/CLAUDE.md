@@ -108,9 +108,20 @@ sweep 조건표(.txt)를 뽑는 기능. PDK Folder 행 오른쪽의 `▶ Sweep D
   `cell (DFF Cell Name)` 다음 처음 나오는 LUT Table의 index_1(slope, ns) / index_2(cload, pF)를
   읽어 `SweepData_{PDK 파일명에서 .lib* 확장자 뺀 것}.txt`를 쓴다(`udc_data_writer.export_sweep_data_from_pdks`).
   worst case 설정과 무관하게 **PDK 파일마다 하나씩** 쓴다. `a.lib`/`a.lib_css_tn`처럼 stem이
-  겹치면 겹치는 파일은 확장자까지 넣은 이름(`SweepData_a_lib.txt`)으로 구분한다. 파일 내용 형식은
-  아래 "UDC sweep 데이터 파일"과 같고, 줄 순서는 slope(index_1) 바깥 루프 × cload(index_2) 안쪽
-  루프(.mt0 레코드 순서와 같음)다. 하나가 실패해도 나머지는 계속 쓴다. PDK가 클 수 있어
+  겹치면 겹치는 파일은 확장자까지 넣은 이름(`SweepData_a_lib.txt`)으로 구분한다. 파일 내용은
+  vim으로 열어 복사해 쓰는 HSPICE `.data` 블록이다:
+
+  ```
+  ****  UDC condition applied
+  .data sweep_data slope Cload
+  +	0.0012n	0.00042p
+  ...
+  .enddata
+  ```
+
+  데이터 줄은 `+<TAB>slope<n><TAB>cload<p>`, 줄 순서는 slope(index_1) 바깥 루프 × cload(index_2)
+  안쪽 루프(.mt0 레코드 순서와 같음)다. PDK 값은 이미 ns/pF라 단위 변환 없이 원본 텍스트를
+  Decimal로 옮긴다(부동소수점 오차 없음). 하나가 실패해도 나머지는 계속 쓴다. PDK가 클 수 있어
   백그라운드 스레드(`run_task`) + 로딩 오버레이로 돈다.
 - **DFF Cell Name / LUT Table은 Step3 Constants와 공유**한다: 패널을 펼칠 때마다 Step3 화면이
   있으면 그 화면 값을, 없으면 `step3_settings.json` 값을 채우고(`MainWindow._get_primitive_cell_names`),
@@ -493,26 +504,10 @@ Validate를 누르면 에러 목록과 함께, 비어 있어서 에러가 난 �
 
 liberty 내부의 `library (...)` 이름도 이 파일명에서 `.lib`만 뺀 문자열과 동일.
 
-**UDC sweep 데이터 파일 (2026-10 추가)**: Generate 때 liberty와 같은 output path에
-`UDC_{DBS 파일명에서 .mt0 뺀 것}.txt`도 쓴다(`step4_generate/udc_data_writer.py`,
-`GenerateView._write_udc_data`). vim으로 열어 복사해 쓰는 용도의 텍스트 파일이다:
-
-```
-****  UDC condition applied
-.data sweep_data slope Cload
-+	0.00113118n	0.000416157p
-...
-.enddata
-```
-
-데이터 줄은 `+<TAB>slope<n><TAB>cload<p>`이고 .mt0 레코드 순서 그대로다. slope는 ×1e9(ns),
-cload는 ×1e12(pF)로, .mt0 원본 텍스트를 Decimal로 자릿수만 옮겨 쓴다(부동소수점 오차 없음).
-- `Use worst case primitive liberty` **체크**: Step3 Validate가 모든 .mt0의 slope/cload가
-  같음을 보장하므로 첫 job의 .mt0 이름으로 **하나만** 쓴다.
-- **해제**: job(.mt0)마다 하나씩 쓴다.
-쓰기에 실패해도 liberty 생성은 계속하고, 끝난 뒤 진행 라벨에 "UDC data file failed: ..."로 표시한다.
-(Step1에서 liberty 생성 전에 PDK 기준으로 같은 형식의 파일을 뽑는 기능은 위 "Step 1 — Sweep
-Data export" 참고 - 그쪽은 `SweepData_*.txt`, 이쪽 Step4 자동 출력은 `UDC_*.txt`로 그대로 유지.)
+**liberty 생성 단계에서는 sweep 데이터 .txt를 쓰지 않는다 (2026-11, worst case 포함)**.
+(변경 이력) 2026-10에는 Generate 때 liberty와 같은 output path에 .mt0 slope/cload로
+`UDC_{DBS 파일명에서 .mt0 뺀 것}.txt`도 썼으나(worst case면 첫 job 하나만, 아니면 job마다),
+2026-11에 이 출력을 없애고 Step1의 "Sweep Data export"(PDK 기준, 위 절 참고)만 남겼다.
 
 ## Step 4 — Liberty 생성
 
