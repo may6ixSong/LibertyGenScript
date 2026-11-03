@@ -42,6 +42,7 @@ from PyQt5.QtWidgets import QAbstractButton, QApplication, QMainWindow, QStacked
 from step1_setup import config_manager
 from step1_setup.setup_view import SetupView
 from step2_udc.udc_view import UDCView
+from step3_settings import settings_manager
 from step3_settings.settings_view import SettingsView
 from step4_generate.generate_view import GenerateView
 from ui import startup_trace
@@ -88,6 +89,8 @@ class MainWindow(QMainWindow):
         self.setup_view = SetupView(
             loaded, self._on_config_changed, self._on_next, self._on_config_imported,
             self._show_loading, self._hide_loading,
+            get_primitive_cell_names=self._get_primitive_cell_names,
+            on_primitive_cell_names_changed=self._on_primitive_cell_names_changed,
         )
         # Step2/3는 지연 생성(위 모듈 docstring 참고) - 앱 시작 시점에는 만들지 않고
         # 처음 그 Step으로 이동할 때 _get_or_create_*_view()가 만든다.
@@ -150,6 +153,21 @@ class MainWindow(QMainWindow):
 
     def _on_config_changed(self, values: dict) -> None:
         config_manager.save_config(values)
+
+    def _get_primitive_cell_names(self):
+        """
+        Step1 Sweep Data 패널을 채울 (DFF Cell Name, LUT Table). Step3 화면이 이미
+        만들어져 있으면 아직 저장 전일 수 있는 화면 값을, 아니면 저장 파일 값을 쓴다.
+        """
+        if self.settings_view is not None:
+            return self.settings_view.primitive_cell_names()
+        return settings_manager.load_primitive_cell_names()
+
+    def _on_primitive_cell_names_changed(self, dff_cell_name: str, lut_table_name: str) -> None:
+        """Step1에서 Sweep Data Export 때 입력한 값을 Step3 저장 파일과 화면에 반영한다."""
+        settings_manager.save_primitive_cell_names(dff_cell_name, lut_table_name)
+        if self.settings_view is not None:
+            self.settings_view.set_primitive_cell_names(dff_cell_name, lut_table_name)
 
     def _get_pdk_folder(self) -> str:
         return config_manager.load_config().get("pdk_folder", "")

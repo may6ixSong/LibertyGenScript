@@ -97,6 +97,29 @@ here."로 거부해서 .db 변환이 실패한다 - 2026-08에 `{process_prefix}
 설명 문구(구 노란 Note 배너)는 "Input Paths" 제목 옆 hover 정보 아이콘 툴팁으로 이동
 (2026-08 레이아웃 개편).
 
+**Sweep Data export (2026-11 추가, optional)**: liberty를 만들기 전에 PDK에서 slope/cload
+sweep 조건표(.txt)를 뽑는 기능. PDK Folder 행 오른쪽의 `▶ Sweep Data` 토글 버튼
+(`outlineToggleButton`)을 누르면 PDK Folder 바로 아래에 패널이 펼쳐지고, 다시 누르면 접힌다
+(평소에는 화면 공간을 차지하지 않음).
+- 입력: `DFF Cell Name` / `LUT Table` / `Output Folder` + `Export` 버튼. Export는 PDK Folder와
+  세 칸이 모두 채워져 있으면 **Validate 없이도** 누를 수 있고, Validate 결과/Next 상태는
+  건드리지 않는다. 결과는 Details 패널에 파일별 ✓/✗로 표시한다.
+- 동작: PDK 폴더의 PDK 파일마다 Step3과 같은 방식(`pdk_stream_reader.read_lut_table_sections`)으로
+  `cell (DFF Cell Name)` 다음 처음 나오는 LUT Table의 index_1(slope, ns) / index_2(cload, pF)를
+  읽어 `SweepData_{PDK 파일명에서 .lib* 확장자 뺀 것}.txt`를 쓴다(`udc_data_writer.export_sweep_data_from_pdks`).
+  worst case 설정과 무관하게 **PDK 파일마다 하나씩** 쓴다. `a.lib`/`a.lib_css_tn`처럼 stem이
+  겹치면 겹치는 파일은 확장자까지 넣은 이름(`SweepData_a_lib.txt`)으로 구분한다. 파일 내용 형식은
+  아래 "UDC sweep 데이터 파일"과 같고, 줄 순서는 slope(index_1) 바깥 루프 × cload(index_2) 안쪽
+  루프(.mt0 레코드 순서와 같음)다. 하나가 실패해도 나머지는 계속 쓴다. PDK가 클 수 있어
+  백그라운드 스레드(`run_task`) + 로딩 오버레이로 돈다.
+- **DFF Cell Name / LUT Table은 Step3 Constants와 공유**한다: 패널을 펼칠 때마다 Step3 화면이
+  있으면 그 화면 값을, 없으면 `step3_settings.json` 값을 채우고(`MainWindow._get_primitive_cell_names`),
+  Export 때 입력한 값을 `step3_settings.json`과 (만들어져 있다면) Step3 화면 입력칸에 함께 반영한다
+  (`settings_manager.save_primitive_cell_names`, `SettingsView.set_primitive_cell_names` - Step3은
+  저장할 때 화면 값으로 파일을 통째로 쓰므로 화면도 같이 고쳐야 옛 값으로 되돌아가지 않는다).
+- Output Folder는 `user_config.json`의 `sweep_data_folder` key에 함께 저장된다
+  (`config_manager.SWEEP_DATA_FOLDER_KEY`, Validate 대상인 `INPUT_PATH_FIELDS`에는 넣지 않음).
+
 ## Step 2 — UDC Settings (2026-08 전면 재설계 → 2026-08 2차 재설계)
 
 1차 재설계에서는 파일명 voltage+temperature로 PDK↔DBS를 자동 페어링해서 "짝이 맞는
@@ -488,6 +511,8 @@ cload는 ×1e12(pF)로, .mt0 원본 텍스트를 Decimal로 자릿수만 옮겨 
   같음을 보장하므로 첫 job의 .mt0 이름으로 **하나만** 쓴다.
 - **해제**: job(.mt0)마다 하나씩 쓴다.
 쓰기에 실패해도 liberty 생성은 계속하고, 끝난 뒤 진행 라벨에 "UDC data file failed: ..."로 표시한다.
+(Step1에서 liberty 생성 전에 PDK 기준으로 같은 형식의 파일을 뽑는 기능은 위 "Step 1 — Sweep
+Data export" 참고 - 그쪽은 `SweepData_*.txt`, 이쪽 Step4 자동 출력은 `UDC_*.txt`로 그대로 유지.)
 
 ## Step 4 — Liberty 생성
 

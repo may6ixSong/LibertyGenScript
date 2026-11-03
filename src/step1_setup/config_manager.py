@@ -18,8 +18,15 @@ CONFIG_DIR = get_app_root() / "config"
 CONFIG_FILE = CONFIG_DIR / "user_config.json"
 
 
+# Step1의 optional Sweep Data(.txt) 출력 폴더 (2026-11 추가). Validate 대상이 아니므로
+# INPUT_PATH_FIELDS에는 넣지 않고, 같은 파일에 저장만 같이 한다.
+SWEEP_DATA_FOLDER_KEY = "sweep_data_folder"
+
+
 def _default_config() -> dict:
-    return {key: "" for key, _, _, _ in INPUT_PATH_FIELDS}
+    config = {key: "" for key, _, _, _ in INPUT_PATH_FIELDS}
+    config[SWEEP_DATA_FOLDER_KEY] = ""
+    return config
 
 
 def load_config() -> dict:

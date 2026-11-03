@@ -7,6 +7,13 @@ Validate 버튼으로 3단계(PDK -> Port List -> DBS)를 순서대로 검사한
 표시되고, 세부 메시지는 하단 Details 패널(읽기 전용, 선택 불가)에 나열된다.
 모든 단계가 통과하면 Next 버튼이 활성화된다.
 
+2026-11 Sweep Data export (optional): PDK Folder 행 오른쪽 `Sweep Data` 토글 버튼을
+누르면 그 아래로 작은 패널이 펼쳐진다. DFF Cell Name / LUT Table / Output Folder를
+입력하고 Export를 누르면, PDK 폴더의 PDK 파일마다 lu_table_template index_1(slope) /
+index_2(cload)를 읽어 `SweepData_{PDK 이름}.txt`를 쓴다(step4_generate/udc_data_writer.py).
+Validate와 무관하게 언제든 실행할 수 있고, Validate 결과/Next 상태도 건드리지 않는다.
+DFF Cell Name / LUT Table은 Step3 Constants와 같은 값이라 양쪽이 서로 공유한다.
+
 2026-08 성능 개선: port_list 단계는 큰 Excel 파일을 열 수 있어 느릴 수 있으므로
 `ui/background_task.py`의 `run_task()`로 백그라운드 스레드에서 돌린다 - 그동안에도
 창이 계속 응답하고 Ctrl+C 강제 종료(ui/force_quit.py)도 즉시 먹힌다. `_validate_run_token`
@@ -27,11 +34,13 @@ from PyQt5.QtWidgets import (
 )
 
 from step1_setup import config_manager
+from step1_setup.config_manager import SWEEP_DATA_FOLDER_KEY
 from step1_setup.field_defs import (
     INPUT_PATH_FIELDS, PORT_LIST_FILE_EXTENSIONS, is_port_list_filename,
 )
 from step1_setup.file_scanner import list_dbs_mt0_files, list_pdk_lib_files
 from step1_setup.port_list_reader import read_port_list
+from step4_generate.udc_data_writer import export_sweep_data_from_pdks
 from ui.theme import (
     BORDER_COLOR, ERROR_COLOR, MUTED_TEXT_COLOR, PENDING_COLOR,
     PRIMARY_COLOR, SUCCESS_COLOR, TEXT_COLOR,
@@ -62,6 +71,16 @@ _INPUT_PATHS_INFO = (
     + " / ".join(PORT_LIST_FILE_EXTENSIONS)
     + " file."
 )
+
+
+_SWEEP_DATA_INFO = (
+    "Optional. For every PDK file in the PDK Folder, reads lu_table_template index_1 (slope, ns) "
+    "and index_2 (cload, pF) under the DFF Cell Name / LUT Table, and writes "
+    "SweepData_{PDK name}.txt as an HSPICE .data block (slope outer loop, cload inner loop).\n\n"
+    "Validate is not required. DFF Cell Name / LUT Table are shared with Step 3 Constants."
+)
+
+_SWEEP_TOGGLE_TEXT = {False: "\u25B6  Sweep Data", True: "\u25BC  Sweep Data"}
 
 
 class _StepChip(QWidget):
@@ -136,6 +155,7 @@ class SetupView(QWidget):
     def __init__(
         self, existing_config: dict, on_config_changed, on_next=None,
         on_config_imported=None, show_loading=None, hide_loading=None, parent=None,
+        get_primitive_cell_names=None, on_primitive_cell_names_changed=None,
     ):
         """
         Args:
@@ -148,6 +168,10 @@ class SetupView(QWidget):
             show_loading / hide_loading: Validate 도중(특히 큰 Port List 파일을 읽는
                 동안) 전역 로딩 오버레이를 보여주고 숨기는 콜백(선택, 2026-08 추가) -
                 Validate 버튼은 그동안 disabled로 바뀌어 중복 실행을 막는다.
+            get_primitive_cell_names: Sweep Data 패널을 펼칠 때 채울 (DFF Cell Name,
+                LUT Table)을 돌려주는 콜백(선택, 2026-11) - Step3과 같은 값을 쓴다.
+            on_primitive_cell_names_changed: Sweep Data Export 때 입력한 (DFF Cell Name,
+                LUT Table)을 Step3에도 반영하도록 알리는 콜백(선택, 2026-11).
         """
         super().__init__(parent)
         self.on_config_changed = on_config_changed
@@ -155,6 +179,9 @@ class SetupView(QWidget):
         self.on_config_imported = on_config_imported
         self.show_loading = show_loading
         self.hide_loading = hide_loading
+        self.get_primitive_cell_names = get_primitive_cell_names
+        self.on_primitive_cell_names_changed = on_primitive_cell_names_changed
+        self._exporting = False  # Sweep Data export가 백그라운드로 도는 중
         self.path_edits: dict[str, QLineEdit] = {}
         self.step_chips: dict[str, _StepChip] = {}
         self.step_lines: list[_StepLine] = []
@@ -170,6 +197,7 @@ class SetupView(QWidget):
 
         self._build_layout(existing_config)
         self._update_validate_button_state()
+        self._refresh_sweep_export_enabled()
 
     # ------------------------------------------------------------------
     # 레이아웃
@@ -204,13 +232,16 @@ class SetupView(QWidget):
         card_layout.setHorizontalSpacing(10)
         card_layout.setVerticalSpacing(12)
 
-        card_layout.addWidget(build_section_header("Input Paths", _INPUT_PATHS_INFO), 0, 0, 1, 3)
+        card_layout.addWidget(build_section_header("Input Paths", _INPUT_PATHS_INFO), 0, 0, 1, 4)
 
-        for row, (key, label, kind, extensions) in enumerate(INPUT_PATH_FIELDS, start=1):
+        # Sweep Data 패널(접혀 있으면 숨김)은 PDK Folder 행 바로 아래 행에 들어간다.
+        row = 1
+        for key, label, kind, extensions in INPUT_PATH_FIELDS:
             card_layout.addWidget(QLabel(label), row, 0)
 
             edit = QLineEdit(existing_config.get(key, ""))
             edit.textChanged.connect(self._update_validate_button_state)
+            edit.textChanged.connect(self._refresh_sweep_export_enabled)
             self.path_edits[key] = edit
             card_layout.addWidget(edit, row, 1)
 
@@ -221,8 +252,73 @@ class SetupView(QWidget):
             )
             card_layout.addWidget(btn, row, 2)
 
+            if key == "pdk_folder":
+                self.sweep_toggle_btn = QPushButton(_SWEEP_TOGGLE_TEXT[False])
+                self.sweep_toggle_btn.setObjectName("outlineToggleButton")
+                self.sweep_toggle_btn.setCheckable(True)
+                self.sweep_toggle_btn.setToolTip(
+                    "Optional: export slope/cload sweep data (.txt) for each PDK file"
+                )
+                self.sweep_toggle_btn.toggled.connect(self._on_sweep_toggled)
+                card_layout.addWidget(self.sweep_toggle_btn, row, 3)
+                row += 1
+                self.sweep_panel = self._build_sweep_panel(existing_config)
+                self.sweep_panel.setVisible(False)
+                card_layout.addWidget(self.sweep_panel, row, 1, 1, 3)
+            row += 1
+
         card_layout.setColumnStretch(1, 1)
         return card
+
+    def _build_sweep_panel(self, existing_config: dict) -> QFrame:
+        """PDK Folder 아래에 펼쳐지는 Sweep Data export 패널 (2026-11, optional)."""
+        panel = QFrame()
+        panel.setObjectName("sweepPanel")
+        panel.setStyleSheet(
+            f"QFrame#sweepPanel {{ background-color: #FAFAFF; border: 1px solid {BORDER_COLOR}; "
+            f"border-left: 3px solid {PRIMARY_COLOR}; border-radius: 8px; }}"
+            "QFrame#sweepPanel QLabel { background: transparent; border: none; }"
+        )
+        grid = QGridLayout(panel)
+        grid.setContentsMargins(16, 12, 16, 12)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+
+        grid.addWidget(build_section_header("Sweep Data export (optional)", _SWEEP_DATA_INFO), 0, 0, 1, 4)
+        self.sweep_hint_label = QLabel("")
+        self.sweep_hint_label.setStyleSheet(f"color: {MUTED_TEXT_COLOR}; font-size: 11px;")
+        grid.addWidget(self.sweep_hint_label, 1, 0, 1, 4)
+
+        self.sweep_dff_edit = QLineEdit()
+        self.sweep_lut_edit = QLineEdit()
+        for r, (text, edit) in enumerate(
+            [("DFF Cell Name", self.sweep_dff_edit), ("LUT Table", self.sweep_lut_edit)], start=2,
+        ):
+            edit.textChanged.connect(self._refresh_sweep_export_enabled)
+            grid.addWidget(QLabel(text), r, 0)
+            grid.addWidget(edit, r, 1, 1, 2)
+
+        grid.addWidget(QLabel("Output Folder"), 4, 0)
+        self.sweep_output_edit = QLineEdit(existing_config.get(SWEEP_DATA_FOLDER_KEY, ""))
+        self.sweep_output_edit.setPlaceholderText("Folder to write SweepData_*.txt files")
+        self.sweep_output_edit.textChanged.connect(self._refresh_sweep_export_enabled)
+        grid.addWidget(self.sweep_output_edit, 4, 1)
+
+        browse = QPushButton("Browse...")
+        browse.clicked.connect(
+            lambda _checked: self._browse(
+                SWEEP_DATA_FOLDER_KEY, "Sweep Data Output Folder", "dir", None, self.sweep_output_edit,
+            )
+        )
+        grid.addWidget(browse, 4, 2)
+
+        self.sweep_export_btn = QPushButton("Export")
+        self.sweep_export_btn.setObjectName("primaryButton")
+        self.sweep_export_btn.clicked.connect(self._on_sweep_export)
+        grid.addWidget(self.sweep_export_btn, 4, 3)
+
+        grid.setColumnStretch(1, 1)
+        return panel
 
     def _build_action_row(self) -> QHBoxLayout:
         btn_row = QHBoxLayout()
@@ -341,7 +437,7 @@ class SetupView(QWidget):
         self._refresh_validate_btn_enabled()
 
     def _refresh_validate_btn_enabled(self) -> None:
-        if self._validating:
+        if self._validating or self._exporting:
             return  # Validate가 도는 동안에는 입력 변경으로 버튼이 다시 켜지면 안 됨
         values = self._current_values()
         port_list_file = values.get("port_list_file", "")
@@ -351,6 +447,12 @@ class SetupView(QWidget):
 
     def _current_values(self) -> dict:
         return {key: edit.text().strip() for key, edit in self.path_edits.items()}
+
+    def _config_values(self) -> dict:
+        """저장할 값 전체 - Validate 대상 경로 + Sweep Data 출력 폴더(optional)."""
+        values = self._current_values()
+        values[SWEEP_DATA_FOLDER_KEY] = self.sweep_output_edit.text().strip()
+        return values
 
     # ------------------------------------------------------------------
     # Details 패널
@@ -437,7 +539,7 @@ class SetupView(QWidget):
     # Validate: 3단계를 순서대로(A -> B -> C) 처리
     # ------------------------------------------------------------------
     def _on_validate(self) -> None:
-        self.on_config_changed(self._current_values())
+        self.on_config_changed(self._config_values())
         self._clear_details()
         self.next_btn.setEnabled(False)
         self._all_passed = True
@@ -447,6 +549,7 @@ class SetupView(QWidget):
         # 중복 실행되지 않도록 잠그고, 오래 걸릴 수 있음을 로딩 오버레이로 보여준다.
         self._validating = True
         self.validate_btn.setEnabled(False)
+        self._refresh_sweep_export_enabled()
         if self.show_loading:
             self.show_loading("Validating input paths...")
 
@@ -518,6 +621,105 @@ class SetupView(QWidget):
         self.next_btn.setEnabled(self._all_passed)
         self.next_btn.setToolTip("" if self._all_passed else "Run Validate first.")
         self._refresh_validate_btn_enabled()
+        self._refresh_sweep_export_enabled()
+        self._animate_details_in()
+
+    # ------------------------------------------------------------------
+    # Sweep Data export (2026-11, optional)
+    # ------------------------------------------------------------------
+    def _on_sweep_toggled(self, checked: bool) -> None:
+        self.sweep_toggle_btn.setText(_SWEEP_TOGGLE_TEXT[checked])
+        if checked:
+            self._fill_sweep_panel()
+        self.sweep_panel.setVisible(checked)
+
+    def _fill_sweep_panel(self) -> None:
+        """펼칠 때마다 Step3의 최신 DFF Cell Name / LUT Table과 PDK 파일 개수를 다시 채운다."""
+        if self.get_primitive_cell_names:
+            dff, lut = self.get_primitive_cell_names()
+            self.sweep_dff_edit.setText(dff)
+            self.sweep_lut_edit.setText(lut)
+        self._refresh_sweep_hint()
+
+    def _refresh_sweep_hint(self) -> None:
+        folder = self._current_values().get("pdk_folder", "")
+        if not folder or not Path(folder).is_dir():
+            text = "PDK Folder is not set or does not exist."
+        else:
+            text = f"One SweepData_{{PDK name}}.txt per PDK file  \u2014  {len(list_pdk_lib_files(folder))} PDK file(s) found."
+        self.sweep_hint_label.setText(text)
+
+    def _refresh_sweep_export_enabled(self) -> None:
+        if not hasattr(self, "sweep_export_btn"):
+            return
+        filled = all([
+            self._current_values().get("pdk_folder", ""),
+            self.sweep_dff_edit.text().strip(),
+            self.sweep_lut_edit.text().strip(),
+            self.sweep_output_edit.text().strip(),
+        ])
+        self.sweep_export_btn.setEnabled(filled and not self._validating and not self._exporting)
+
+    def _on_sweep_export(self) -> None:
+        pdk_folder = self._current_values().get("pdk_folder", "")
+        dff = self.sweep_dff_edit.text().strip()
+        lut = self.sweep_lut_edit.text().strip()
+        output_dir = self.sweep_output_edit.text().strip()
+
+        self.on_config_changed(self._config_values())
+        if self.on_primitive_cell_names_changed:
+            self.on_primitive_cell_names_changed(dff, lut)
+        self._clear_details()
+        self._refresh_sweep_hint()
+
+        errors = []
+        if not Path(pdk_folder).is_dir():
+            errors.append(f"PDK Folder does not exist: {pdk_folder}")
+        if not Path(output_dir).is_dir():
+            errors.append(f"Sweep Data Output Folder does not exist: {output_dir}")
+        pdk_files = list_pdk_lib_files(pdk_folder) if not errors else []
+        if not errors and not pdk_files:
+            errors.append(f"No PDK file found in {pdk_folder}")
+        if errors:
+            for message in errors:
+                self._add_detail(message, "error")
+            self._animate_details_in()
+            return
+
+        self._exporting = True
+        self._refresh_sweep_export_enabled()
+        self.validate_btn.setEnabled(False)
+        if self.show_loading:
+            self.show_loading(f"Exporting Sweep Data for {len(pdk_files)} PDK file(s)...")
+        # PDK 파일이 크고 네트워크 폴더일 수 있으므로 Port List 검사처럼 백그라운드로 돌린다.
+        run_task(
+            self,
+            lambda: export_sweep_data_from_pdks(pdk_folder, pdk_files, dff, lut, output_dir),
+            lambda results: self._finish_sweep_export(results, output_dir),
+            lambda message: self._finish_sweep_export(None, output_dir, message),
+        )
+
+    def _finish_sweep_export(self, results, output_dir: str, unexpected_error: str = "") -> None:
+        self._exporting = False
+        if self.hide_loading:
+            self.hide_loading()
+        self._refresh_validate_btn_enabled()
+        self._refresh_sweep_export_enabled()
+
+        if results is None:
+            self._add_detail(f"Sweep Data export failed: {unexpected_error}", "error")
+        else:
+            written = sum(1 for _name, _path, error in results if error is None)
+            self._add_detail(
+                f"Sweep Data export: {written} / {len(results)} file(s) written to {output_dir}",
+                "success" if written == len(results) else "error",
+            )
+            for _name, out_path, error in results:
+                file_name = Path(out_path).name
+                if error is None:
+                    self._add_detail(f"\u2713 {file_name}", "success")
+                else:
+                    self._add_detail(f"\u2717 {file_name} \u2014 {error}", "error")
         self._animate_details_in()
 
     # ------------------------------------------------------------------
@@ -531,7 +733,7 @@ class SetupView(QWidget):
     # Config export / import (2026-08 추가)
     # ------------------------------------------------------------------
     def _on_export_config(self) -> None:
-        self.on_config_changed(self._current_values())
+        self.on_config_changed(self._config_values())
         run_export_config_dialog(self, self._current_values().get("pdk_folder", ""))
 
     def _on_import_config(self) -> None:
@@ -548,6 +750,9 @@ class SetupView(QWidget):
         """Import 직후, 저장된 경로 값으로 입력칸을 다시 채운다."""
         for key, edit in self.path_edits.items():
             edit.setText(config.get(key, ""))
+        self.sweep_output_edit.setText(config.get(SWEEP_DATA_FOLDER_KEY, ""))
+        if self.sweep_toggle_btn.isChecked():
+            self._fill_sweep_panel()
         self._invalidate_validation()
 
     # ------------------------------------------------------------------

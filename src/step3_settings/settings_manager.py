@@ -273,3 +273,25 @@ def save_voltage_map(voltage_map: dict) -> None:
     settings = load_settings()
     settings["voltage_map"] = _merge_voltage_map(voltage_map)
     save_settings(settings)
+
+
+# ---------------------------------------------------------------------------
+# DFF Cell Name / LUT Table 전용 접근자 (2026-11 추가)
+# Step1의 Sweep Data export도 이 두 값으로 PDK의 index_1/index_2를 찾으므로, Step1에서
+# 입력한 값을 Step3와 같은 저장 위치에 함께 쓴다.
+# ---------------------------------------------------------------------------
+DFF_CELL_NAME_KEY = "dff_cell_name"
+LUT_TABLE_KEY = "primitive_cell_name"  # 화면 라벨은 "LUT Table", config key는 호환 때문에 그대로
+
+
+def load_primitive_cell_names() -> tuple[str, str]:
+    scalars = load_settings()["scalars"]
+    return str(scalars.get(DFF_CELL_NAME_KEY, "") or ""), str(scalars.get(LUT_TABLE_KEY, "") or "")
+
+
+def save_primitive_cell_names(dff_cell_name: str, lut_table_name: str) -> None:
+    """저장 파일의 DFF Cell Name / LUT Table만 갈아끼운다(나머지 Step3 값은 그대로)."""
+    settings = load_settings()
+    settings["scalars"][DFF_CELL_NAME_KEY] = dff_cell_name
+    settings["scalars"][LUT_TABLE_KEY] = lut_table_name
+    save_settings(settings)
