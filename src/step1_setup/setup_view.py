@@ -10,7 +10,7 @@ Validate 버튼으로 3단계(PDK -> Port List -> DBS)를 순서대로 검사한
 2026-11 Sweep Data export (optional): PDK Folder 행 오른쪽 `Sweep Data` 토글 버튼을
 누르면 그 아래로 작은 패널이 펼쳐진다. DFF Cell Name / LUT Table / Output Folder를
 입력하고 Export를 누르면, PDK 폴더의 PDK 파일마다 lu_table_template index_1(slope) /
-index_2(cload)를 읽어 `SweepData_{PDK 이름}.txt`를 쓴다(step4_generate/udc_data_writer.py).
+index_2(cload)를 읽어 `UDC_{PDK 이름}.txt`를 쓴다(step4_generate/udc_data_writer.py).
 Validate와 무관하게 언제든 실행할 수 있고, Validate 결과/Next 상태도 건드리지 않는다.
 DFF Cell Name / LUT Table은 Step3 Constants와 같은 값이라 양쪽이 서로 공유한다.
 
@@ -76,7 +76,7 @@ _INPUT_PATHS_INFO = (
 _SWEEP_DATA_INFO = (
     "Optional. For every PDK file in the PDK Folder, reads lu_table_template index_1 (slope, ns) "
     "and index_2 (cload, pF) under the DFF Cell Name / LUT Table, and writes "
-    "SweepData_{PDK name}.txt as an HSPICE .data block (slope outer loop, cload inner loop).\n\n"
+    "UDC_{PDK name}.txt as an HSPICE .data block (slope outer loop, cload inner loop).\n\n"
     "Validate is not required. DFF Cell Name / LUT Table are shared with Step 3 Constants."
 )
 
@@ -300,7 +300,7 @@ class SetupView(QWidget):
 
         grid.addWidget(QLabel("Output Folder"), 4, 0)
         self.sweep_output_edit = QLineEdit(existing_config.get(SWEEP_DATA_FOLDER_KEY, ""))
-        self.sweep_output_edit.setPlaceholderText("Folder to write SweepData_*.txt files")
+        self.sweep_output_edit.setPlaceholderText("Folder to write UDC_*.txt files")
         self.sweep_output_edit.textChanged.connect(self._refresh_sweep_export_enabled)
         grid.addWidget(self.sweep_output_edit, 4, 1)
 
@@ -646,7 +646,7 @@ class SetupView(QWidget):
         if not folder or not Path(folder).is_dir():
             text = "PDK Folder is not set or does not exist."
         else:
-            text = f"One SweepData_{{PDK name}}.txt per PDK file  \u2014  {len(list_pdk_lib_files(folder))} PDK file(s) found."
+            text = f"One UDC_{{PDK name}}.txt per PDK file  \u2014  {len(list_pdk_lib_files(folder))} PDK file(s) found."
         self.sweep_hint_label.setText(text)
 
     def _refresh_sweep_export_enabled(self) -> None:
