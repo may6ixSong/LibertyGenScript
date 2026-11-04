@@ -106,9 +106,9 @@ sweep 조건표(.txt)를 뽑는 기능. PDK Folder 행 오른쪽의 `▶ Sweep D
   건드리지 않는다. 결과는 Details 패널에 파일별 ✓/✗로 표시한다.
 - 동작: PDK 폴더의 PDK 파일마다 Step3과 같은 방식(`pdk_stream_reader.read_lut_table_sections`)으로
   `cell (DFF Cell Name)` 다음 처음 나오는 LUT Table의 index_1(slope, ns) / index_2(cload, pF)를
-  읽어 `SweepData_{PDK 파일명에서 .lib* 확장자 뺀 것}.txt`를 쓴다(`udc_data_writer.export_sweep_data_from_pdks`).
+  읽어 `UDC_{PDK 파일명에서 .lib* 확장자 뺀 것}.txt`를 쓴다(`udc_data_writer.export_sweep_data_from_pdks`).
   worst case 설정과 무관하게 **PDK 파일마다 하나씩** 쓴다. `a.lib`/`a.lib_css_tn`처럼 stem이
-  겹치면 겹치는 파일은 확장자까지 넣은 이름(`SweepData_a_lib.txt`)으로 구분한다. 파일 내용은
+  겹치면 겹치는 파일은 확장자까지 넣은 이름(`UDC_a_lib.txt`)으로 구분한다. 파일 내용은
   vim으로 열어 복사해 쓰는 HSPICE `.data` 블록이다:
 
   ```

@@ -12,7 +12,7 @@ slope/cload sweep 데이터를 HSPICE `.data` 블록 텍스트 파일로 쓴다 
 
 Step1 Sweep Data export (2026-11, optional): PDK 파일마다 `lu_table_template`
 index_1(slope, ns) / index_2(cload, pF)를 읽어, slope 바깥 루프 x cload 안쪽 루프
-순서(= .mt0 레코드 순서)로 모든 조합을 쓴다. 파일명 `SweepData_{PDK 파일명에서 .lib*
+순서(= .mt0 레코드 순서)로 모든 조합을 쓴다. 파일명 `UDC_{PDK 파일명에서 .lib*
 확장자 뺀 것}.txt`. PDK 값은 이미 ns/pF이므로 단위 변환은 없고, 부동소수점 오차가 끼지
 않도록 원본 텍스트를 Decimal로 자릿수만 옮긴다.
 
@@ -31,7 +31,7 @@ from step4_generate.pdk_stream_reader import parse_index_tokens, read_lut_table_
 
 _HEADER_LINES = ("****  UDC condition applied", ".data sweep_data slope Cload")
 _FOOTER_LINE = ".enddata"
-SWEEP_DATA_PREFIX = "SweepData_"
+UDC_FILE_PREFIX = "UDC_"
 
 
 def _plain_number(raw: str) -> str:
@@ -58,7 +58,7 @@ def _write_data_file(out_path: str, lines: list[str]) -> str | None:
 # ---------------------------------------------------------------------------
 def build_sweep_data_filenames(pdk_filenames: list[str]) -> dict[str, str]:
     """
-    PDK 파일명 -> `SweepData_{stem}.txt`. stem은 `.lib*` 확장자를 뗀 이름이다.
+    PDK 파일명 -> `UDC_{stem}.txt`. stem은 `.lib*` 확장자를 뗀 이름이다.
     `a.lib`와 `a.lib_css_tn`처럼 stem이 겹치면 서로 덮어쓰지 않도록, 겹치는 파일들은
     확장자까지 포함한 전체 이름('.' -> '_')을 stem으로 쓴다.
     """
@@ -70,7 +70,7 @@ def build_sweep_data_filenames(pdk_filenames: list[str]) -> dict[str, str]:
     for name, stem in stems.items():
         if counts[stem] > 1:
             stem = name.replace(".", "_")
-        result[name] = f"{SWEEP_DATA_PREFIX}{stem}.txt"
+        result[name] = f"{UDC_FILE_PREFIX}{stem}.txt"
     return result
 
 
