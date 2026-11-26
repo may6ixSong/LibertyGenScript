@@ -36,7 +36,9 @@ Col) + Serial Cluster "More than 1"(Split Serial) 추가):
   5. (Data Transfer Type이 Serial이고 Serial Cluster가 "More than 1"일 때만 -
      `_validate_serial_split`, 2026-10 "Bit Set" 재설계) 인식된 DBS output pin마다
      독립적으로: 1비트를 넘어야 하고, 그 pin의 Related Pin 와일드카드가 Port==PORT pin
-     중 하나 이상과 매치돼야 하며(`match_digit_wildcard_pins`, '*'는 숫자만 매칭), bit
+     중 하나 이상과 매치돼야 하며(`match_digit_wildcard_pins`, '*'는 숫자만 매칭 - 2026-11:
+     '*'가 없으면 bus 슬라이스로 보고 그 이름의 Port==PORT bus가 있고 Bits가 cluster
+     개수로 나누어떨어져야 함, `pin_field_defs.serial_layout_errors_for_related`), bit
      set가 하나 이상 있어야 한다. 각 set는 Number of Col이 양의 정수, Related Pin이 그
      와일드카드 매치 목록 안의 pin이어야 하고, 같은 Related Pin을 두 set가 쓰면 안 된다.
      set를 LSB부터 누적한 범위가 DBS output pin의 최대 bit를 넘으면 에러, 합계가 그 pin의
@@ -80,6 +82,7 @@ from step3_settings.constants_field_defs import (
     voltage_map_digital_voltage_key, voltage_map_name_key,
 )
 from step3_settings.pin_field_defs import (
+    DBS_OUTPUT_PORT_TYPE,
     DBS_BIT_SPLIT_KEY, DBS_OUTPUT_KEY, DBS_RELATED_PINS_KEY, DBS_SERIAL_CLUSTER_MODE_DEFAULT,
     DBS_SERIAL_CLUSTER_MODE_KEY, DBS_SERIAL_CLUSTER_MULTI, DBS_SERIAL_RELATED_PATTERN_KEY,
     DBS_SERIAL_LAYOUT_KEY, DBS_TIMING_SENSE_KEY, DBS_TIMING_TYPE_KEY,
@@ -87,8 +90,9 @@ from step3_settings.pin_field_defs import (
     DBS_TRANSFER_TYPE_SERIAL, ENABLE_SIGNAL_KEY, ENABLE_SIGNAL_PORT_TYPE,
     POWER_DOWN_FALL_POWER_KEY, POWER_DOWN_KEY, POWER_DOWN_RISE_POWER_KEY, POWER_DOWN_WHEN_KEY,
     VIRTUAL_POWER_KEY, VIRTUAL_POWER_PG_FUNCTION_KEY, VIRTUAL_POWER_PORT_TYPE,
-    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, expand_dbs_output_pins, match_digit_wildcard_pins,
-    serial_layout_errors, split_pattern_and_range,
+    VIRTUAL_POWER_SWITCH_FUNCTION_KEY, SERIAL_RELATED_MODE_WILDCARD, expand_dbs_output_pins,
+    match_digit_wildcard_pins, serial_layout_errors_for_related, serial_related_mode,
+    split_pattern_and_range,
 )
 
 _REQUIRED_TEXT_SCALARS = [
@@ -262,6 +266,8 @@ def _validate_serial_split(pins: dict, recognized: list[str], dbs_bits_by_name: 
     if not isinstance(layout_map, dict):
         layout_map = {}
 
+    candidate_pins = None
+    pin_bit_info = None
     for pin_name in recognized:
         dbs_bits = dbs_bits_by_name.get(pin_name)
         if dbs_bits is None:
@@ -276,20 +282,26 @@ def _validate_serial_split(pins: dict, recognized: list[str], dbs_bits_by_name: 
 
         related_pattern = str(related_pattern_map.get(pin_name, "")).strip()
         if not related_pattern:
-            errors.append(f"DBS output pin '{pin_name}': 'Related Pin (wildcard)' is empty.")
+            errors.append(f"DBS output pin '{pin_name}': 'Related Pin' is empty.")
             continue
-        matched = match_digit_wildcard_pins(port_list_file, related_pattern)
-        if not matched:
-            errors.append(
-                f"DBS output pin '{pin_name}': Related Pin pattern '{related_pattern}' matched "
-                "no PORT pins."
-            )
-            continue
+        if serial_related_mode(related_pattern) == SERIAL_RELATED_MODE_WILDCARD:
+            matched = match_digit_wildcard_pins(port_list_file, related_pattern)
+            if not matched:
+                errors.append(
+                    f"DBS output pin '{pin_name}': Related Pin pattern '{related_pattern}' matched "
+                    "no PORT pins."
+                )
+                continue
 
+        # 2026-11: '*'가 없으면 bus 하나를 cluster 개수로 균등 분할(bus 슬라이스) -
+        # pin_field_defs.compute_serial_layout_for_related 참고(화면/block5와 같은 함수).
+        if candidate_pins is None:
+            candidate_pins = list_pins_by_port_type(port_list_file, DBS_OUTPUT_PORT_TYPE)
+            pin_bit_info = list_all_pin_bit_info(port_list_file)
         _msb, dbs_lsb = parse_bit_range(pin_name, dbs_bits)
-        errors += serial_layout_errors(
+        errors += serial_layout_errors_for_related(
             pin_name, strip_bit_range_suffix(pin_name), dbs_bits, dbs_lsb,
-            layout_map.get(pin_name), [name for _value, name in matched],
+            layout_map.get(pin_name), related_pattern, candidate_pins, pin_bit_info,
         )
 
     return errors

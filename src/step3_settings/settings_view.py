@@ -951,6 +951,8 @@ class SettingsView(QWidget):
             pin["pin_name"]: pin for pin in list_port_pins_detailed(port_list_file)
         }
         pin_bit_info = list_all_pin_bit_info(port_list_file)
+        # 2026-11: Split Serial bus 슬라이스(Related Pin에 '*' 없음)가 bus의 Bits/LSB를 읽는다.
+        self._dbs_pin_bit_info = pin_bit_info
         saved_split = self.settings["pins"].get(DBS_BIT_SPLIT_KEY) or {}
         saved_serial_related = self.settings["pins"].get(DBS_SERIAL_RELATED_PATTERN_KEY) or {}
         if not isinstance(saved_serial_related, dict):
@@ -1098,6 +1100,7 @@ class SettingsView(QWidget):
             editor = SerialLayoutEditor(
                 pin_name, strip_bit_range_suffix(pin_name), dbs_bits, info["dbs_lsb"],
                 self._dbs_candidate_pins, info["default_serial_related"], info["serial_layout"],
+                pin_bit_info=getattr(self, "_dbs_pin_bit_info", None),
             )
             # Data Transfer Type/Serial Cluster를 바꿔서 화면을 다시 그려도 입력값이 남도록
             # 바뀔 때마다 _dbs_row_info(원본)에 되써 둔다.

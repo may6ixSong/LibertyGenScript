@@ -536,3 +536,147 @@ def sets_to_serial_layout(sets: list[dict], matched_names: list[str]) -> dict | 
         SERIAL_LAYOUT_LEFT_KEY: str(left), SERIAL_LAYOUT_CENTER_KEY: str(center),
         SERIAL_LAYOUT_RIGHT_KEY: str(right), SERIAL_LAYOUT_FIRST_KEY: first,
     }
+
+
+# ---------------------------------------------------------------------------
+# 2026-11 추가 - Split Serial Related Pin "bus 슬라이스" 방식.
+# Related Pin 입력에 '*'가 없고 그 이름이 Port==PORT bus pin 하나(base name 일치, 예:
+# 'CSEL' -> Port List 'CSEL[719:0]')를 가리키면, 그 bus를 cluster 개수로 **균등하게** 잘라
+# LSB부터 순서대로 Related Pin 목록을 만든다(예: 45 clusters -> CSEL[15:0], CSEL[31:16],
+# ..., CSEL[719:704]). 이 목록은 와일드카드 매치 목록과 똑같이 취급되어 cluster #1부터
+# 오름차순(First) / 내림차순(Last)으로 배정된다 - compute_serial_layout 이하 계산은 그대로.
+# 예전에는 '*'가 없는 입력은 항상 "매치 없음" 에러였으므로 기존 config와 충돌하지 않는다.
+# Step3 화면(serial_layout_editor) / Validate(settings_validator) / block5가 전부
+# compute_serial_layout_for_related() 하나를 쓴다.
+# ---------------------------------------------------------------------------
+
+SERIAL_RELATED_MODE_WILDCARD = "wildcard"
+SERIAL_RELATED_MODE_BUS = "bus"
+
+
+def serial_related_mode(pattern_text: str) -> str | None:
+    """Related Pin 입력이 와일드카드('*' 포함)인지, bus 이름 하나인지. 비어 있으면 None."""
+    pattern, _range_part = split_pattern_and_range(pattern_text)
+    if not pattern:
+        return None
+    return SERIAL_RELATED_MODE_WILDCARD if "*" in pattern else SERIAL_RELATED_MODE_BUS
+
+
+def find_serial_related_bus(
+    pattern_text: str, candidate_pin_names: list[str], pin_bit_info: dict | None,
+) -> dict:
+    """
+    bus 슬라이스 방식에서 Related Pin 입력(예: 'CSEL' 또는 'CSEL[719:0]')이 가리키는
+    Port==PORT bus를 찾는다.
+
+    Returns: {"name": base name, "full_name": Port List 이름, "bits": int, "lsb": int,
+              "error": str | None}
+    """
+    pattern, _range_part = split_pattern_and_range(pattern_text)
+    result = {"name": pattern, "full_name": None, "bits": None, "lsb": None, "error": None}
+    full_name = next((c for c in candidate_pin_names if strip_bit_range_suffix(c) == pattern), None)
+    if full_name is None:
+        result["error"] = (
+            f"'{pattern}' is not a PORT pin in the Port List (use a bus name such as 'CSEL', "
+            "or a wildcard with '*')."
+        )
+        return result
+    info = (pin_bit_info or {}).get(pattern)
+    if info is None:
+        result["error"] = f"Bits of '{full_name}' could not be read from the Port List."
+        return result
+    result["full_name"] = full_name
+    result["bits"] = info["bits"]
+    result["lsb"] = info["lsb"]
+    if info["bits"] <= 1:
+        result["error"] = f"'{full_name}' has only 1 bit - it cannot be sliced per cluster."
+    return result
+
+
+def slice_serial_related_bus(name: str, bits: int, lsb: int, cluster_count: int) -> tuple[list[str], str | None]:
+    """bus(name, bits, lsb)를 cluster_count개로 균등 분할한 범위 이름 목록(LSB부터)과 에러."""
+    if cluster_count <= 0:
+        return [], None
+    if bits % cluster_count != 0:
+        return [], (
+            f"Related Pin bus '{name}' has {bits} bits, which is not divisible by "
+            f"{cluster_count} clusters (remainder {bits % cluster_count})."
+        )
+    per = bits // cluster_count
+    names = []
+    for i in range(cluster_count):
+        s_lsb = lsb + i * per
+        s_msb = s_lsb + per - 1
+        names.append(f"{name}[{s_msb}:{s_lsb}]" if per > 1 else f"{name}[{s_lsb}]")
+    return names, None
+
+
+def compute_serial_layout_for_related(
+    base_name: str, dbs_bits: int, dbs_lsb: int, layout: dict, pattern_text: str,
+    candidate_pin_names: list[str], pin_bit_info: dict | None,
+) -> dict:
+    """
+    compute_serial_layout() + Related Pin 입력 해석(와일드카드 / bus 슬라이스)을 한 번에.
+
+    Returns: compute_serial_layout() 결과에 다음 key를 더한 dict
+        "related_mode": "wildcard" | "bus" | None(입력 없음),
+        "related_names": cluster에 배정할 Related Pin 목록(오름차순 = LSB부터),
+        "related_bus": find_serial_related_bus() 결과(bus 방식일 때만, 아니면 None),
+        "related_error": Related Pin 입력 자체의 에러(bus를 못 찾음/나누어떨어지지 않음 등).
+    입력이 비어 있으면 compute_serial_layout(..., None)처럼 크기만 계산한다.
+    """
+    mode = serial_related_mode(pattern_text)
+    extra = {"related_mode": mode, "related_names": [], "related_bus": None, "related_error": None}
+
+    if mode is None:
+        computed = compute_serial_layout(base_name, dbs_bits, dbs_lsb, layout, None)
+        computed.update(extra)
+        return computed
+
+    if mode == SERIAL_RELATED_MODE_WILDCARD:
+        names = [n for _v, n in match_digit_wildcard(pattern_text, candidate_pin_names)]
+        computed = compute_serial_layout(base_name, dbs_bits, dbs_lsb, layout, names)
+        extra["related_names"] = names
+        computed.update(extra)
+        return computed
+
+    # bus 슬라이스: cluster 개수를 먼저 알아야 자를 수 있다.
+    bus = find_serial_related_bus(pattern_text, candidate_pin_names, pin_bit_info)
+    extra["related_bus"] = bus
+    sizing = compute_serial_layout(base_name, dbs_bits, dbs_lsb, layout, None)
+    cluster_count = len(sizing["clusters"])
+    error = bus["error"]
+    names: list[str] = []
+    if error is None and cluster_count and not sizing["errors"]:
+        names, error = slice_serial_related_bus(bus["name"], bus["bits"], bus["lsb"], cluster_count)
+
+    if error is not None:
+        sizing["errors"].append(error)
+        sizing["sets"] = []
+        extra["related_error"] = error
+        sizing.update(extra)
+        return sizing
+    if not names:
+        # 크기 입력 쪽 에러 - 그 에러만 보여준다.
+        sizing.update(extra)
+        return sizing
+
+    computed = compute_serial_layout(base_name, dbs_bits, dbs_lsb, layout, names)
+    extra["related_names"] = names
+    computed.update(extra)
+    return computed
+
+
+def serial_layout_errors_for_related(
+    pin_name: str, base_name: str, dbs_bits: int, dbs_lsb: int, layout: dict, pattern_text: str,
+    candidate_pin_names: list[str], pin_bit_info: dict | None,
+) -> list[str]:
+    """Validate용(serial_layout_errors의 와일드카드/bus 공용판)."""
+    computed = compute_serial_layout_for_related(
+        base_name, dbs_bits, dbs_lsb, layout, pattern_text, candidate_pin_names, pin_bit_info,
+    )
+    if computed["errors"]:
+        return [f"DBS output pin '{pin_name}': {e}" for e in computed["errors"]]
+    return serial_set_errors(
+        pin_name, base_name, dbs_bits, dbs_lsb, computed["sets"], computed["related_names"],
+    )
