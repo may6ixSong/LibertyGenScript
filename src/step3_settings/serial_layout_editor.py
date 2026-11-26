@@ -20,7 +20,10 @@ Step 3 - Serial Cluster "More than 1"(Split Serial)에서 인식된 DBS output p
     …  (앞 3줄 + ⋮ + 뒤 2줄)
     ✓ 16480 / 16480 bits mapped · 16 clusters ↔ 16 Related Pins
 
-계산은 전부 pin_field_defs.compute_serial_layout(+ compute_serial_set_ranges)이 하고, 이
+2026-11: Related Pin에 '*' 없이 bus 이름(예: 'CSEL')을 쓰면 그 bus를 cluster 개수로 균등
+분할해 배정한다(bus 슬라이스 - "✓ Bus CSEL[719:0] (720 bit) / 45 clusters = 16 bit each: …").
+
+계산은 전부 pin_field_defs.compute_serial_layout_for_related(+ compute_serial_set_ranges)이 하고, 이
 위젯은 그 결과를 그리기만 한다 - Validate/block5와 같은 함수라 화면과 생성 결과가 어긋날 수
 없다. 입력이 바뀔 때마다 changed 시그널을 내고, settings_view가 그 값을 저장용으로 받아 둔다.
 """
@@ -37,8 +40,8 @@ from PyQt5.QtWidgets import (
 from step3_settings.pin_field_defs import (
     SERIAL_FIRST_PIN_FIRST, SERIAL_FIRST_PIN_LAST, SERIAL_LAYOUT_CENTER_KEY,
     SERIAL_LAYOUT_FIRST_KEY, SERIAL_LAYOUT_LEFT_KEY, SERIAL_LAYOUT_RIGHT_KEY,
-    compute_serial_layout, compute_serial_set_ranges, match_digit_wildcard,
-    normalize_serial_layout,
+    SERIAL_RELATED_MODE_BUS, SERIAL_RELATED_MODE_WILDCARD, compute_serial_layout_for_related,
+    compute_serial_set_ranges, normalize_serial_layout,
 )
 from ui.theme import ERROR_COLOR, MUTED_TEXT_COLOR, SUCCESS_COLOR, TEXT_COLOR, WARNING_TEXT
 from ui.ui_common import build_label_with_info
@@ -54,10 +57,15 @@ _REMAINDER_FILL = QColor("#FCA5A5") # 나누어떨어지지 않고 남는 bit
 _LINE_COLOR = QColor("#9CA3AF")
 
 _WILDCARD_INFO = (
-    "Wildcard matched against Port==PORT pin names (e.g. 'RD_EN_*') - '*' matches digits "
-    "only (a name where '*' would match letters is ignored). A trailing '[13:0]' is "
-    "display-only and not used for matching. The matched pins are assigned to the "
-    "clusters in order (see 'Related Pin of cluster #1'). Independent per DBS output pin."
+    "Two ways (independent per DBS output pin):\n\n"
+    "1) Wildcard - matched against Port==PORT pin names (e.g. 'RD_EN_*'). '*' matches "
+    "digits only (a name where '*' would match letters is ignored). Each matched pin is "
+    "one cluster's Related Pin.\n\n"
+    "2) Bus name without '*' (e.g. 'CSEL' for Port List 'CSEL[719:0]') - the bus is "
+    "split evenly by the number of clusters, from its LSB (720 bit / 45 clusters -> "
+    "CSEL[15:0], CSEL[31:16], ...). Its Bits must divide evenly.\n\n"
+    "A trailing '[13:0]' is display-only and not used for matching. The Related Pins are "
+    "assigned to the clusters in order (see 'Related Pin of cluster #1')."
 )
 _SIZE_INFO = (
     "Left and Right are one cluster each (enter 0 to omit one). Center is the size of "
@@ -217,7 +225,7 @@ class SerialLayoutEditor(QWidget):
     def __init__(
         self, pin_name: str, base_name: str, dbs_bits: int | None, dbs_lsb: int,
         candidate_pin_names: list[str], pattern: str = "", layout: dict | None = None,
-        parent=None,
+        parent=None, pin_bit_info: dict | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("transparentRow")
@@ -226,6 +234,9 @@ class SerialLayoutEditor(QWidget):
         self._dbs_bits = dbs_bits
         self._dbs_lsb = dbs_lsb
         self._candidates_all = list(candidate_pin_names)
+        # 2026-11: bus 슬라이스 방식(Related Pin에 '*' 없음)에서 bus의 Bits/LSB를 읽는 데 쓴다
+        # (port_list_reader.list_all_pin_bit_info 결과).
+        self._pin_bit_info = pin_bit_info or {}
         self._matched: list[str] = []
         layout = normalize_serial_layout(layout)
 
@@ -271,9 +282,9 @@ class SerialLayoutEditor(QWidget):
 
         pattern_row = QHBoxLayout()
         pattern_row.setSpacing(10)
-        pattern_row.addWidget(build_label_with_info("Related Pin (wildcard)", _WILDCARD_INFO))
+        pattern_row.addWidget(build_label_with_info("Related Pin (wildcard or bus)", _WILDCARD_INFO))
         self.pattern_edit = QLineEdit()
-        self.pattern_edit.setPlaceholderText("e.g. RD_EN_*")
+        self.pattern_edit.setPlaceholderText("e.g. RD_EN_*  or  CSEL")
         self.pattern_edit.setEnabled(self.can_split)
         self.pattern_edit.textChanged.connect(lambda _t: self._on_pattern_changed())
         pattern_row.addWidget(self.pattern_edit, stretch=1)
@@ -363,27 +374,8 @@ class SerialLayoutEditor(QWidget):
                 MUTED_TEXT_COLOR if self._dbs_bits == 1 else ERROR_COLOR,
             )
             return
-        pattern = self.pattern()
-        self.match_label.setToolTip("")
-        if not pattern:
-            self._matched = []
-            self._set_label(self.match_label, "Enter a wildcard to list the Related Pin candidates.",
-                            MUTED_TEXT_COLOR)
-        else:
-            self._matched = [n for _v, n in match_digit_wildcard(pattern, self._candidates_all)]
-            if not self._matched:
-                self._set_label(self.match_label,
-                                f"'{pattern}' matched no PORT pins ('*' matches digits only).",
-                                ERROR_COLOR)
-            else:
-                names = self._matched
-                if len(names) > _MATCH_PREVIEW_COUNT + 1:
-                    preview = ", ".join(names[:_MATCH_PREVIEW_COUNT]) + ", … , " + names[-1]
-                else:
-                    preview = ", ".join(names)
-                self._set_label(self.match_label, f"✓ {len(names)} pin(s) matched: {preview}",
-                                SUCCESS_COLOR)
-                self.match_label.setToolTip("\n".join(names))
+        # Related Pin 목록/문구는 cluster 개수에 따라 달라질 수 있으므로(bus 슬라이스) _refresh가
+        # 크기 입력과 함께 한 번에 계산한다.
         self._refresh()
         if emit:
             self.changed.emit()
@@ -412,8 +404,12 @@ class SerialLayoutEditor(QWidget):
             return
         bits = self._dbs_bits
         layout = self.layout_value()
-        matched = self._matched if self.pattern() else None
-        computed = compute_serial_layout(self._base_name, bits, self._dbs_lsb, layout, matched)
+        computed = compute_serial_layout_for_related(
+            self._base_name, bits, self._dbs_lsb, layout, self.pattern(), self._candidates_all,
+            self._pin_bit_info,
+        )
+        self._matched = computed["related_names"]
+        self._refresh_match_label(computed)
         fe = computed["field_errors"]
         self._mark_edit(self.left_edit, fe.get(SERIAL_LAYOUT_LEFT_KEY))
         self._mark_edit(self.center_edit, fe.get(SERIAL_LAYOUT_CENTER_KEY))
@@ -452,14 +448,65 @@ class SerialLayoutEditor(QWidget):
 
         # 시작 pin 라디오 문구(매치 목록의 실제 첫/마지막 pin 이름으로)
         if self._matched:
-            first_name = self._matched[0].split("[")[0]
-            last_name = self._matched[-1].split("[")[0]
+            if computed["related_mode"] == SERIAL_RELATED_MODE_BUS:
+                first_name, last_name = self._matched[0], self._matched[-1]
+            else:
+                first_name = self._matched[0].split("[")[0]
+                last_name = self._matched[-1].split("[")[0]
         else:
             first_name, last_name = "first", "last"
         self.first_radio.setText(f"First matched pin  ({first_name} → ascending)")
         self.last_radio.setText(f"Last matched pin  ({last_name} → descending)")
 
         self._refresh_preview(clusters, computed)
+
+    def _refresh_match_label(self, computed: dict) -> None:
+        """Related Pin 입력 바로 아래 문구 - 와일드카드 매치 목록 또는 bus 슬라이스 결과."""
+        pattern = self.pattern()
+        mode = computed["related_mode"]
+        names = computed["related_names"]
+        self.match_label.setToolTip("")
+        if mode is None:
+            self._set_label(self.match_label,
+                            "Enter a wildcard (e.g. RD_EN_*) or a bus name (e.g. CSEL).",
+                            MUTED_TEXT_COLOR)
+            return
+        if mode == SERIAL_RELATED_MODE_WILDCARD:
+            if not names:
+                self._set_label(self.match_label,
+                                f"'{pattern}' matched no PORT pins ('*' matches digits only).",
+                                ERROR_COLOR)
+                return
+            if len(names) > _MATCH_PREVIEW_COUNT + 1:
+                preview = ", ".join(names[:_MATCH_PREVIEW_COUNT]) + ", … , " + names[-1]
+            else:
+                preview = ", ".join(names)
+            self._set_label(self.match_label, f"✓ {len(names)} pin(s) matched: {preview}",
+                            SUCCESS_COLOR)
+            self.match_label.setToolTip("\n".join(names))
+            return
+
+        bus = computed["related_bus"] or {}
+        if computed["related_error"]:
+            self._set_label(self.match_label, f"✕ {computed['related_error']}", ERROR_COLOR)
+            return
+        head = f"Bus {bus.get('full_name')} ({bus.get('bits')} bit)"
+        if not names:
+            self._set_label(self.match_label,
+                            f"✓ {head} - split evenly by the cluster count once the sizes are valid.",
+                            SUCCESS_COLOR)
+            return
+        per = bus["bits"] // len(names)
+        if len(names) > _MATCH_PREVIEW_COUNT + 1:
+            preview = ", ".join(names[:_MATCH_PREVIEW_COUNT]) + ", … , " + names[-1]
+        else:
+            preview = ", ".join(names)
+        self._set_label(
+            self.match_label,
+            f"✓ {head} / {len(names)} clusters = {per} bit each: {preview}",
+            SUCCESS_COLOR,
+        )
+        self.match_label.setToolTip("\n".join(names))
 
     def _refresh_preview(self, clusters: list[dict], computed: dict) -> None:
         while self.preview_grid.count():

@@ -97,7 +97,9 @@ Transfer Type + (Serial일 때) Serial Cluster 선택에 따라 갈린다
     pin부터)으로 배정한 것이 각 cluster의 related_bus_pins다. 예: 672/1056/1024,
     RD_EN_* 16개, 내림차순 -> pin(OUT_ADC[671:0]) related RD_EN_15[13:0], ...,
     pin(OUT_ADC[16479:15456]) related RD_EN_0[13:0]. 계산은 Step3 화면/Validate와 같은
-    pin_field_defs.compute_serial_layout + compute_serial_set_ranges.
+    pin_field_defs.compute_serial_layout_for_related + compute_serial_set_ranges. (2026-11)
+    Related Pin에 '*'가 없으면 bus 하나를 cluster 개수로 균등 분할해 배정한다(bus 슬라이스,
+    예: CSEL[719:0] / 45 -> CSEL[15:0], CSEL[31:16], ...).
   - **Serial(ADBUS) + Serial Cluster "1"(기본값)**: 이 분할 기능이 생기기 전과 완전히
     동일 - 몫은 항상 1, pin() 하나만 쓰고 related_bus_pins는 Related Pin 전체.
 
@@ -123,7 +125,7 @@ from step1_setup.port_list_reader import parse_bit_range, strip_bit_range_suffix
 from step3_settings.constants_field_defs import VOLTAGE_MATCH_TOLERANCE
 from step3_settings.pin_field_defs import (
     DBS_SERIAL_CLUSTER_MULTI, DBS_TRANSFER_TYPE_PARALLEL, DBS_TRANSFER_TYPE_SERIAL,
-    compute_serial_layout, compute_serial_set_ranges, match_digit_wildcard,
+    compute_serial_layout_for_related, compute_serial_set_ranges,
 )
 from step4_generate.missing_data import (
     INDENT_2, INDENT_3, INDENT_4, PORT_LIST_NOT_FOUND_TOKEN, write_missing_comment,
@@ -473,12 +475,17 @@ def _serial_split_groups(
     if not related_pattern_text:
         return None
     candidate_names = [p["pin_name"] for p in (job.get("port_pins") or [])]
-    matched = [name for _value, name in match_digit_wildcard(related_pattern_text, candidate_names)]
 
+    # 2026-11: Related Pin에 '*'가 없으면 bus 하나(예: CSEL[719:0])를 cluster 개수로 균등
+    # 분할해 배정한다(bus 슬라이스) - Step3 화면/Validate와 같은 함수.
     layout = (job.get("dbs_serial_layout") or {}).get(pin_name)
-    computed = compute_serial_layout(base_name, total_bits, dbs_lsb, layout, matched)
+    computed = compute_serial_layout_for_related(
+        base_name, total_bits, dbs_lsb, layout, related_pattern_text, candidate_names,
+        job.get("pin_bit_info"),
+    )
     if computed["errors"]:
         return None
+    matched = computed["related_names"]
     ranges = compute_serial_set_ranges(base_name, total_bits, dbs_lsb, computed["sets"], matched)
     if ranges["used_bits"] != total_bits or any(row["error"] for row in ranges["rows"]):
         return None

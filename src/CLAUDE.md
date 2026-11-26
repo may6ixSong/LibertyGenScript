@@ -388,6 +388,15 @@ Center / Right" 재설계)**: Data Transfer Type이 Serial일 때만 보이는 �
        무시 - `pin_field_defs.match_digit_wildcard`)를 입력하면 시스템이 Port==PORT pin
        중 매치되는 pin 목록(예: `RD_EN_0[13:0]` ... `RD_EN_15[13:0]`)을 바로 아래에
        보여준다.
+       **bus 슬라이스 (2026-11 추가)**: 입력에 `*`가 없으면 Port==PORT bus 하나의 이름으로
+       본다(예: `CSEL` → Port List `CSEL[719:0]`, 뒤에 `[719:0]`을 붙여도 됨). 그 bus를
+       **cluster 개수로 균등하게** LSB부터 잘라 매치 목록처럼 쓴다(720 bit / 45 clusters →
+       `CSEL[15:0]`, `CSEL[31:16]`, …, `CSEL[719:704]`) - bus Bits가 cluster 개수로 딱
+       나누어떨어져야 한다(아니면 에러). 이후 배정(First/Last) 규칙은 와일드카드와 같다.
+       예전에는 `*` 없는 입력이 항상 "매치 없음" 에러였으므로 기존 config와 충돌하지 않는다.
+       화면 라벨은 `Related Pin (wildcard or bus)`. 계산은
+       `pin_field_defs.compute_serial_layout_for_related` 하나를 화면/Validate/block5가
+       공유한다(bus의 Bits/LSB는 `list_all_pin_bit_info` 결과에서 읽음).
     2. **Cluster size**: `Left` / `Center (each)` / `Right` 세 칸만 입력한다
        (`pin_field_defs.DBS_SERIAL_LAYOUT_KEY`, `{pin name: {"left", "center", "right",
        "first"}}`). Left와 Right는 cluster 1개씩(0이면 그 칸 없음), Center는 **같은
@@ -483,7 +492,8 @@ Validate를 누르면 에러 목록과 함께, 비어 있어서 에러가 난 �
   Serial이면 ④/⑤ 자체를 건너뛴다.** ⑥ (Data Transfer Type이 Serial이고 Serial
   Cluster가 "More than 1"일 때만, 2026-10 "Left/Center/Right" 재설계 - pin마다 독립적으로
   검사) 인식된 pin마다: 1비트를 넘는지, Related Pin 와일드카드가 비어 있지 않고
-  Port==PORT pin 하나 이상과 매치되는지, Left/Right가 0 이상 정수이고 Center가 양의
+  Port==PORT pin 하나 이상과 매치되는지(bus 슬라이스면 - 2026-11 - 그 이름의 Port==PORT
+  bus가 있고 Bits가 cluster 개수로 나누어떨어지는지), Left/Right가 0 이상 정수이고 Center가 양의
   정수인지, Left+Right가 Bits를 넘지 않는지, (Bits − Left − Right)가 Center로 딱
   나누어떨어지는지, cluster 개수와 매치된 Related Pin 개수가 같은지, 펼친 cluster의
   범위/Related Pin이 유효한지(`pin_field_defs.serial_layout_errors`). **Serial Cluster가 "1"(기본값)이면 ⑥ 자체를
@@ -653,7 +663,10 @@ forwarding 환경에서 보장할 수 없어서,
      `pin()` 하나이고, Related Pin 와일드카드 매치 목록을 cluster #1부터 오름차순 또는
      내림차순으로 배정한 것이 각 `related_bus_pins`다(예: 672/1056/1024, 내림차순 →
      `pin(OUT_ADC[671:0])` → `RD_EN_15[13:0]`, ..., `pin(OUT_ADC[16479:15456])` →
-     `RD_EN_0[13:0]`). 계산은 `pin_field_defs.compute_serial_layout` +
+     `RD_EN_0[13:0]`). Related Pin에 `*`가 없으면(2026-11 bus 슬라이스) 그 bus를 cluster
+     개수로 균등 분할한 범위를 배정한다(예: 0/78/13, `CSEL`, 오름차순 →
+     `pin(OUT_ADC[77:0])` → `CSEL[15:0]`, ..., `pin(OUT_ADC[3444:3432])` → `CSEL[719:704]`).
+     계산은 `pin_field_defs.compute_serial_layout_for_related` +
      `compute_serial_set_ranges`(Step3 화면/Validate와 같은 함수)이고, 에러가 하나라도
      있으면 분할하지 않고 폴백한다.
    - **Serial + Serial Cluster "1"(기본값)**: 몫은 항상 1 - 이 분할 기능이 생기기
